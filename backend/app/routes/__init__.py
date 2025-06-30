@@ -1,8 +1,13 @@
 from .auth import auth_bp
 from .uploads import upload_bp
-from .worker import worker_bp  # if you have it
+from .workers import workers_bp
+from .students import students_bp
+from .assessments import assessments_bp
 
 def register_routes(app):
     app.register_blueprint(auth_bp, url_prefix='/auth')
-    app.register_blueprint(upload_bp, url_prefix='/upload')
-    app.register_blueprint(worker_bp, url_prefix='/workers')  # optional
+    app.register_blueprint(upload_bp, url_prefix='/upload')  # now handles worker uploads too
+    app.register_blueprint(workers_bp, url_prefix='/workers')
+    app.register_blueprint(students_bp, url_prefix='/students')
+    app.register_blueprint(assessments_bp, url_prefix='/api/assessments')
+
