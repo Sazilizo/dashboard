@@ -1,81 +1,67 @@
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 import os
-from app.models import db, Student, Worker
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.models import db, Student, Worker, User
+from utils.decorators import role_required
 
 upload_bp = Blueprint('uploads', __name__)
 
-UPLOAD_FOLDER = 'static/uploads'
-ALLOWED_EXTENSIONS = {'pdf'}
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf'}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# Upload a student photo and create student
-@upload_bp.route('/upload/students', methods=['POST'])
-def upload_student_photo():
-    file = request.files['photo']
-    full_name = request.form['full_name']
-    grade = request.form['grade']
-    school_id = request.form['school_id']
-
+def save_file(file, folder):
     filename = secure_filename(file.filename)
-    folder = os.path.join(UPLOAD_FOLDER, 'students')
-    os.makedirs(folder, exist_ok=True)
-    file_path = os.path.join(folder, filename)
-    file.save(file_path)
+    upload_folder = os.path.join(current_app.config.get('UPLOAD_FOLDER', 'static/uploads'), folder)
+    os.makedirs(upload_folder, exist_ok=True)
+    filepath = os.path.join(upload_folder, filename)
+    file.save(filepath)
+    return filepath.replace('\\', '/')  # normalize path for JSON
 
-    student = Student(
-        full_name=full_name,
-        grade=grade,
-        school_id=school_id,
-        photo=file_path
-    )
-    db.session.add(student)
-    db.session.commit()
-    return jsonify({"message": "Student added with photo"}), 201
+@upload_bp.route('/student/photo/<int:student_id>', methods=['POST'])
+@jwt_required()
+@role_required('head_tutor', 'head_coach', 'admin', 'superuser')
+def upload_student_photo(student_id):
+    student = Student.query.get_or_404(student_id)
+    user = User.query.get(get_jwt_identity())
+    if user.school_id != student.school_id:
+        return jsonify({"error": "Access forbidden: school mismatch"}), 403
 
-# Upload a worker photo and create worker
-@upload_bp.route('/upload/workers', methods=['POST'])
-def upload_worker_photo():
+    if 'photo' not in request.files:
+        return jsonify({"error": "No photo part in request"}), 400
+
     file = request.files['photo']
-    name = request.form['name']
-    role_id = request.form['role_id']
-    school_id = request.form['school_id']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+    if file and allowed_file(file.filename):
+        filepath = save_file(file, 'students')
+        student.photo = filepath
+        db.session.commit()
+        return jsonify({"message": "Student photo uploaded", "photo": filepath}), 200
 
-    filename = secure_filename(file.filename)
-    folder = os.path.join(UPLOAD_FOLDER, 'workers')
-    os.makedirs(folder, exist_ok=True)
-    file_path = os.path.join(folder, filename)
-    file.save(file_path)
+    return jsonify({"error": "Invalid file type"}), 400
 
-    worker = Worker(
-        name=name,
-        role_id=role_id,
-        school_id=school_id,
-        photo=file_path
-    )
-    db.session.add(worker)
-    db.session.commit()
-    return jsonify({"message": "Worker added with photo"}), 201
+@upload_bp.route('/worker/files/<int:worker_id>', methods=['POST'])
+@jwt_required()
+@role_required('admin', 'superuser')
+def upload_worker_files(worker_id):
+    worker = Worker.query.get_or_404(worker_id)
+    user = User.query.get(get_jwt_identity())
+    if user.school_id != worker.school_id:
+        return jsonify({"error": "Access forbidden: school mismatch"}), 403
 
-# Upload worker PDFs (CV, clearance, child protection)
-@upload_bp.route('/upload/workers/<int:worker_id>/documents', methods=['POST'])
-def upload_worker_documents(worker_id):
-    worker = Worker.query.get(worker_id)
-    if not worker:
-        return jsonify({"error": "Worker not found"}), 404
-
-    folder = os.path.join(UPLOAD_FOLDER, 'workers')
-    os.makedirs(folder, exist_ok=True)
-
-    for doc_field in ['cv_pdf', 'clearance_pdf', 'child_protection_pdf']:
-        file = request.files.get(doc_field)
+    updated_files = []
+    for file_key in ['cv_pdf', 'clearance_pdf', 'child_protection_pdf', 'photo']:
+        file = request.files.get(file_key)
         if file and allowed_file(file.filename):
-            filename = secure_filename(f"{worker_id}_{doc_field}_{file.filename}")
-            file_path = os.path.join(folder, filename)
-            file.save(file_path)
-            setattr(worker, doc_field, file_path)
+            filepath = save_file(file, 'workers')
+            setattr(worker, file_key, filepath)
+            updated_files.append(file_key)
+
+    if not updated_files:
+        return jsonify({"error": "No valid files uploaded"}), 400
 
     db.session.commit()
-    return jsonify({"message": "Documents uploaded successfully."}), 200
+    return jsonify({"message": "Files uploaded", "updated_files": updated_files}), 200
