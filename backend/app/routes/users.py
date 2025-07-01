@@ -3,6 +3,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import User, Role, db
 from utils.decorators import role_required
 from werkzeug.security import generate_password_hash
+from datetime import datetime
 
 users_bp = Blueprint('users', __name__)
 
@@ -10,10 +11,7 @@ users_bp = Blueprint('users', __name__)
 @jwt_required()
 @role_required('superuser', 'admin')
 def list_users():
-    """
-    List all users. Only superuser and admin access.
-    """
-    users = User.query.all()
+    users = User.query.filter_by(deleted=False).all()
     return jsonify([{
         'id': u.id,
         'username': u.username,
@@ -26,10 +24,6 @@ def list_users():
 @jwt_required()
 @role_required('superuser', 'admin')
 def create_user():
-    """
-    Create a new user. Requires username, password, role_id, school_id.
-    Password is hashed securely.
-    """
     data = request.get_json()
     if not data:
         return jsonify({"error": "No input data provided"}), 400
@@ -80,10 +74,7 @@ def create_user():
 @jwt_required()
 @role_required('superuser', 'admin')
 def update_user(user_id):
-    """
-    Update user details. Can update username, password, role_id, and school_id.
-    """
-    user = User.query.get_or_404(user_id)
+    user = User.query.filter_by(id=user_id, deleted=False).first_or_404()
     data = request.get_json()
     if not data:
         return jsonify({"error": "No input data provided"}), 400
@@ -122,10 +113,33 @@ def update_user(user_id):
 @jwt_required()
 @role_required('superuser', 'admin')
 def delete_user(user_id):
-    """
-    Delete a user by ID.
-    """
-    user = User.query.get_or_404(user_id)
-    db.session.delete(user)
+    user = User.query.filter_by(id=user_id, deleted=False).first_or_404()
+    user.deleted = True
+    user.deleted_at = datetime.utcnow()
     db.session.commit()
-    return jsonify({"message": "User deleted successfully"}), 200
+    return jsonify({"message": "User soft-deleted successfully"}), 200
+
+
+@users_bp.route('/deleted', methods=['GET'])
+@jwt_required()
+@role_required('superuser', 'admin')
+def list_deleted_users():
+    deleted_users = User.query.filter_by(deleted=True).all()
+    return jsonify([{ 
+        'id': u.id,
+        'username': u.username,
+        'role_id': u.role_id,
+        'school_id': u.school_id,
+        'deleted_at': u.deleted_at.isoformat() if u.deleted_at else None
+    } for u in deleted_users]), 200
+
+
+@users_bp.route('/<int:user_id>/restore', methods=['POST'])
+@jwt_required()
+@role_required('superuser', 'admin')
+def restore_user(user_id):
+    user = User.query.filter_by(id=user_id, deleted=True).first()
+    if not user:
+        return jsonify({"error": "Deleted user not found"}), 404
+
+    user.deleted = False

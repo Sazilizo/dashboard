@@ -11,6 +11,7 @@ workers_bp = Blueprint('workers', __name__)
 def list_workers():
     """
     List workers for the current user's school with pagination and search.
+    Excludes soft-deleted workers.
     """
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
@@ -23,7 +24,8 @@ def list_workers():
 
     query = Worker.query.filter(
         Worker.school_id == user.school_id,
-        Worker.role_id != 1  # exclude superuser
+        Worker.role_id != 1,  # exclude superuser
+        Worker.deleted == False
     )
 
     paginated = apply_pagination_and_search(query, Worker, search_term, ['name'], page, per_page)
@@ -43,6 +45,74 @@ def list_workers():
         'page': paginated.page,
         'pages': paginated.pages
     }), 200
+
+
+@workers_bp.route('/deleted', methods=['GET'])
+@jwt_required()
+@role_required('admin', 'superuser')
+def list_deleted_workers():
+    """
+    List soft-deleted workers.
+    """
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    workers = Worker.query.filter_by(school_id=user.school_id, deleted=True).all()
+
+    return jsonify([{
+        'id': w.id,
+        'name': w.name,
+        'role_id': w.role_id,
+        'school_id': w.school_id,
+        'photo': w.photo,
+        'cv_pdf': w.cv_pdf,
+        'clearance_pdf': w.clearance_pdf,
+        'child_protection_pdf': w.child_protection_pdf
+    } for w in workers]), 200
+
+
+@workers_bp.route('/<int:worker_id>/restore', methods=['POST'])
+@jwt_required()
+@role_required('admin', 'superuser')
+def restore_worker(worker_id):
+    """
+    Restore a soft-deleted worker.
+    """
+    worker = Worker.query.get_or_404(worker_id)
+    user = User.query.get(get_jwt_identity())
+    if not user or worker.school_id != user.school_id:
+        return jsonify({"error": "Access forbidden: school mismatch"}), 403
+
+    if not worker.deleted:
+        return jsonify({"message": "Worker is already active"}), 400
+
+    worker.deleted = False
+    worker.deleted_at = None
+    db.session.commit()
+    return jsonify({"message": "Worker restored successfully"}), 200
+
+
+@workers_bp.route('/<int:worker_id>', methods=['DELETE'])
+@jwt_required()
+@role_required('superuser', 'admin')
+def delete_worker(worker_id):
+    """
+    Soft delete a worker by ID. Only superuser and admin can delete.
+    """
+    worker = Worker.query.get_or_404(worker_id)
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    if user.school_id != worker.school_id:
+        return jsonify({"error": "Access forbidden: school mismatch"}), 403
+
+    worker.soft_delete()
+    db.session.commit()
+
+    return jsonify({"message": "Worker soft-deleted successfully"}), 200
 
 
 @workers_bp.route('/create', methods=['POST'])
@@ -84,24 +154,3 @@ def create_worker():
             "school_id": worker.school_id
         }
     }), 201
-
-
-@workers_bp.route('/<int:worker_id>', methods=['DELETE'])
-@jwt_required()
-@role_required('superuser', 'admin')
-def delete_worker(worker_id):
-    """
-    Delete a worker by ID. Only superuser and admin can delete.
-    """
-    worker = Worker.query.get_or_404(worker_id)
-    user = User.query.get(get_jwt_identity())
-    if not user:
-        return jsonify({"error": "User not found"}), 404
-
-    if user.school_id != worker.school_id:
-        return jsonify({"error": "Access forbidden: school mismatch"}), 403
-
-    db.session.delete(worker)
-    db.session.commit()
-
-    return jsonify({"message": "Worker deleted successfully"}), 200

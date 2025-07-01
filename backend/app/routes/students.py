@@ -6,12 +6,10 @@ from utils.pagination import apply_pagination_and_search
 
 students_bp = Blueprint('students', __name__)
 
+
 @students_bp.route('/', methods=['GET'])
 @jwt_required()
 def list_students():
-    """
-    List students for the current user's school with optional filters, search, and pagination.
-    """
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
     if not user:
@@ -24,7 +22,7 @@ def list_students():
     category_filter = request.args.get('category', type=str)
     year_filter = request.args.get('year', type=int)
 
-    query = Student.query.filter_by(school_id=user.school_id)
+    query = Student.query.filter_by(school_id=user.school_id, deleted=False)
 
     if grade_filter:
         query = query.filter(Student.grade == grade_filter)
@@ -61,10 +59,6 @@ def list_students():
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def create_students():
-    """
-    Create one or multiple students for the current user's school.
-    Expects JSON object or list of objects with required fields.
-    """
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
     if not user:
@@ -74,7 +68,6 @@ def create_students():
     if not data:
         return jsonify({"error": "No input data provided"}), 400
 
-    # Normalize data to list
     students_data = data if isinstance(data, list) else [data]
     created_students = []
 
@@ -118,10 +111,7 @@ def create_students():
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def update_student(student_id):
-    """
-    Update student details if the user belongs to the same school.
-    """
-    student = Student.query.get_or_404(student_id)
+    student = Student.query.filter_by(id=student_id, deleted=False).first_or_404()
     user = User.query.get(get_jwt_identity())
 
     if not user or user.school_id != student.school_id:
@@ -163,15 +153,51 @@ def update_student(student_id):
 @jwt_required()
 @role_required('admin', 'superuser')
 def delete_student(student_id):
-    """
-    Delete student if user is admin or superuser and belongs to the same school.
-    """
-    student = Student.query.get_or_404(student_id)
+    student = Student.query.filter_by(id=student_id, deleted=False).first_or_404()
     user = User.query.get(get_jwt_identity())
 
     if not user or user.school_id != student.school_id:
         return jsonify({"error": "Access forbidden: school mismatch"}), 403
 
-    db.session.delete(student)
+    student.soft_delete()
     db.session.commit()
-    return jsonify({"message": "Student deleted"}), 200
+    return jsonify({"message": "Student soft-deleted"}), 200
+
+
+@students_bp.route('/deleted', methods=['GET'])
+@jwt_required()
+@role_required('admin', 'superuser')
+def list_deleted_students():
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    deleted_students = Student.query.filter_by(school_id=user.school_id, deleted=True).all()
+
+    return jsonify({
+        "deleted_students": [{
+            "id": s.id,
+            "full_name": s.full_name,
+            "grade": s.grade,
+            "year": s.year,
+            "category": s.category.value,
+            "deleted_at": s.deleted_at.isoformat() if s.deleted_at else None
+        } for s in deleted_students]
+    }), 200
+
+
+@students_bp.route('/<int:student_id>/restore', methods=['POST'])
+@jwt_required()
+@role_required('admin', 'superuser')
+def restore_student(student_id):
+    student = Student.query.filter_by(id=student_id, deleted=True).first()
+    if not student:
+        return jsonify({"error": "Deleted student not found"}), 404
+
+    user = User.query.get(get_jwt_identity())
+    if not user or user.school_id != student.school_id:
+        return jsonify({"error": "Access forbidden: school mismatch"}), 403
+
+    student.restore()
+    db.session.commit()
+    return jsonify({"message": "Student restored successfully"}), 200
