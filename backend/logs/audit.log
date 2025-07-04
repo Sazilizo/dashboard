@@ -1,0 +1,25 @@
+[2025-07-01 15:19:55] [INFO] EVENT: LOGIN_FAILED | USER: N/A | IP: 127.0.0.1 | DESC: Failed login attempt for your_username
+[2025-07-01 15:25:08] [INFO] EVENT: LOGIN_FAILED | USER: N/A | IP: 127.0.0.1 | DESC: Failed login attempt for your_username
+[2025-07-01 15:26:56] [INFO] EVENT: LOGIN_FAILED | USER: N/A | IP: 127.0.0.1 | DESC: Failed login attempt for your_username
+[2025-07-01 15:26:58] [INFO] EVENT: LOGIN_FAILED | USER: N/A | IP: 127.0.0.1 | DESC: Failed login attempt for your_username
+[2025-07-01 15:28:08] [INFO] EVENT: LOGIN_FAILED | USER: N/A | IP: 127.0.0.1 | DESC: Failed login attempt for your_username
+[2025-07-01 15:28:14] [INFO] EVENT: LOGIN_FAILED | USER: N/A | IP: 127.0.0.1 | DESC: Failed login attempt for your_username
+[2025-07-01 15:28:15] [INFO] EVENT: LOGIN_FAILED | USER: N/A | IP: 127.0.0.1 | DESC: Failed login attempt for your_username
+[2025-07-01 15:28:22] [INFO] EVENT: LOGIN_FAILED | USER: N/A | IP: 127.0.0.1 | DESC: Failed login attempt for your_username
+[2025-07-01 15:30:54] [INFO] EVENT: LOGIN_FAILED | USER: N/A | IP: 127.0.0.1 | DESC: Failed login attempt for your_username
+[2025-07-01 15:48:24] [INFO] EVENT: LOGIN_FAILED | USER: N/A | IP: 127.0.0.1 | DESC: Failed login attempt for SaziLizo@123
+[2025-07-01 15:54:08] [INFO] EVENT: LOGIN_FAILED | USER: N/A | IP: 127.0.0.1 | DESC: Failed login attempt for SaziLizo@123
+[2025-07-01 17:52:54] [INFO] EVENT: LOGIN_ERROR | USER: N/A | IP: 127.0.0.1 | DESC: 400 Bad Request: The browser (or proxy) sent a request that this server could not understand.
+[2025-07-01 17:56:53] [INFO] EVENT: LOGIN_ERROR | USER: N/A | IP: 127.0.0.1 | DESC: 400 Bad Request: The browser (or proxy) sent a request that this server could not understand.
+[2025-07-01 17:57:52] [INFO] EVENT: LOGIN_ERROR | USER: N/A | IP: 127.0.0.1 | DESC: 400 Bad Request: The browser (or proxy) sent a request that this server could not understand.
+[2025-07-01 18:00:36] [INFO] EVENT: LOGIN_SUCCESS | USER: 4 | IP: 127.0.0.1 | DESC: testuser logged in
+[2025-07-01 18:15:01] [INFO] EVENT: LOGIN_SUCCESS | USER: 4 | IP: 127.0.0.1 | DESC: testuser logged in
+[2025-07-01 18:25:59] [INFO] EVENT: LOGIN_SUCCESS | USER: 5 | IP: 127.0.0.1 | DESC: superuser1 logged in
+[2025-07-01 18:26:03] [INFO] EVENT: LOGIN_SUCCESS | USER: 5 | IP: 127.0.0.1 | DESC: superuser1 logged in
+[2025-07-01 18:26:06] [INFO] EVENT: LOGIN_SUCCESS | USER: 5 | IP: 127.0.0.1 | DESC: superuser1 logged in
+[2025-07-01 18:26:08] [INFO] EVENT: LOGIN_SUCCESS | USER: 5 | IP: 127.0.0.1 | DESC: superuser1 logged in
+[2025-07-01 18:26:10] [INFO] EVENT: LOGIN_SUCCESS | USER: 5 | IP: 127.0.0.1 | DESC: superuser1 logged in
+[2025-07-01 18:26:27] [INFO] EVENT: LOGIN_SUCCESS | USER: 5 | IP: 127.0.0.1 | DESC: superuser1 logged in
+[2025-07-01 18:27:19] [INFO] EVENT: LOGIN_SUCCESS | USER: 5 | IP: 127.0.0.1 | DESC: superuser1 logged in
+[2025-07-01 18:42:44] [INFO] EVENT: LOGIN_SUCCESS | USER: 5 | IP: 127.0.0.1 | DESC: superuser1 logged in
+[2025-07-01 19:02:00] [INFO] EVENT: LOGIN_SUCCESS | USER: 5 | IP: 127.0.0.1 | DESC: superuser1 logged in

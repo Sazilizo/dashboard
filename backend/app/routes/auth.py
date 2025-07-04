@@ -5,12 +5,54 @@ from flask_jwt_extended import (
 )
 from werkzeug.security import check_password_hash
 from app.models import User, Role, School, db
-from utils.audit import log_event, log_audit_action
+from app.extensions import db, jwt, limiter
+from utils.audit import log_event
 import re
 
 auth_bp = Blueprint('auth', __name__)
 
+@auth_bp.route('/register', methods=['POST'])
+@limiter.limit("5 per minute", override_defaults=False, exempt_when=lambda: get_jwt_identity() is not None)
+def register():
+    data = request.get_json()
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    role_name = data.get('role', '')  # e.g. 'admin'
+    school_name = data.get('school', '')  # e.g. 'My School'
+
+    if not username or not password or not role_name or not school_name:
+        return jsonify({"error": "Username, password, role and school are required"}), 400
+
+    # Check if username already exists
+    if User.query.filter_by(username=username).first():
+        return jsonify({"error": "Username already exists"}), 400
+
+    # Find role by name
+    role = Role.query.filter_by(name=role_name).first()
+    if not role:
+        return jsonify({"error": f"Role '{role_name}' not found"}), 400
+
+    # Find school by name
+    school = School.query.filter_by(name=school_name).first()
+    if not school:
+        return jsonify({"error": f"School '{school_name}' not found"}), 400
+
+    # Create user with hashed password
+    user = User(
+        username=username,
+        role_id=role.id,
+        school_id=school.id,
+    )
+    user.set_password(password)
+
+    db.session.add(user)
+    db.session.commit()
+
+    return jsonify({"message": "User created", "user_id": user.id}), 201
+
+
 @auth_bp.route('/login', methods=['POST'])
+@limiter.limit("5 per minute", override_defaults=False, exempt_when=lambda: get_jwt_identity() is not None)
 def login():
     try:
         data = request.get_json()
@@ -31,13 +73,13 @@ def login():
 
         if user and user.check_password(password):
             access_token = create_access_token(
-                identity=user.id,
+                identity=str(user.id),
                 additional_claims={
                     "role_id": user.role_id,
                     "school_id": user.school_id
                 }
             )
-            refresh_token = create_refresh_token(identity=user.id)
+            refresh_token = create_refresh_token(identity=str(user.id))
 
             log_event("LOGIN_SUCCESS", user_id=user.id, ip=ip, description=f"{username} logged in")
             return jsonify({
@@ -81,7 +123,7 @@ def refresh_access_token():
             return jsonify({"error": "User not found"}), 404
 
         access_token = create_access_token(
-            identity=user.id,
+            identity=str(user.id),
             additional_claims={
                 "role_id": user.role_id,
                 "school_id": user.school_id

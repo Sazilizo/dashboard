@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import Student, User, CategoryEnum, db
+from app.extensions import db, jwt, limiter
 from utils.decorators import role_required
 from utils.pagination import apply_pagination_and_search
 
@@ -21,6 +22,7 @@ def list_students():
     grade_filter = request.args.get('grade', type=str)
     category_filter = request.args.get('category', type=str)
     year_filter = request.args.get('year', type=int)
+    pe_filter = request.args.get('pe')
 
     query = Student.query.filter_by(school_id=user.school_id, deleted=False)
 
@@ -34,6 +36,9 @@ def list_students():
             return jsonify({"error": "Invalid category filter"}), 400
     if year_filter:
         query = query.filter(Student.year == year_filter)
+    if pe_filter is not None:
+        pe_bool = pe_filter.lower() in ['true', '1', 'yes']
+        query = query.filter(Student.physical_education == pe_bool)
 
     paginated = apply_pagination_and_search(query, Student, search_term, ['full_name'], page, per_page)
 
@@ -54,8 +59,8 @@ def list_students():
         'pages': paginated.pages
     }), 200
 
-
 @students_bp.route('/', methods=['POST'])
+@limiter.limit("5 per minute")
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def create_students():
@@ -106,7 +111,7 @@ def create_students():
         "students": [{"id": s.id, "full_name": s.full_name} for s in created_students]
     }), 201
 
-
+@limiter.limit("10 per minute")
 @students_bp.route('/<int:student_id>', methods=['PUT'])
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
@@ -148,7 +153,7 @@ def update_student(student_id):
     db.session.commit()
     return jsonify({"message": "Student updated"}), 200
 
-
+@limiter.limit("3 per minute")
 @students_bp.route('/<int:student_id>', methods=['DELETE'])
 @jwt_required()
 @role_required('admin', 'superuser')
