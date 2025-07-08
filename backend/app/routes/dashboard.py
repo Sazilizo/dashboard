@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
-from app.models import db, School, Student, Worker, Role
+from app.models import School, Student, Worker, Role
+from app.extensions import db
 
 dashboard_bp = Blueprint('dashboard', __name__)
 

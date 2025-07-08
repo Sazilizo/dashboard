@@ -1,8 +1,9 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import Assessment, Student, User, TermEnum, CategoryEnum, db
+from app.models import Assessment, Student, User, TermEnum, CategoryEnum
 from utils.decorators import role_required
 from sqlalchemy import func, and_
+from app.extensions import db
 
 assessments_bp = Blueprint('assessments', __name__)
 

@@ -2,7 +2,8 @@ from flask import Blueprint, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 import os
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import db, Student, Worker, User
+from app.models import  Student, Worker, User
+from app.extensions import db
 from utils.decorators import role_required
 
 upload_bp = Blueprint('uploads', __name__)

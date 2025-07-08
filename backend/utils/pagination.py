@@ -1,5 +1,5 @@
 from sqlalchemy import or_
-from app.models import db 
+from app.extensions import db
 
 # utils/pagination.py
 

@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import Meal, Student, User, db
+from app.models import Meal, Student, User
+from app.extensions import db
 from sqlalchemy import func
 from datetime import datetime
 from utils.decorators import role_required

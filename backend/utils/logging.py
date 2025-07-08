@@ -1,11 +1,13 @@
 from flask import request, jsonify
-from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request_optional
+from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
 from datetime import datetime
-from app.models import AuditLog, User, db
+# from app.models import AuditLog, User, db
 
 def log_rate_limit_violation(request):
+    from app.extensions import db
+    from app.models import AuditLog, User
     try:
-        verify_jwt_in_request_optional()
+        verify_jwt_in_request(optional=True)
         user_id = get_jwt_identity()
     except Exception:
         user_id = None

@@ -1,0 +1,48 @@
+from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import datetime
+from app.extensions import db
+from .base import SoftDeleteMixin
+
+class Role(db.Model):
+    __tablename__ = 'roles'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), nullable=False, unique=True)
+
+    workers = db.relationship('Worker', backref='role', lazy=True)
+    users = db.relationship('User', back_populates='role', lazy=True)
+
+class User(db.Model, SoftDeleteMixin):
+    __tablename__ = 'users'
+
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128), nullable=False)
+
+    role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
+    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
+
+    role = db.relationship('Role', back_populates='users')
+    school = db.relationship('School', back_populates='users')
+
+    audit_logs = db.relationship('AuditLog', backref='user', lazy=True)
+    logged_sessions = db.relationship('StudentSession', backref='user', lazy=True)
+    recorded_meals = db.relationship('MealDistribution', backref='recorded_by_user', lazy=True,
+                                     foreign_keys='MealDistribution.recorded_by')
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+class TokenBlocklist(db.Model):
+    __tablename__ = 'token_blocklist'
+
+    id = db.Column(db.Integer, primary_key=True)
+    jti = db.Column(db.String(36), nullable=False, index=True)
+    token_type = db.Column(db.String(10), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime, nullable=False)
+
+    user = db.relationship("User", backref="revoked_tokens")

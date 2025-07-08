@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import Student, User, CategoryEnum, db
+from app.models import Student, User, CategoryEnum
 from app.extensions import db, jwt, limiter
 from utils.decorators import role_required
 from utils.pagination import apply_pagination_and_search

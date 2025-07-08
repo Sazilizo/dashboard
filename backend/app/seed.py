@@ -1,7 +1,8 @@
 import os
-from app import db, create_app
+from app import create_app
 from app.models import School, Worker, User, Role
 from app.models import Student
+from app.extensions import db
 
 app = create_app()
 with app.app_context():
@@ -23,8 +24,8 @@ with app.app_context():
         db.session.commit()
 
         # Create Schools
-        school1 = School(name="Site A", address="123 Main St")
-        school2 = School(name="Site B", address="456 Another St")
+        school1 = School(name="Woodlands Primary School", address="123 Main St")
+        school2 = School(name="Dagbreek Primary School", address="456 Another St")
         db.session.add_all([school1, school2])
         db.session.commit()
 

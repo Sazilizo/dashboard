@@ -1,13 +1,14 @@
 
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import db, Student, User, StudentSession, CategoryEnum
+from app.models import Student, User, StudentSession, CategoryEnum
 from utils.decorators import role_required
 from werkzeug.utils import secure_filename
 from datetime import datetime
 import os
 from io import BytesIO
 import zipfile, pandas as pd
+from app.extensions import db
 
 student_sessions_bp = Blueprint('student_sessions', __name__)
 

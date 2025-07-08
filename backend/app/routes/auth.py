@@ -1,18 +1,19 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import (
     create_access_token, create_refresh_token, jwt_required,
-    get_jwt_identity
+    get_jwt_identity, get_jwt,
 )
 from werkzeug.security import check_password_hash
-from app.models import User, Role, School, db
+from app.models import User, Role, School, TokenBlocklist
 from app.extensions import db, jwt, limiter
 from utils.audit import log_event
 import re
+from datetime import datetime, timedelta
 
 auth_bp = Blueprint('auth', __name__)
 
 @auth_bp.route('/register', methods=['POST'])
-@limiter.limit("5 per minute", override_defaults=False, exempt_when=lambda: get_jwt_identity() is not None)
+@limiter.limit("5 per minute", override_defaults=False)
 def register():
     data = request.get_json()
     username = data.get('username', '').strip()
@@ -52,7 +53,7 @@ def register():
 
 
 @auth_bp.route('/login', methods=['POST'])
-@limiter.limit("5 per minute", override_defaults=False, exempt_when=lambda: get_jwt_identity() is not None)
+@limiter.limit("5 per minute", override_defaults=False)
 def login():
     try:
         data = request.get_json()
@@ -137,3 +138,22 @@ def refresh_access_token():
     except Exception as e:
         log_event("REFRESH_TOKEN_ERROR", user_id=user_id, ip=request.remote_addr, description=str(e))
         return jsonify({"error": "Failed to refresh token", "details": str(e)}), 500
+
+@auth_bp.route("/logout", methods=["POST"])
+@jwt_required()
+def logout():
+    jti = get_jwt()["jti"]
+    token_type = get_jwt()["type"]
+    user_id = get_jwt_identity()
+    expires = datetime.fromtimestamp(get_jwt()["exp"])
+
+    block_token = TokenBlocklist(
+        jti=jti,
+        token_type=token_type,
+        user_id=user_id,
+        expires_at=expires
+    )
+    db.session.add(block_token)
+    db.session.commit()
+
+    return jsonify(msg="Successfully logged out"), 200
