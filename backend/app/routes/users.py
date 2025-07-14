@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import User, Role
+from app.models.UserRemoval import UserRemovalReview
 from app.extensions import db
 from utils.decorators import role_required
 from werkzeug.security import generate_password_hash
@@ -10,7 +11,7 @@ users_bp = Blueprint('users', __name__)
 
 @users_bp.route('/', methods=['GET'])
 @jwt_required()
-@role_required('superuser', 'admin')
+@role_required('superuser', 'admin','hr')
 def list_users():
     users = User.query.filter_by(deleted=False).all()
     return jsonify([{
@@ -23,7 +24,7 @@ def list_users():
 
 @users_bp.route('/create', methods=['POST'])
 @jwt_required()
-@role_required('superuser', 'admin')
+@role_required('superuser', 'hr')
 def create_user():
     data = request.get_json()
     if not data:
@@ -73,7 +74,7 @@ def create_user():
 
 @users_bp.route('/<int:user_id>', methods=['PUT'])
 @jwt_required()
-@role_required('superuser', 'admin')
+@role_required('superuser', 'hr')
 def update_user(user_id):
     user = User.query.filter_by(id=user_id, deleted=False).first_or_404()
     data = request.get_json()
@@ -110,34 +111,102 @@ def update_user(user_id):
     return jsonify({"message": "User updated successfully"}), 200
 
 
+@users_bp.route('/update/me', methods=['PUT'])
+@jwt_required()
+@role_required('superuser', 'admin', 'head_tutor', 'head_coach')
+def update_own_account():
+    user_id = get_jwt_identity()
+    user = User.query.filter_by(id=user_id, deleted=False).first_or_404()
+    data = request.get_json()
+
+    if not data:
+        return jsonify({"error": "No input data provided"}), 400
+
+    if 'username' in data:
+        new_username = data['username'].strip()
+        if new_username != user.username and User.query.filter_by(username=new_username).first():
+            return jsonify({"error": "Username already exists"}), 400
+        user.username = new_username
+
+    if 'email' in data:
+        new_email = data['email'].strip()
+        if new_email != user.email and User.query.filter_by(email=new_email).first():
+            return jsonify({"error": "Email already exists"}), 400
+        user.email = new_email
+
+    if 'password' in data:
+        user.set_password(data['password'])
+
+    db.session.commit()
+    return jsonify({
+        "message": "Your account has been updated successfully",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email
+        }
+    }), 200
+
+
 @users_bp.route('/<int:user_id>', methods=['DELETE'])
 @jwt_required()
-@role_required('superuser', 'admin')
-def delete_user(user_id):
+@role_required('hr')
+def hr_soft_delete_user(user_id):
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
     user = User.query.filter_by(id=user_id, deleted=False).first_or_404()
+
+    # Prevent deletion of high-level roles
+    protected_roles = ['admin', 'superuser']
+    if user.role and user.role.name in protected_roles:
+        return jsonify({"error": "You cannot remove admins or superusers"}), 403
+
+    data = request.get_json()
+    if not data or 'reason' not in data:
+        return jsonify({"error": "Missing reason for deletion"}), 400
+
+    # Soft delete user
     user.deleted = True
     user.deleted_at = datetime.utcnow()
+
+    # Save reason + warning
+    review = UserRemovalReview(
+        removed_user_id=user.id,
+        removed_by_id=current_user.id,
+        reason=data['reason'],
+        warning=data.get('warning', '')
+    )
+    db.session.add(review)
     db.session.commit()
-    return jsonify({"message": "User soft-deleted successfully"}), 200
+
+    # Notify all superusers (print to console, or integrate email later)
+    superusers = User.query.join(Role).filter(Role.name == 'superuser').all()
+    for su in superusers:
+        print(f"🔔 Notification: User '{user.username}' was removed by HR '{current_user.username}'. Reason: {data['reason']}")
+
+    return jsonify({"message": "User removed with review recorded."}), 200
 
 
-@users_bp.route('/deleted', methods=['GET'])
+@users_bp.route('/removed', methods=['GET'])
 @jwt_required()
-@role_required('superuser', 'admin')
-def list_deleted_users():
-    deleted_users = User.query.filter_by(deleted=True).all()
-    return jsonify([{ 
-        'id': u.id,
-        'username': u.username,
-        'role_id': u.role_id,
-        'school_id': u.school_id,
-        'deleted_at': u.deleted_at.isoformat() if u.deleted_at else None
-    } for u in deleted_users]), 200
-
+@role_required('superuser')
+def list_removal_reviews():
+    reviews = UserRemovalReview.query.order_by(UserRemovalReview.created_at.desc()).all()
+    return jsonify([
+        {
+            "id": r.id,
+            "removed_user_id": r.removed_user_id,
+            "removed_by_id": r.removed_by_id,
+            "reason": r.reason,
+            "warning": r.warning,
+            "created_at": r.created_at.isoformat()
+        } for r in reviews
+    ]), 200
 
 @users_bp.route('/<int:user_id>/restore', methods=['POST'])
 @jwt_required()
-@role_required('superuser', 'admin')
+@role_required('superuser', 'hr')
 def restore_user(user_id):
     user = User.query.filter_by(id=user_id, deleted=True).first()
     if not user:

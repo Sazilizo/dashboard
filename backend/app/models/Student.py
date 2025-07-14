@@ -9,7 +9,7 @@ class Student(db.Model, SoftDeleteMixin):
     full_name = db.Column(db.String(100), nullable=False)
     grade = db.Column(db.String(50), nullable=False)
     category = db.Column(db.Enum(CategoryEnum), nullable=False, default=CategoryEnum.un, index=True)
-    physical_education = db.Column(db.Boolean, default=False)
+    physical_education = db.Column(db.Boolean, default=False, index=True)
     year = db.Column(db.Integer, nullable=False, index=True)
     school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
 
@@ -19,6 +19,8 @@ class Student(db.Model, SoftDeleteMixin):
     assessments = db.relationship('Assessment', backref='student', lazy=True, cascade="all, delete-orphan")
     sessions = db.relationship('StudentSession', backref='student', lazy=True)
     meal_logs = db.relationship('MealDistribution', backref='student', lazy=True)
+    attendance_records = db.relationship('AttendanceRecord', back_populates='student')
+
 
 
 class Assessment(db.Model):
@@ -48,7 +50,7 @@ class StudentSession(db.Model):
     duration_hours = db.Column(db.Float, nullable=False)
     photo = db.Column(db.String(255), nullable=True)
     outcomes = db.Column(db.Text, nullable=True)
-    category = db.Column(db.Enum(CategoryEnum), nullable=False)
-    physical_education = db.Column(db.Boolean, default=False)
+    category = db.Column(db.Enum(CategoryEnum), nullable=False, index=True)
+    physical_education = db.Column(db.Boolean, default=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 

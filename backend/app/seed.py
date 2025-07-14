@@ -1,8 +1,10 @@
 import os
+from datetime import date, datetime
 from app import create_app
-from app.models import School, Worker, User, Role
-from app.models import Student
+from app.models import School, Worker, User, Role, CategoryEnum, Student
 from app.extensions import db
+from werkzeug.security import generate_password_hash
+from app.models.AttendanceRecord import AttendanceRecord
 
 app = create_app()
 with app.app_context():
@@ -109,5 +111,22 @@ with app.app_context():
         db.session.add_all(students_site_a + students_site_b)
         db.session.commit()
         
+        students = Student.query.all()
+        admin_role_id = get_role_id("admin")
+        admin_user = User.query.filter_by(role_id=admin_role_id).first()
+        school_id = students[0].school_id if students else 1  # default fallback
+
+        for student in students:
+            attendance = AttendanceRecord(
+                student_id=student.id,
+                school_id=school_id,
+                date=date.today(),
+                status="present",
+                recorded_by=admin_user.id
+            )
+            db.session.add(attendance)
+
+        db.session.commit()
+        print(f"✅ Created attendance records for {len(students)} students.")
         print("✅ Seed data inserted successfully.")
     seed_data()

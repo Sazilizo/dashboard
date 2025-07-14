@@ -6,10 +6,17 @@ class Worker(db.Model, SoftDeleteMixin):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
+    last_name = db.Column(db.String(100), nullable=False)
+    id_number = db.Column(db.String(20), nullable=True)
+    contact_number = db.Column(db.String(20), nullable=True)
+    email = db.Column(db.String(120), nullable=True)
+    start_date = db.Column(db.Date, nullable=True)
+    photo = db.Column(db.String(255), nullable=True)
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
     school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
+    story = db.Column(db.Text, nullable=True)  # Their goal/motivation
 
-    photo = db.Column(db.String(255), nullable=True)
+    id_copy_pdf = db.Column(db.String(255), nullable=True)
     cv_pdf = db.Column(db.String(255), nullable=True)
     clearance_pdf = db.Column(db.String(255), nullable=True)
     child_protection_pdf = db.Column(db.String(255), nullable=True)

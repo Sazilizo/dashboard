@@ -2,10 +2,10 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager
 from flask_cors import CORS
-from app.config import Config
+from backend.config import Config
 from app.routes import register_routes
 from app.models import TokenBlocklist
-from app.extensions import db, jwt, limiter
+from app.extensions import db, jwt, limiter, migrate
 
 jwt = JWTManager()
 

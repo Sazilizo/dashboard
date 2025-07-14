@@ -5,9 +5,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
-    SECRET_KEY = os.getenv("JWT_SECRET_KEY", "fallback-secret")  # used for both Flask and JWT
+    SECRET_KEY = os.getenv("JWT_SECRET_KEY")  # used for both Flask and JWT
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "fallback-jwt")
-    SQLALCHEMY_DATABASE_URI = os.getenv("SQLALCHEMY_DATABASE_URI", "sqlite:///fallback.db")
+    SQLALCHEMY_DATABASE_URI = os.getenv("SQLALCHEMY_DATABASE_URI")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "static/uploads/")
     FLASK_ENV = os.getenv("FLASK_ENV", "development")

@@ -9,7 +9,7 @@ class Meal(db.Model):
     type = db.Column(db.String(50), nullable=True)
     ingredients = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
+    has_fruit = db.Column(db.Boolean, default=False)
     distributions = db.relationship('MealDistribution', backref='meal', lazy=True)
 
 

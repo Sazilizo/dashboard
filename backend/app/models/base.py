@@ -18,6 +18,7 @@ class CategoryEnum(enum.Enum):
     pr = "pr"
     ww = "ww"
     un = "un"
+    pe = "pe"
 
 class TermEnum(enum.Enum):
     term1 = "Term 1"

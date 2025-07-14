@@ -2,7 +2,7 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import Student, User, StudentSession, CategoryEnum
-from utils.decorators import role_required
+from utils.decorators import role_required, session_role_required
 from werkzeug.utils import secure_filename
 from datetime import datetime
 import os
@@ -17,9 +17,9 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@student_sessions_bp.route('/', methods=['POST'])
+@student_sessions_bp.route('/create_session', methods=['POST'])
 @jwt_required()
-@role_required('head_tutor', 'head_coach', 'admin', 'superuser')
+@session_role_required()
 def create_session():
     required_fields = ['student_id', 'session_name', 'date', 'duration_hours']
     if not all(f in request.form for f in required_fields):
@@ -87,9 +87,9 @@ def create_session():
     }), 201
 
 
-@student_sessions_bp.route('/', methods=['GET'])
+@student_sessions_bp.route('/list_sessions', methods=['GET'])
 @jwt_required()
-@role_required('head_tutor', 'head_coach', 'admin', 'superuser')
+@session_role_required()
 def list_sessions():
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
@@ -162,7 +162,7 @@ def list_sessions():
         "pages": paginated.pages
     }), 200
    
-@student_sessions_bp.route('/bulk-upload', methods=['POST'])
+@student_sessions_bp.route('/bulk_ upload', methods=['POST'])
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def bulk_upload_sessions():
