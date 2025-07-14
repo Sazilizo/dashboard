@@ -2,7 +2,7 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager
 from flask_cors import CORS
-from backend.config import Config
+from .config import Config
 from app.routes import register_routes
 from app.models import TokenBlocklist
 from app.extensions import db, jwt, limiter, migrate
@@ -18,6 +18,7 @@ def create_app():
     CORS(app)
     limiter.init_app(app)
     register_routes(app)
+    migrate.init_app(app,db)
 
     @jwt.token_in_blocklist_loader
     def check_if_token_revoked(jwt_header, jwt_payload):

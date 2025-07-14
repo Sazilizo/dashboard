@@ -4,16 +4,15 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_migrate import Migrate
 from utils.logging import log_rate_limit_violation
-
+from redis import Redis
+import os
 
 db = SQLAlchemy()
 jwt = JWTManager()
 migrate= Migrate()
 limiter = Limiter(
-
-    get_remote_address,
+    key_func=get_remote_address,
+    storage_uri=os.getenv("REDIS_URL"),
     default_limits=["200 per day", "50 per hour"],
-    # pip install redis
-    # storage_uri="redis://localhost:6379"
     on_breach=log_rate_limit_violation
 )
