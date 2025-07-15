@@ -6,8 +6,10 @@ from .assessments import assessments_bp
 from .student_sessions import student_sessions_bp
 from .meals import meals_bp
 from .meals_stats import meal_stats_bp
-from .worker_trainings import worker_trainings_bp 
+from .worker_trainings import worker_trainings_bp
+from .base_route import base_bp 
 def register_routes(app):
+    app.register_blueprint(base_bp)
     app.register_blueprint(auth_bp, url_prefix='/auth')
     app.register_blueprint(upload_bp, url_prefix='/upload')  # now handles worker uploads too
     app.register_blueprint(workers_bp, url_prefix='/workers')
