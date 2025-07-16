@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from sqlalchemy import func
-from app.models import School, Student, Worker, Role, Grade, MealDistribution
+from app.models import School, Student, Worker, Role, MealDistribution
 from app.extensions import db
 
 dashboard_bp = Blueprint('dashboard', __name__)
@@ -15,21 +15,24 @@ def summary():
     # Base queries
     base_student_query = Student.query
     base_worker_query = Worker.query.join(Role)
-    base_grade_query = Grade.query
     base_meal_query = MealDistribution.query
     base_school_query = School.query
 
     if site_ids:
         base_student_query = base_student_query.filter(Student.school_id.in_(site_ids))
         base_worker_query = base_worker_query.filter(Worker.school_id.in_(site_ids))
-        base_grade_query = base_grade_query.filter(Grade.school_id.in_(site_ids))
         base_meal_query = base_meal_query.filter(MealDistribution.school_id.in_(site_ids))
         base_school_query = base_school_query.filter(School.id.in_(site_ids))
 
     # Totals
     total_students = base_student_query.count()
     total_workers = base_worker_query.count()
-    total_grades = base_grade_query.count()
+    total_grades = (
+        db.session.query(func.count(func.distinct(Student.grade)))
+        .filter(Student.school_id.in_(site_ids)) if site_ids else
+        db.session.query(func.count(func.distinct(Student.grade)))
+    ).scalar()
+
     total_meals = base_meal_query.count()
     total_sites = base_school_query.count()
 
