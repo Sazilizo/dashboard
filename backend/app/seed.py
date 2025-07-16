@@ -10,10 +10,11 @@ app = create_app()
 with app.app_context():
     def seed_data():
         # Clear existing data (for testing)
+        User.query.delete()
         Worker.query.delete()
+        Student.query.delete()
         School.query.delete()
         Role.query.delete()
-        User.query.delete()
         db.session.commit()
         
         admin_password = os.getenv("ADMIN_PASSWORD", "your_secure_password")
@@ -62,16 +63,16 @@ with app.app_context():
 
         # Add Workers for Site A
         workers_site_a = [
-            Worker(name="John Tutor", role_id=get_role_id("tutor"), school_id=school1.id),
-            Worker(name="Mary Coach", role_id=get_role_id("coach"), school_id=school1.id),
-            Worker(name="Lisa Cleaner", role_id=get_role_id("cleaner"), school_id=school1.id),
-            Worker(name="Sam Worker", role_id=get_role_id("general"), school_id=school1.id)
+            Worker(name="John", last_name="Doe", role_id=get_role_id("tutor"), school_id=school1.id),
+            Worker(name="Mary", last_name="Jane", role_id=get_role_id("coach"), school_id=school1.id),
+            Worker(name="Lisa", last_name="Smith", role_id=get_role_id("cleaner"), school_id=school1.id),
+            Worker(name="Sam", last_name="Allen", role_id=get_role_id("general"), school_id=school1.id)
         ]
 
         # Add Workers for Site B
         workers_site_b = [
-            Worker(name="Alice Tutor", role_id=get_role_id("tutor"), school_id=school2.id),
-            Worker(name="Bob Worker", role_id=get_role_id("general"), school_id=school2.id)
+            Worker(name="Alice", last_name="Burns", role_id=get_role_id("tutor"), school_id=school2.id),
+            Worker(name="Bob", last_name="Dilingham",role_id=get_role_id("general"), school_id=school2.id)
         ]
 
         db.session.add_all(workers_site_a + workers_site_b)

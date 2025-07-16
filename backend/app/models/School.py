@@ -12,3 +12,10 @@ class School(db.Model):
     users = db.relationship('User', back_populates='school', lazy=True)
     meals_given = db.relationship('MealDistribution', backref='school', lazy=True)
 
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "address": self.address
+        }
+

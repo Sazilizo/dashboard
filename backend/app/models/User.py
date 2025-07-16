@@ -6,7 +6,7 @@ from .base import SoftDeleteMixin
 class Role(db.Model):
     __tablename__ = 'roles'
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(50), nullable=False, unique=True)
+    name = db.Column(db.String(80), nullable=False, unique=True)
 
     workers = db.relationship('Worker', backref='role', lazy=True)
     users = db.relationship('User', back_populates='role', lazy=True)
@@ -18,7 +18,7 @@ class User(db.Model, SoftDeleteMixin):
     username = db.Column(db.String(80), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=True)
 
-    password_hash = db.Column(db.String(128), nullable=False)
+    password_hash = db.Column(db.String(512), nullable=False)
 
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
     school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)

@@ -21,3 +21,20 @@ class Worker(db.Model, SoftDeleteMixin):
     clearance_pdf = db.Column(db.String(255), nullable=True)
     child_protection_pdf = db.Column(db.String(255), nullable=True)
 
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "last_name": self.last_name,
+            "email": self.email,
+            "school_id": self.school_id,
+            "role_id": self.role_id,
+            "start_date": self.start_date.isoformat() if self.start_date else None,
+            "photo": self.photo,
+            "cv_pdf": self.cv_pdf,
+            "id_copy_pdf": self.id_copy_pdf,
+            "clearance_pdf": self.clearance_pdf,
+            "child_protection_pdf": self.child_protection_pdf,
+        }
+
+

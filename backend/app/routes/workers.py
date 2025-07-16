@@ -28,12 +28,10 @@ def save_file(file, prefix=""):
         return filepath
     return None
 
-
 @workers_bp.route('/', methods=['GET'])
 @jwt_required()
 def list_workers():
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
+    user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({"error": "User not found"}), 404
 
@@ -41,33 +39,82 @@ def list_workers():
     per_page = request.args.get('per_page', 10, type=int)
     search_term = request.args.get('search', type=str)
 
-    query = Worker.query.filter(
-        Worker.school_id == user.school_id,
-        Worker.deleted == False
+    # Support multi-select filters: ?school_id=1&school_id=2&role_id=76&role_id=77
+    school_ids = request.args.getlist('school_id', type=int)
+    role_ids = request.args.getlist('role_id', type=int)
+
+    query = Worker.query.filter(Worker.deleted == False)
+
+    # Optional: enforce user's school by default (unless superuser/admin)
+    if user.role.name not in ["superuser", "admin"] and not school_ids:
+        query = query.filter(Worker.school_id == user.school_id)
+
+    # Optional: allow filtering by multiple schools for admin/superuser
+    if school_ids:
+        query = query.filter(Worker.school_id.in_(school_ids))
+
+    if role_ids:
+        query = query.filter(Worker.role_id.in_(role_ids))
+
+    # Add pagination + search support
+    paginated = apply_pagination_and_search(
+        query,
+        Worker,
+        search_term,
+        search_columns=["name", "last_name", "email"],  # Add more fields if needed
+        page=page,
+        per_page=per_page
     )
 
-    paginated = apply_pagination_and_search(query, Worker, search_term, ['name'], page, per_page)
-
     return jsonify({
-        'workers': [{
-            'id': w.id,
-            'name': w.name,
-            'role_id': w.role_id,
-            'school_id': w.school_id,
-            'id_number': w.id_number,
-            'contact_number': w.contact_number,
-            'email': w.email,
-            'start_date': w.start_date.isoformat() if w.start_date else None,
-            'photo': w.photo,
-            'cv_pdf': w.cv_pdf,
-            'id_copy_pdf': w.id_copy_pdf,
-            'clearance_pdf': w.clearance_pdf,
-            'child_protection_pdf': w.child_protection_pdf
-        } for w in paginated.items],
-        'total': paginated.total,
-        'page': paginated.page,
-        'pages': paginated.pages
+        "workers": [w.to_dict() for w in paginated.items],
+        "total": paginated.total,
+        "page": paginated.page,
+        "pages": paginated.pages
     }), 200
+
+# @workers_bp.route('/', methods=['GET'])
+# @jwt_required()
+# def list_workers():
+#     user_id = get_jwt_identity()
+#     user = User.query.get(user_id)
+#     if not user:
+#         return jsonify({"error": "User not found"}), 404
+
+#     page = request.args.get('page', 1, type=int)
+#     per_page = request.args.get('per_page', 10, type=int)
+#     search_term = request.args.get('search', type=str)
+
+#     school_ids = request.args.getlist('school_id', type=int)
+#     role_ids = request.args.getlist('role_id', type=int)
+
+#     query = Worker.query.filter(
+#         Worker.school_id == user.school_id,
+#         Worker.deleted == False
+#     )
+
+#     paginated = apply_pagination_and_search(query, Worker, search_term, ['name'], page, per_page)
+
+#     return jsonify({
+#         'workers': [{
+#             'id': w.id,
+#             'name': w.name,
+#             'role_id': w.role_id,
+#             'school_id': w.school_id,
+#             'id_number': w.id_number,
+#             'contact_number': w.contact_number,
+#             'email': w.email,
+#             'start_date': w.start_date.isoformat() if w.start_date else None,
+#             'photo': w.photo,
+#             'cv_pdf': w.cv_pdf,
+#             'id_copy_pdf': w.id_copy_pdf,
+#             'clearance_pdf': w.clearance_pdf,
+#             'child_protection_pdf': w.child_protection_pdf
+#         } for w in paginated.items],
+#         'total': paginated.total,
+#         'page': paginated.page,
+#         'pages': paginated.pages
+#     }), 200
 
 
 @workers_bp.route('/create', methods=['POST'])

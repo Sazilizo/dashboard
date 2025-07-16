@@ -1,24 +1,59 @@
 from flask import Blueprint, request, jsonify
-from app.models import School, Student, Worker, Role
+from sqlalchemy import func
+from app.models import School, Student, Worker, Role, Grade, MealDistribution
 from app.extensions import db
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
-@dashboard_bp.route('/api/dashboard/summary')
+@dashboard_bp.route('/dashboard/summary')
 def summary():
-    site_id = request.args.get('site_id')
-    
-    base_student_query = Student.query
-    base_worker_query = Worker.query.join(Role) 
+    site_ids = request.args.get('site_id')
 
-    if site_id and site_id != "all":
-        base_student_query = base_student_query.filter_by(school_id=site_id)
-        base_worker_query = base_worker_query.filter(Worker.school_id == site_id)
+    # Convert comma-separated list of site_ids into integers
+    site_ids = [int(sid) for sid in site_ids.split(',')] if site_ids and site_ids != "all" else None
+
+    # Base queries
+    base_student_query = Student.query
+    base_worker_query = Worker.query.join(Role)
+    base_grade_query = Grade.query
+    base_meal_query = MealDistribution.query
+    base_school_query = School.query
+
+    if site_ids:
+        base_student_query = base_student_query.filter(Student.school_id.in_(site_ids))
+        base_worker_query = base_worker_query.filter(Worker.school_id.in_(site_ids))
+        base_grade_query = base_grade_query.filter(Grade.school_id.in_(site_ids))
+        base_meal_query = base_meal_query.filter(MealDistribution.school_id.in_(site_ids))
+        base_school_query = base_school_query.filter(School.id.in_(site_ids))
+
+    # Totals
+    total_students = base_student_query.count()
+    total_workers = base_worker_query.count()
+    total_grades = base_grade_query.count()
+    total_meals = base_meal_query.count()
+    total_sites = base_school_query.count()
+
+    # Count by role
+    total_tutors = base_worker_query.filter(Role.name == "tutor").count()
+    total_coaches = base_worker_query.filter(Role.name == "coach").count()
+    total_cleaners = base_worker_query.filter(Role.name == "cleaner").count()
+
+    # Students by category
+    category_counts = dict(
+        base_student_query
+        .with_entities(Student.category, func.count(Student.id))
+        .group_by(Student.category)
+        .all()
+    )
 
     return jsonify({
-        "totalStudents": base_student_query.count(),
-        "totalTutors": base_worker_query.filter(Role.name == "tutor").count(),
-        "totalCoaches": base_worker_query.filter(Role.name == "coach").count(),
-        "totalCleaners": base_worker_query.filter(Role.name == "cleaner").count(),
-        "totalWorkers": base_worker_query.count(),
+        "totalStudents": total_students,
+        "totalWorkers": total_workers,
+        "totalTutors": total_tutors,
+        "totalCoaches": total_coaches,
+        "totalCleaners": total_cleaners,
+        "totalGrades": total_grades,
+        "totalMeals": total_meals,
+        "totalSites": total_sites,
+        "studentsByCategory": category_counts
     })
