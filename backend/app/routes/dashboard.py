@@ -56,9 +56,8 @@ def summary():
             "id": school.id,
             "name": school.name,
             "address": school.address,
-            "contact_email": school.contact_email,
+            "email": school.email,
             "contact_number": school.contact_number,
-            "logo_url": school.logo_url
         }
         for school in base_school_query.order_by(School.name).all()
     ]
