@@ -5,7 +5,7 @@ from app.extensions import db
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
-@dashboard_bp.route('/dashboard/summary')
+@dashboard_bp.route('/summary')
 def summary():
     site_ids = request.args.get('site_id')
 

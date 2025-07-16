@@ -8,10 +8,11 @@ from .meals import meals_bp
 from .meals_stats import meal_stats_bp
 from .worker_trainings import worker_trainings_bp
 from .base_route import base_bp 
-from .schools import schools_bp
+from .dashboard import dashboard_bp
 
 def register_routes(app):
     app.register_blueprint(base_bp)
+    app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
     app.register_blueprint(auth_bp, url_prefix='/auth')
     app.register_blueprint(upload_bp, url_prefix='/upload')  # now handles worker uploads too
     app.register_blueprint(workers_bp, url_prefix='/workers')
@@ -21,5 +22,4 @@ def register_routes(app):
     app.register_blueprint(meals_bp, url_prefix="/meals")
     app.register_blueprint(meal_stats_bp, url_prefix='/meal_stats')
     app.register_blueprint(worker_trainings_bp, url_prefix="/worker_trainings")
-    app.register_blueprint(schools_bp, url_prefix="/schools")
 
