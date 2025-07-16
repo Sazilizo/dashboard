@@ -3,7 +3,7 @@ from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request
 from datetime import datetime
 # from app.models import AuditLog, User, db
 
-def log_rate_limit_violation(request):
+def log_rate_limit_violation(limit):
     from app.extensions import db
     from app.models import AuditLog, User
     try:
