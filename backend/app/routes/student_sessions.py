@@ -9,6 +9,7 @@ import os
 from io import BytesIO
 import zipfile, pandas as pd
 from app.extensions import db
+from flask_cors import cross_origin
 
 student_sessions_bp = Blueprint('student_sessions', __name__)
 
@@ -18,6 +19,7 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 @student_sessions_bp.route('/create_session', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @session_role_required()
 def create_session():
@@ -88,6 +90,7 @@ def create_session():
 
 
 @student_sessions_bp.route('/list_sessions', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @session_role_required()
 def list_sessions():
@@ -163,6 +166,7 @@ def list_sessions():
     }), 200
    
 @student_sessions_bp.route('/bulk_ upload', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def bulk_upload_sessions():

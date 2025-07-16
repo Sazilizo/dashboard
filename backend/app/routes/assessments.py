@@ -4,10 +4,12 @@ from app.models import Assessment, Student, User, TermEnum, CategoryEnum
 from utils.decorators import role_required
 from sqlalchemy import func, and_
 from app.extensions import db
+from flask_cors import cross_origin
 
 assessments_bp = Blueprint('assessments', __name__)
 
 @assessments_bp.route('/student/<int:student_id>', methods=['POST', 'PUT'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def create_or_update_assessment(student_id):
@@ -51,6 +53,7 @@ def create_or_update_assessment(student_id):
     }), 200
 
 @assessments_bp.route('/<int:assessment_id>', methods=['DELETE'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('admin', 'superuser')
 def delete_assessment(assessment_id):
@@ -86,6 +89,7 @@ def build_filters(filters, user):
     return conditions
 
 @assessments_bp.route('/averages', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def get_averages():

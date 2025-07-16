@@ -5,6 +5,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import  Student, Worker, User
 from app.extensions import db
 from utils.decorators import role_required
+from flask_cors import cross_origin
 
 upload_bp = Blueprint('uploads', __name__)
 
@@ -22,6 +23,7 @@ def save_file(file, folder):
     return filepath.replace('\\', '/')  # normalize path for JSON
 
 @upload_bp.route('/student/photo/<int:student_id>', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def upload_student_photo(student_id):
@@ -45,6 +47,7 @@ def upload_student_photo(student_id):
     return jsonify({"error": "Invalid file type"}), 400
 
 @upload_bp.route('/worker/files/<int:worker_id>', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('admin', 'superuser')
 def upload_worker_files(worker_id):

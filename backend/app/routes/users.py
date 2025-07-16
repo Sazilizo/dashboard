@@ -6,6 +6,7 @@ from app.extensions import db
 from utils.decorators import role_required
 from werkzeug.security import generate_password_hash
 from datetime import datetime
+from flask_cors import cross_origin
 
 users_bp = Blueprint('users', __name__)
 
@@ -112,6 +113,7 @@ def update_user(user_id):
 
 
 @users_bp.route('/update/me', methods=['PUT'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('superuser', 'admin', 'head_tutor', 'head_coach')
 def update_own_account():
@@ -149,6 +151,7 @@ def update_own_account():
 
 
 @users_bp.route('/<int:user_id>', methods=['DELETE'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('hr')
 def hr_soft_delete_user(user_id):
@@ -189,6 +192,7 @@ def hr_soft_delete_user(user_id):
 
 
 @users_bp.route('/removed', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('superuser')
 def list_removal_reviews():
@@ -205,6 +209,7 @@ def list_removal_reviews():
     ]), 200
 
 @users_bp.route('/<int:user_id>/restore', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('superuser', 'hr')
 def restore_user(user_id):

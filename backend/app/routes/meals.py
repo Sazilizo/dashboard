@@ -6,6 +6,7 @@ from utils.decorators import role_required
 import os
 from werkzeug.utils import secure_filename
 from datetime import datetime
+from flask_cors import cross_origin
 
 meals_bp = Blueprint('meals', __name__)
 
@@ -16,6 +17,7 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 @meals_bp.route('/create-meal', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @limiter.limit("10 per minute")
 @jwt_required()
 @role_required('admin', 'superuser', 'head_coach', 'head_tutor')
@@ -39,6 +41,7 @@ def create_meal():
 
 @limiter.limit("10 per minute")
 @meals_bp.route('/record-meal', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('admin', 'superuser', 'head_coach', 'head_tutor')
 def record_meal():

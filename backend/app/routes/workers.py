@@ -11,6 +11,7 @@ from sqlalchemy import func
 from werkzeug.utils import secure_filename
 from datetime import date, datetime
 from utils.access_control import get_allowed_site_ids
+from flask_cors import cross_origin
 
 workers_bp = Blueprint('workers', __name__)
 
@@ -28,6 +29,7 @@ def save_file(file, prefix=""):
     return None
 
 @workers_bp.route('/', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def list_workers():
     user = User.query.get(get_jwt_identity())
@@ -118,6 +120,7 @@ def list_workers():
 
 
 @workers_bp.route('/create', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('superuser', 'admin', 'hr')
 def create_worker():
@@ -186,6 +189,7 @@ def create_worker():
 
 
 @workers_bp.route('/deleted', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('hr', 'superuser')
 def list_deleted_workers():
@@ -213,6 +217,7 @@ def list_deleted_workers():
 
 
 @workers_bp.route('/<int:worker_id>/restore', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('hr', 'superuser')
 def restore_worker(worker_id):
@@ -231,6 +236,7 @@ def restore_worker(worker_id):
 
 
 @workers_bp.route('/<int:worker_id>', methods=['DELETE'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('hr')
 def delete_worker(worker_id):
@@ -249,6 +255,7 @@ def delete_worker(worker_id):
 
 
 @workers_bp.route('/stats', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('superuser', 'admin', 'hr')
 def worker_stats():
@@ -268,6 +275,7 @@ def worker_stats():
 
 
 @workers_bp.route('/<int:worker_id>/download-docs', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('superuser', 'admin', 'hr')
 def download_worker_documents(worker_id):

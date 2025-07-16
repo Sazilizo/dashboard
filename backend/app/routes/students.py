@@ -7,10 +7,12 @@ from sqlalchemy import func
 from utils.decorators import role_required
 from utils.pagination import apply_pagination_and_search
 from utils.access_control import get_allowed_site_ids
+from flask_cors import cross_origin
 
 students_bp = Blueprint('students', __name__)
 
 @students_bp.route('/', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def list_students():
     user_id = get_jwt_identity()
@@ -93,7 +95,8 @@ def list_students():
     }), 200
 
 @students_bp.route('/create', methods=['POST'])
-@limiter.limit("5 per minute")
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@limiter.limit("20 per minute")
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def create_students():
@@ -146,6 +149,7 @@ def create_students():
 
 @limiter.limit("10 per minute")
 @students_bp.route('/<int:student_id>', methods=['PUT'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def update_student(student_id):
@@ -187,6 +191,7 @@ def update_student(student_id):
     return jsonify({"message": "Student updated"}), 200
 
 @students_bp.route('/attendance/mark', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def mark_attendance():
     data = request.get_json()
@@ -220,6 +225,7 @@ def mark_attendance():
 
 
 @students_bp.route('/attendance/summary', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def get_attendance_summary():
     school_id = request.args.get('school_id', type=int)
@@ -267,6 +273,7 @@ def get_attendance_summary():
 
 
 @students_bp.route('/<int:student_id>/attendance', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def get_student_attendance(student_id):
     student = Student.query.get_or_404(student_id)
@@ -282,6 +289,7 @@ def get_student_attendance(student_id):
     ])
 
 @students_bp.route('/attendance/stats', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def attendance_stats():
     school_id = request.args.get('school_id', type=int)
@@ -313,6 +321,7 @@ def attendance_stats():
     return jsonify(result)
 
 @students_bp.route('/attendance/<int:attendance_id>', methods=['DELETE'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def delete_attendance(attendance_id):
     attendance = AttendanceRecord.query.get_or_404(attendance_id)
@@ -322,6 +331,7 @@ def delete_attendance(attendance_id):
  
 @limiter.limit("3 per minute")
 @students_bp.route('/<int:student_id>', methods=['DELETE'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('admin', 'superuser')
 def delete_student(student_id):
@@ -337,6 +347,7 @@ def delete_student(student_id):
 
 
 @students_bp.route('/deleted', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('admin', 'superuser')
 def list_deleted_students():
@@ -359,6 +370,7 @@ def list_deleted_students():
 
 
 @students_bp.route('/<int:student_id>/restore', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('admin', 'superuser')
 def restore_student(student_id):

@@ -5,6 +5,7 @@ from app.extensions import db
 from werkzeug.utils import secure_filename
 from datetime import datetime
 import os
+from flask_cors import cross_origin
 
 worker_trainings_bp = Blueprint('worker_trainings', __name__)
 UPLOAD_FOLDER = 'uploads/trainings'
@@ -19,6 +20,7 @@ def save_training_photo(file, prefix="training"):
     return None
 
 @worker_trainings_bp.route('/<int:worker_id>/trainings', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def add_training(worker_id):
     worker = Worker.query.get_or_404(worker_id)
@@ -57,6 +59,7 @@ def add_training(worker_id):
 
 
 @worker_trainings_bp.route('/<int:worker_id>/trainings', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def list_trainings(worker_id):
     worker = Worker.query.get_or_404(worker_id)

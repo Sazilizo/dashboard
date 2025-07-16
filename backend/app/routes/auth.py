@@ -9,10 +9,12 @@ from app.extensions import db, jwt, limiter
 from utils.audit import log_event
 import re
 from datetime import datetime, timedelta
+from flask_cors import cross_origin
 
 auth_bp = Blueprint('auth', __name__)
 
 @auth_bp.route('/register', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @limiter.limit("5 per minute", override_defaults=False)
 def register():
     data = request.get_json()
@@ -53,6 +55,7 @@ def register():
 
 
 @auth_bp.route('/login', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @limiter.limit("5 per minute", override_defaults=False)
 def login():
     try:
@@ -97,6 +100,7 @@ def login():
 
 
 @auth_bp.route('/me', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def get_current_user():
     user_id = get_jwt_identity()
@@ -115,6 +119,7 @@ def get_current_user():
 
 
 @auth_bp.route('/refresh', methods=['POST'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required(refresh=True)
 def refresh_access_token():
     try:
