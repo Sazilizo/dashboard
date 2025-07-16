@@ -42,17 +42,26 @@ def summary():
     total_cleaners = base_worker_query.filter(Role.name == "cleaner").count()
 
     # Students by category
-    raw_category_counts = (
-        base_student_query
+    category_counts = {
+        str(category): count
+        for category, count in base_student_query
         .with_entities(Student.category, func.count(Student.id))
         .group_by(Student.category)
         .all()
-    )
-
-    # Convert enum keys to their `.name` string to avoid JSON serialization errors
-    category_counts = {
-        category.name: count for category, count in raw_category_counts
     }
+
+    # Schools data for frontend filter checkboxes
+    school_list = [
+        {
+            "id": school.id,
+            "name": school.name,
+            "address": school.address,
+            "contact_email": school.contact_email,
+            "contact_number": school.contact_number,
+            "logo_url": school.logo_url
+        }
+        for school in base_school_query.order_by(School.name).all()
+    ]
 
     return jsonify({
         "totalStudents": total_students,
@@ -63,5 +72,6 @@ def summary():
         "totalGrades": total_grades,
         "totalMeals": total_meals,
         "totalSites": total_sites,
-        "studentsByCategory": category_counts
+        "studentsByCategory": category_counts,
+        "sites": school_list
     })

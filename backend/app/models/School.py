@@ -6,6 +6,8 @@ class School(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80), nullable=False)
     address = db.Column(db.String(120), nullable=False)
+    contact_number =db.Column(db.String(10), nullable=True)
+    email= db.Column(db.String(80), nullable=True)
 
     workers = db.relationship('Worker', backref='school', lazy=True)
     students = db.relationship('Student', backref='school', lazy=True)
@@ -16,6 +18,8 @@ class School(db.Model):
         return {
             "id": self.id,
             "name": self.name,
-            "address": self.address
+            "address": self.address,
+            "contact_number":self.contact_number,
+            "email":self.email
         }
 

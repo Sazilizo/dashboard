@@ -27,8 +27,8 @@ with app.app_context():
         db.session.commit()
 
         # Create Schools
-        school1 = School(name="Woodlands Primary School", address="123 Main St")
-        school2 = School(name="Dagbreek Primary School", address="456 Another St")
+        school1 = School(name="Woodlands Primary School", address="123 Main St", email="WoodlandsPrimarySchool@gwced.edu.org", contact_number="0216634561")
+        school2 = School(name="Dagbreek Primary School", address="456 Another St", email="DagbreekPrimarySchool@gwced.edu.org", contact_number="0216634561")
         db.session.add_all([school1, school2])
         db.session.commit()
 
