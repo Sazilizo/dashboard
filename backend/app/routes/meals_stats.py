@@ -5,6 +5,7 @@ from app.extensions import db
 from sqlalchemy import func
 from datetime import datetime
 from utils.decorators import role_required
+from utils.access_control import get_allowed_site_ids
 
 meal_stats_bp = Blueprint('meal_stats', __name__)
 
@@ -12,6 +13,10 @@ meal_stats_bp = Blueprint('meal_stats', __name__)
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def daily_stats():
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
     date_str = request.args.get('date')
     if not date_str:
         return jsonify({"error": "Missing required ?date=YYYY-MM-DD"}), 400
@@ -21,42 +26,71 @@ def daily_stats():
     except ValueError:
         return jsonify({"error": "Invalid date format, use YYYY-MM-DD"}), 400
 
+    # Handle multiple site IDs
+    site_param = request.args.get("site_id")
+    try:
+        requested_site_ids = [int(s.strip()) for s in site_param.split(",")] if site_param else []
+        allowed_site_ids = get_allowed_site_ids(user, requested_site_ids)
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
+
+    # 🔍 Filter by allowed school_ids
     stats = db.session.query(
         Meal.type.label("meal_type"),
         func.count(MealDistribution.id).label("count")
-    ).join(Student).filter(MealDistribution.date == date_obj).group_by(Meal.type).all()
+    ).join(Student).filter(
+        Student.school_id.in_(allowed_site_ids),
+        MealDistribution.date == date_obj
+    ).group_by(Meal.type).all()
 
     result = {row.meal_type or "unspecified": row.count for row in stats}
     return jsonify(result), 200
 
 @meal_stats_bp.route('/monthly', methods=['GET'])
 @jwt_required()
+@role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def monthly_stats():
-    school_id = request.args.get('school_id')
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
     year = request.args.get('year', type=int)
     month = request.args.get('month', type=int)
+    site_param = request.args.get("site_id")
 
-    if not school_id or not year or not month:
-        return jsonify({"error": "Provide school_id, year, and month"}), 400
+    # Validate required params
+    if not year or not month:
+        return jsonify({"error": "Provide year and month (e.g. ?year=2025&month=7)"}), 400
 
+    # Parse and validate date range
     try:
         start_date = datetime(year, month, 1).date()
-        end_date = datetime(year + (month // 12), (month % 12) + 1, 1).date()
+        end_month = month % 12 + 1
+        end_year = year + (month // 12)
+        end_date = datetime(end_year, end_month, 1).date()
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": f"Invalid year/month: {e}"}), 400
 
+    # Parse and validate site access
+    try:
+        requested_site_ids = [int(s.strip()) for s in site_param.split(",")] if site_param else []
+        allowed_site_ids = get_allowed_site_ids(user, requested_site_ids)
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
+
+    # Query stats across all allowed sites
     stats = db.session.query(
         MealDistribution.date,
-        Meal.type.label("meal_label"),
+        Meal.type.label("meal_type"),
         func.count(MealDistribution.id).label("count")
     ).join(Meal).join(Student).filter(
-        Student.school_id == int(school_id),
+        Student.school_id.in_(allowed_site_ids),
         MealDistribution.date >= start_date,
         MealDistribution.date < end_date
     ).group_by(MealDistribution.date, Meal.type).order_by(MealDistribution.date).all()
 
+    # Group results by date → meal_type → count
     result = {}
-
     for row in stats:
         date = row.date.isoformat()
         if date not in result:
@@ -117,11 +151,23 @@ def school_meal_aggregate(school_id):
         "fruit_given": result.fruit_given or 0
     }), 200
 
+
 @meal_stats_bp.route('/type-breakdown', methods=['GET'])
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def type_breakdown():
-    school_id = request.args.get('school_id', type=int)
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    # Parse site IDs
+    site_param = request.args.get("site_id")
+    try:
+        requested_site_ids = [int(s.strip()) for s in site_param.split(",")] if site_param else []
+        allowed_site_ids = get_allowed_site_ids(user, requested_site_ids)
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
+
     student_id = request.args.get('student_id', type=int)
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
@@ -131,28 +177,25 @@ def type_breakdown():
         func.count(MealDistribution.id).label('count')
     ).join(Meal).join(Student)
 
-    # Filters
-    if school_id:
-        query = query.filter(Student.school_id == school_id)
+    # Filter by allowed schools
+    query = query.filter(Student.school_id.in_(allowed_site_ids))
+
     if student_id:
         query = query.filter(Student.id == student_id)
+
     if start_date:
         try:
-            start = datetime.strptime(start_date, '%Y-%m-%d').date()
-            query = query.filter(MealDistribution.date >= start)
+            query = query.filter(MealDistribution.date >= datetime.strptime(start_date, '%Y-%m-%d').date())
         except ValueError:
             return jsonify({"error": "Invalid start_date"}), 400
+
     if end_date:
         try:
-            end = datetime.strptime(end_date, '%Y-%m-%d').date()
-            query = query.filter(MealDistribution.date <= end)
+            query = query.filter(MealDistribution.date <= datetime.strptime(end_date, '%Y-%m-%d').date())
         except ValueError:
             return jsonify({"error": "Invalid end_date"}), 400
 
-    query = query.group_by(Meal.type)
+    results = query.group_by(Meal.type).all()
 
-    results = query.all()
-
-    # Format output as type → count
     breakdown = {row.meal_type or "unspecified": row.count for row in results}
     return jsonify(breakdown), 200

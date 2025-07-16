@@ -10,8 +10,7 @@ from io import BytesIO
 from sqlalchemy import func
 from werkzeug.utils import secure_filename
 from datetime import date, datetime
-workers_bp = Blueprint('workers', __name__)
-
+from utils.access_control import get_allowed_site_ids
 
 workers_bp = Blueprint('workers', __name__)
 
@@ -39,29 +38,29 @@ def list_workers():
     per_page = request.args.get('per_page', 10, type=int)
     search_term = request.args.get('search', type=str)
 
-    # Support multi-select filters: ?school_id=1&school_id=2&role_id=76&role_id=77
-    school_ids = request.args.getlist('school_id', type=int)
+    # Multi-select filters
+    raw_site_ids = request.args.getlist('school_id', type=int)
     role_ids = request.args.getlist('role_id', type=int)
 
-    query = Worker.query.filter(Worker.deleted == False)
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, raw_site_ids)
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
 
-    # Optional: enforce user's school by default (unless superuser/admin)
-    if user.role.name not in ["superuser", "admin"] and not school_ids:
-        query = query.filter(Worker.school_id == user.school_id)
-
-    # Optional: allow filtering by multiple schools for admin/superuser
-    if school_ids:
-        query = query.filter(Worker.school_id.in_(school_ids))
+    query = Worker.query.filter(
+        Worker.deleted == False,
+        Worker.school_id.in_(allowed_site_ids)
+    )
 
     if role_ids:
         query = query.filter(Worker.role_id.in_(role_ids))
 
-    # Add pagination + search support
+    # Pagination + Search
     paginated = apply_pagination_and_search(
         query,
         Worker,
         search_term,
-        search_columns=["name", "last_name", "email"],  # Add more fields if needed
+        search_columns=["name", "last_name", "email"],
         page=page,
         per_page=per_page
     )
@@ -72,6 +71,7 @@ def list_workers():
         "page": paginated.page,
         "pages": paginated.pages
     }), 200
+
 
 # @workers_bp.route('/', methods=['GET'])
 # @jwt_required()

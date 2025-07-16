@@ -6,10 +6,9 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func
 from utils.decorators import role_required
 from utils.pagination import apply_pagination_and_search
-
+from utils.access_control import get_allowed_site_ids
 
 students_bp = Blueprint('students', __name__)
-
 
 @students_bp.route('/', methods=['GET'])
 @jwt_required()
@@ -19,6 +18,28 @@ def list_students():
     if not user:
         return jsonify({"error": "User not found"}), 404
 
+    # Check role
+    allowed_roles = ['admin', 'superuser', 'viewer']
+    user_is_elevated = user.role in allowed_roles
+
+    # Get site_id(s) from query
+    site_param = request.args.get("site_id")
+    if site_param:
+        try:
+            requested_site_ids = [int(s.strip()) for s in site_param.split(",")]
+        except ValueError:
+            return jsonify({"error": "Invalid site_id(s)"}), 400
+    else:
+        requested_site_ids = [user.school_id]  # default
+
+    # 🔐 Enforce access control
+    if not user_is_elevated:
+        # Force to only their assigned school
+        if any(site_id != user.school_id for site_id in requested_site_ids):
+            return jsonify({"error": "Access denied to one or more requested sites"}), 403
+        requested_site_ids = [user.school_id]
+
+    # Pagination & filters
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
     search_term = request.args.get('search', type=str)
@@ -27,22 +48,31 @@ def list_students():
     year_filter = request.args.get('year', type=int)
     pe_filter = request.args.get('pe')
 
-    query = Student.query.filter_by(school_id=user.school_id, deleted=False)
+    # Query filtered by allowed school_ids
+    query = Student.query.filter(
+        Student.school_id.in_(requested_site_ids),
+        Student.deleted == False
+    )
 
+    # Extra filters
     if grade_filter:
         query = query.filter(Student.grade == grade_filter)
+
     if category_filter:
         try:
             category_enum = CategoryEnum(category_filter)
             query = query.filter(Student.category == category_enum)
         except ValueError:
             return jsonify({"error": "Invalid category filter"}), 400
+
     if year_filter:
         query = query.filter(Student.year == year_filter)
+
     if pe_filter is not None:
         pe_bool = pe_filter.lower() in ['true', '1', 'yes']
         query = query.filter(Student.physical_education == pe_bool)
 
+    # Pagination + Search
     paginated = apply_pagination_and_search(query, Student, search_term, ['full_name'], page, per_page)
 
     return jsonify({
