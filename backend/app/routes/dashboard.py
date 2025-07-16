@@ -42,12 +42,17 @@ def summary():
     total_cleaners = base_worker_query.filter(Role.name == "cleaner").count()
 
     # Students by category
-    category_counts = dict(
+    raw_category_counts = (
         base_student_query
         .with_entities(Student.category, func.count(Student.id))
         .group_by(Student.category)
         .all()
     )
+
+    # Convert enum keys to their `.name` string to avoid JSON serialization errors
+    category_counts = {
+        category.name: count for category, count in raw_category_counts
+    }
 
     return jsonify({
         "totalStudents": total_students,
