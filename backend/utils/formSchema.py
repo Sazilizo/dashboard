@@ -31,7 +31,7 @@ def generate_schema_from_model(model, model_name):
                 field_schema["type"] = "select"
                 field_schema["options"] = [
                     {"label": school.name, "value": school.id}
-                    for school in School.query.all()
+                    for school in School.query.order_by(School.name).all()
                 ]
             else:
                 field_schema["type"] = "number"
@@ -42,14 +42,16 @@ def generate_schema_from_model(model, model_name):
         elif isinstance(column.type, Enum):
             enum_class = column.type.enum_class
             if enum_class and issubclass(enum_class, enum.Enum):
+                # For enums like CategoryEnum, list options with label & value
                 field_schema["type"] = "select"
                 field_schema["options"] = [
                     {"label": e.value.upper(), "value": e.value}
                     for e in enum_class
                 ]
             else:
+                # fallback for plain enums without class
                 field_schema["type"] = "select"
-                field_schema["options"] = column.type.enums
+                field_schema["options"] = [{"label": v, "value": v} for v in column.type.enums]
 
         elif "date" in str(column.type).lower():
             field_schema["type"] = "date"
