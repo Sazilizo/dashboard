@@ -52,7 +52,7 @@ def create_or_update_assessment(student_id):
         }
     }), 200
 
-@assessments_bp.route('/<int:assessment_id>', methods=['DELETE'])
+@assessments_bp.route('/delete/<int:assessment_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('admin', 'superuser')

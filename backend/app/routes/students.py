@@ -13,7 +13,7 @@ students_bp = Blueprint("students", __name__)
 students_bp.strict_slashes = False
 CORS(students_bp, origins="http://localhost:3000", supports_credentials=True)
 
-students_bp.route("/", methods=["GET"])
+students_bp.route("/list", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def list_students():

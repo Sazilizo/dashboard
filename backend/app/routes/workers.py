@@ -25,7 +25,7 @@ def save_file(file, prefix=""):
         return filepath
     return None
 
-@workers_bp.route('/', methods=['GET'])
+@workers_bp.route('/list', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def list_workers():
@@ -182,7 +182,7 @@ def restore_worker(worker_id):
     db.session.commit()
     return jsonify({"message": "Worker restored successfully"}), 200
 
-@workers_bp.route('/<int:worker_id>', methods=['DELETE'])
+@workers_bp.route('/delete/<int:worker_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('hr')

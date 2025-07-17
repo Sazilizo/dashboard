@@ -12,10 +12,10 @@ from .dashboard import dashboard_bp
 
 def register_routes(app):
     app.register_blueprint(base_bp)
-    app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
-    app.register_blueprint(auth_bp, url_prefix='/auth')
+    app.register_blueprint(dashboard_bp, url_prefix="/dashboard") #works
+    app.register_blueprint(auth_bp, url_prefix='/auth') # works
     app.register_blueprint(upload_bp, url_prefix='/upload')  # now handles worker uploads too
-    app.register_blueprint(workers_bp, url_prefix='/workers')
+    app.register_blueprint(workers_bp, url_prefix='/workers') # works
     app.register_blueprint(students_bp, url_prefix='/students')
     app.register_blueprint(assessments_bp, url_prefix='/assessments')
     app.register_blueprint(student_sessions_bp, url_prefix='/sessions')
