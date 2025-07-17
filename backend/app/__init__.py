@@ -18,7 +18,7 @@ def create_app():
     app.config['PREFERRED_URL_SCHEME'] = 'https'
 
     # Full CORS with credentials
-    CORS(app, origins="http://localhost:3000", supports_credentials=True)
+    CORS(app, resources=r'/*', origins="http://localhost:3000", supports_credentials=True)
 
     db.init_app(app)
     jwt.init_app(app)
