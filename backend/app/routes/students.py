@@ -10,8 +10,8 @@ from utils.access_control import get_allowed_site_ids
 from flask_cors import cross_origin, CORS
 
 students_bp = Blueprint("students", __name__)
-students_bp.strict_slashes = False
-CORS(students_bp, origins="http://localhost:3000", supports_credentials=True)
+# students_bp.strict_slashes = False
+# CORS(students_bp, origins="http://localhost:3000", supports_credentials=True)
 
 students_bp.route("/list", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
