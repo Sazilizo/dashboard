@@ -8,6 +8,7 @@ from utils.decorators import role_required
 from utils.pagination import apply_pagination_and_search
 from utils.access_control import get_allowed_site_ids
 from flask_cors import cross_origin, CORS
+from utils.formSchema import generate_schema_from_model
 
 students_bp = Blueprint("students", __name__)
 # students_bp.strict_slashes = False
@@ -51,6 +52,12 @@ def list_students():
         "page": paginated.page,
         "pages": paginated.pages
     }), 200
+
+@students_bp.route("/form_schema", methods=["GET"])
+@jwt_required()
+def student_form_schema():
+    schema = generate_schema_from_model(Student)
+    return jsonify(schema)
 
 
 @students_bp.route("/create", methods=["POST"])

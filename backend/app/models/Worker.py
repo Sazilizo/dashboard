@@ -27,6 +27,7 @@ class Worker(db.Model, SoftDeleteMixin):
             "name": self.name,
             "last_name": self.last_name,
             "email": self.email,
+            "contact_number": self.contact_number,
             "school_id": self.school_id,
             "role_id": self.role_id,
             "start_date": self.start_date.isoformat() if self.start_date else None,
