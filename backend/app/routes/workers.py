@@ -1,323 +1,262 @@
-from datetime import datetime
-from app.extensions import db, jwt, limiter
-from app.models import Student, User, CategoryEnum, AttendanceRecord
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from sqlalchemy import func
-from utils.decorators import role_and_school_required, session_role_required 
+from app.models import Worker, User, Role
+from app.extensions import db
+from utils.decorators import role_required
 from utils.pagination import apply_pagination_and_search
 from utils.access_control import get_allowed_site_ids
 from flask_cors import cross_origin
+import os
+import zipfile
+from io import BytesIO
+from werkzeug.utils import secure_filename
+from datetime import datetime
+from sqlalchemy import func
 
-students_bp = Blueprint('students', __name__)
+workers_bp = Blueprint('workers', __name__)
+UPLOAD_FOLDER = 'uploads/workers'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-@students_bp.route("/", methods=["GET"])
+def save_file(file, prefix=""):
+    if file:
+        filename = secure_filename(f"{prefix}_{file.filename}")
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(filepath)
+        return filepath
+    return None
+
+@workers_bp.route('/', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@role_and_school_required('superuser', 'admin', 'head_tutor', 'head_coach')  # Updated decorator
-def list_students():
+def list_workers():
     user = User.query.get(get_jwt_identity())
-    
-    page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 10, type=int)
-    search_term = request.args.get("search", type=str)
-    raw_site_ids = request.args.getlist("school_id", type=int)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
 
-    # School access already validated by decorator
-    allowed_site_ids = get_allowed_site_ids(user, raw_site_ids)
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)
+    search_term = request.args.get('search', type=str)
+    raw_site_ids = request.args.getlist('school_id', type=int)
+    role_ids = request.args.getlist('role_id', type=int)
 
-    query = Student.query.filter(
-        Student.deleted == False,
-        Student.school_id.in_(allowed_site_ids)
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, raw_site_ids)
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
+
+    query = Worker.query.filter(
+        Worker.deleted == False,
+        Worker.school_id.in_(allowed_site_ids)
     )
+
+    if role_ids:
+        query = query.filter(Worker.role_id.in_(role_ids))
 
     paginated = apply_pagination_and_search(
         query,
-        Student,
+        Worker,
         search_term,
-        ["name", "surname", "parent_name", "parent_contact"],
-        page,
-        per_page
+        search_columns=["name", "last_name", "email"],
+        page=page,
+        per_page=per_page
     )
 
     return jsonify({
-        "students": [s.to_dict() for s in paginated.items],
+        "workers": [w.to_dict() for w in paginated.items],
         "total": paginated.total,
         "page": paginated.page,
         "pages": paginated.pages
     }), 200
 
-@students_bp.route("/create", methods=["POST"])
+@workers_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@role_and_school_required("superuser", "admin", "head_tutor")  # Updated decorator
-def create_student():
-    user = User.query.get(get_jwt_identity())
-    
-    data = request.get_json()
-    name = data.get("name")
-    surname = data.get("surname")
-    school_id = data.get("school_id")
+@role_required('superuser', 'admin', 'hr')
+def create_worker():
+    name = request.form.get('name')
+    role_id = request.form.get('role_id')
+    school_id = request.form.get('school_id')
+    id_number = request.form.get('id_number')
+    contact_number = request.form.get('contact_number')
+    email = request.form.get('email')
+    start_date_str = request.form.get('start_date')
 
-    if not name or not surname or not school_id:
-        return jsonify({"error": "Missing required fields"}), 400
-
-    # School access already validated by decorator
-    allowed_site_ids = get_allowed_site_ids(user, [school_id])
-
-    student = Student(
-        name=name,
-        surname=surname,
-        grade=data.get("grade"),
-        category=data.get("category"),
-        school_id=school_id,
-        parent_name=data.get("parent_name"),
-        parent_contact=data.get("parent_contact"),
-        permission_pdf=data.get("permission_pdf"),
-        start_date=datetime.strptime(data.get("start_date"), "%Y-%m-%d").date()
-            if data.get("start_date") else None
-    )
-
-    db.session.add(student)
-    db.session.commit()
-
-    return jsonify({"message": "Student created successfully", "student": student.to_dict()}), 201
-
-@limiter.limit("10 per minute")
-@students_bp.route('/update/<int:student_id>', methods=['PUT'])
-@cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@jwt_required()
-@role_and_school_required('head_tutor', 'head_coach', 'admin', 'superuser')  # Updated decorator
-def update_student(student_id):
-    student = Student.query.filter_by(id=student_id, deleted=False).first_or_404()
-    
-    # No more manual school_id checks needed - decorator handles it!
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "No input data provided"}), 400
-
-    if 'full_name' in data:
-        student.full_name = data['full_name'].strip()
-    if 'grade' in data:
-        student.grade = data['grade'].strip()
-    if 'category' in data:
-        try:
-            student.category = CategoryEnum(data['category'])
-        except ValueError:
-            return jsonify({"error": "Invalid category"}), 400
-    if 'physical_education' in data:
-        pe_val = data['physical_education']
-        if isinstance(pe_val, str):
-            pe_val = pe_val.strip().lower() in ['true', '1', 'yes']
-        student.physical_education = pe_val
-    if 'year' in data:
-        try:
-            student.year = int(data['year'])
-        except (ValueError, TypeError):
-            return jsonify({"error": "Year must be an integer"}), 400
-    if 'photo' in data:
-        student.photo = data['photo']
-    if 'parent_permission_pdf' in data:
-        student.parent_permission_pdf = data['parent_permission_pdf']
-
-    db.session.commit()
-    return jsonify({"message": "Student updated"}), 200
-
-@students_bp.route('/attendance/mark', methods=['POST'])
-@cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@jwt_required()
-@role_and_school_required('head_tutor', 'head_coach', 'admin', 'superuser')  # Updated decorator
-def mark_attendance():
-    data = request.get_json()
-    records = data.get('records', [])
-    date_str = data.get('date')
-    
-    if not date_str or not records:
-        return jsonify({"error": "Missing data"}), 400
-
-    date = datetime.strptime(date_str, '%Y-%m-%d').date()
-    user_id = get_jwt_identity()
-
-    # School access is validated by decorator when student_id is in request body
-    for record in records:
-        student_id = record['student_id']
-        status = record['status']  # 'present', 'absent', etc.
-
-        existing = AttendanceRecord.query.filter_by(student_id=student_id, date=date).first()
-        if existing:
-            existing.status = status
-            existing.recorded_by = user_id
-        else:
-            new = AttendanceRecord(
-                student_id=student_id,
-                date=date,
-                status=status,
-                recorded_by=user_id
-            )
-            db.session.add(new)
-
-    db.session.commit()
-    return jsonify({"message": "Attendance recorded"}), 200
-
-@students_bp.route('/attendance/summary', methods=['GET'])
-@cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@jwt_required()
-@role_and_school_required('head_tutor', 'head_coach', 'admin', 'superuser')  # Updated decorator
-def get_attendance_summary():
-    school_id = request.args.get('school_id', type=int)
-    grade = request.args.get('grade')
-    start = request.args.get('start_date')
-    end = request.args.get('end_date')
+    missing = [f for f in ('name', 'role_id', 'school_id') if not request.form.get(f)]
+    if missing:
+        return jsonify({"error": f"Missing required fields: {missing}"}), 400
 
     try:
-        start_date = datetime.strptime(start, "%Y-%m-%d").date() if start else None
-        end_date = datetime.strptime(end, "%Y-%m-%d").date() if end else None
-    except:
-        return jsonify({"error": "Invalid date format"}), 400
+        role_id = int(role_id)
+        school_id = int(school_id)
+    except ValueError:
+        return jsonify({"error": "role_id and school_id must be integers"}), 400
 
-    # School access already validated by decorator
+    try:
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date() if start_date_str else None
+    except ValueError:
+        return jsonify({"error": "Invalid start_date format. Use YYYY-MM-DD"}), 400
+
     user = User.query.get(get_jwt_identity())
-    allowed_site_ids = get_allowed_site_ids(user, [school_id] if school_id else [])
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, [school_id])
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
 
-    query = db.session.query(
-        Student.id.label("student_id"),
-        Student.full_name,
-        AttendanceRecord.date,
-        AttendanceRecord.status
-    ).join(AttendanceRecord).filter(
-        Student.deleted == False,
-        Student.school_id.in_(allowed_site_ids)
+    photo = save_file(request.files.get('photo'), prefix=name)
+    cv_pdf = save_file(request.files.get('cv_pdf'), prefix=name)
+    id_copy_pdf = save_file(request.files.get('id_copy_pdf'), prefix=name)
+    clearance_pdf = save_file(request.files.get('clearance_pdf'), prefix=name)
+    child_protection_pdf = save_file(request.files.get('child_protection_pdf'), prefix=name)
+
+    worker = Worker(
+        name=name.strip(),
+        role_id=role_id,
+        school_id=school_id,
+        id_number=id_number,
+        contact_number=contact_number,
+        email=email,
+        start_date=start_date,
+        photo=photo,
+        cv_pdf=cv_pdf,
+        id_copy_pdf=id_copy_pdf,
+        clearance_pdf=clearance_pdf,
+        child_protection_pdf=child_protection_pdf
     )
 
-    if grade:
-        query = query.filter(Student.grade == grade)
-    if start_date:
-        query = query.filter(AttendanceRecord.date >= start_date)
-    if end_date:
-        query = query.filter(AttendanceRecord.date <= end_date)
+    db.session.add(worker)
+    db.session.commit()
 
-    records = query.order_by(AttendanceRecord.date).all()
+    return jsonify({
+        "message": "Worker created successfully",
+        "worker": {
+            "id": worker.id,
+            "name": worker.name,
+            "role_id": worker.role_id,
+            "school_id": worker.school_id,
+            "email": worker.email,
+            "start_date": worker.start_date.isoformat() if worker.start_date else None
+        }
+    }), 201
 
-    result = {}
-    for r in records:
-        if r.student_id not in result:
-            result[r.student_id] = {
-                "student_name": r.full_name,
-                "attendance": []
-            }
-        result[r.student_id]["attendance"].append({
-            "date": r.date.isoformat(),
-            "status": r.status
-        })
-
-    return jsonify(result)
-
-@students_bp.route('/attendance/<int:student_id>', methods=['GET'])
+@workers_bp.route('/deleted', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@role_and_school_required('head_tutor', 'head_coach', 'admin', 'superuser')  # Updated decorator
-def get_student_attendance(student_id):
-    student = Student.query.get_or_404(student_id)
-    # School access already validated by decorator
+@role_required('hr', 'superuser')
+def list_deleted_workers():
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
 
-    attendance = AttendanceRecord.query.filter_by(student_id=student_id).order_by(AttendanceRecord.date.desc()).all()
+    raw_site_ids = request.args.getlist('school_id', type=int)
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, raw_site_ids)
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
+
+    query = Worker.query.filter(
+        Worker.deleted == True,
+        Worker.school_id.in_(allowed_site_ids)
+    )
 
     return jsonify([
-        {
-            "date": record.date.isoformat(),
-            "status": record.status,
-            "recorded_by": record.recorded_by
-        } for record in attendance
-    ])
+        w.to_dict() for w in query.all()
+    ]), 200
 
-@students_bp.route('/attendance/stats', methods=['GET'])
+@workers_bp.route('/<int:worker_id>/restore', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@role_and_school_required('head_tutor', 'head_coach', 'admin', 'superuser')  # Updated decorator
-def attendance_stats():
-    school_id = request.args.get('school_id', type=int)
-    grade = request.args.get('grade')
-
-    # School access already validated by decorator
+@role_required('hr', 'superuser')
+def restore_worker(worker_id):
+    worker = Worker.query.get_or_404(worker_id)
     user = User.query.get(get_jwt_identity())
-    allowed_site_ids = get_allowed_site_ids(user, [school_id] if school_id else [])
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, [worker.school_id])
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
+
+    if not worker.deleted:
+        return jsonify({"message": "Worker is already active"}), 400
+
+    worker.deleted = False
+    worker.deleted_at = None
+    db.session.commit()
+    return jsonify({"message": "Worker restored successfully"}), 200
+
+@workers_bp.route('/<int:worker_id>', methods=['DELETE'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@jwt_required()
+@role_required('hr')
+def delete_worker(worker_id):
+    worker = Worker.query.get_or_404(worker_id)
+    user = User.query.get(get_jwt_identity())
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, [worker.school_id])
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
+
+    worker.soft_delete()
+    db.session.commit()
+    return jsonify({"message": "Worker soft-deleted successfully"}), 200
+
+@workers_bp.route('/stats', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@jwt_required()
+@role_required('superuser', 'admin', 'hr')
+def worker_stats():
+    user = User.query.get(get_jwt_identity())
+    raw_site_ids = request.args.getlist('school_id', type=int)
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, raw_site_ids)
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
 
     query = db.session.query(
-        AttendanceRecord.status,
-        func.count(AttendanceRecord.id)
-    ).join(Student).filter(
-        Student.school_id.in_(allowed_site_ids)
-    )
+        Role.name.label('role'),
+        func.count(Worker.id).label('count')
+    ).join(Role).filter(
+        Worker.deleted == False,
+        Worker.school_id.in_(allowed_site_ids)
+    ).group_by(Role.name)
 
-    if grade:
-        query = query.filter(Student.grade == grade)
+    return jsonify({role: count for role, count in query.all()}), 200
 
-    query = query.group_by(AttendanceRecord.status)
-    stats = query.all()
-
-    total = sum(count for _, count in stats)
-    result = []
-    for status, count in stats:
-        percent = (count / total) * 100 if total else 0
-        result.append({
-            "status": status,
-            "count": count,
-            "percentage": round(percent, 2)
-        })
-
-    return jsonify(result)
-
-@students_bp.route('/attendance/<int:attendance_id>', methods=['DELETE'])
+@workers_bp.route('/<int:worker_id>/download-docs', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@role_and_school_required('head_tutor', 'head_coach', 'admin', 'superuser')  # Updated decorator
-def delete_attendance(attendance_id):
-    attendance = AttendanceRecord.query.get_or_404(attendance_id)
-    # School access validation handled by decorator through student relationship
-    
-    db.session.delete(attendance)
-    db.session.commit()
-    return jsonify({"message": "Deleted"}), 200
-
-@students_bp.route("/remove/<int:student_id>", methods=["DELETE"])
-@cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@jwt_required()
-@role_and_school_required("superuser", "admin", "head_tutor")  # Updated decorator
-def delete_student(student_id):
-    student = Student.query.get_or_404(student_id)
-    # School access already validated by decorator
-
-    student.soft_delete()
-    db.session.commit()
-    return jsonify({"message": "Student soft-deleted successfully"}), 200
-
-@students_bp.route("/deleted", methods=["GET"])
-@cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@jwt_required()
-@role_and_school_required("superuser", "admin", "head_tutor")  # Updated decorator
-def list_deleted_students():
+@role_required('superuser', 'admin', 'hr')
+def download_worker_documents(worker_id):
+    worker = Worker.query.get_or_404(worker_id)
     user = User.query.get(get_jwt_identity())
-    raw_site_ids = request.args.getlist("school_id", type=int)
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, [worker.school_id])
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
 
-    # School access already validated by decorator
-    allowed_site_ids = get_allowed_site_ids(user, raw_site_ids)
+    file_paths = {
+        "photo": worker.photo,
+        "cv_pdf": worker.cv_pdf,
+        "clearance_pdf": worker.clearance_pdf,
+        "child_protection_pdf": worker.child_protection_pdf,
+        "id_copy_pdf": worker.id_copy_pdf,
+    }
 
-    students = Student.query.filter(
-        Student.deleted == True,
-        Student.school_id.in_(allowed_site_ids)
-    ).all()
+    for i, training in enumerate(worker.trainings):
+        if training.photo:
+            file_paths[f"training_{i+1}_{training.title}.jpg"] = training.photo
 
-    return jsonify([s.to_dict() for s in students]), 200
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zip_file:
+        for label, path in file_paths.items():
+            if path and os.path.exists(path):
+                arcname = f"{worker.name.replace(' ', '_')}/{os.path.basename(path)}"
+                zip_file.write(path, arcname=arcname)
 
-@students_bp.route("/restore/<int:student_id>", methods=["POST"])
-@cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@jwt_required()
-@role_and_school_required("superuser", "admin", "head_tutor")  # Updated decorator
-def restore_student(student_id):
-    student = Student.query.get_or_404(student_id)
-    # School access already validated by decorator
+    zip_buffer.seek(0)
+    zip_filename = f"{worker.name.replace(' ', '_')}_documents.zip"
 
-    student.deleted = False
-    student.deleted_at = None
-    db.session.commit()
-    return jsonify({"message": "Student restored successfully"}), 200
+    return send_file(
+        zip_buffer,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=zip_filename
+    )
