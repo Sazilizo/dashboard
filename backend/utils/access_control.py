@@ -1,3 +1,4 @@
+from app.models import School
 
 def get_allowed_site_ids(user, requested_ids):
     """
@@ -5,14 +6,15 @@ def get_allowed_site_ids(user, requested_ids):
     """
     elevated_roles = {'admin', 'superuser', 'viewer'}
 
-    # Default to user's school
+    # Check role name, not object
+    if user.role.name in elevated_roles:
+        return requested_ids or [school.id for school in School.query.all()]
+
+    # If no site_ids were passed, default to user's own school
     if not requested_ids:
         return [user.school_id]
 
-    if user.role in elevated_roles:
-        return requested_ids
-
-    # Restrict non-elevated users to their own school
+    # Prevent non-elevated users from accessing other schools
     if any(site_id != user.school_id for site_id in requested_ids):
         raise PermissionError("Access denied to one or more requested sites")
 

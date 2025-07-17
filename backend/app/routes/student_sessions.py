@@ -1,8 +1,7 @@
-
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import Student, User, StudentSession, CategoryEnum
-from utils.decorators import role_required, session_role_required
+from utils.decorators import role_required, session_role_required, get_allowed_site_ids
 from werkzeug.utils import secure_filename
 from datetime import datetime
 import os
@@ -38,20 +37,21 @@ def create_session():
     photo_file = request.files.get('photo')
     outcomes = request.form.get('outcomes', '').strip()
 
-    # Fetch student and validate access
-    student = Student.query.get(student_id)
-    if not student:
-        return jsonify({"error": "Student not found"}), 404
-
+    # Validate access
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    if student.school_id != user.school_id:
-        return jsonify({"error": "Access forbidden: school mismatch"}), 403
+    student = Student.query.get(student_id)
+    if not student:
+        return jsonify({"error": "Student not found"}), 404
 
-    # File upload handling
+    allowed_site_ids = get_allowed_site_ids(user)
+    if student.school_id not in allowed_site_ids:
+        return jsonify({"error": "Access forbidden: not allowed to access this student's school"}), 403
+
+    # File handling
     filename = None
     if photo_file:
         if allowed_file(photo_file.filename):
@@ -63,10 +63,6 @@ def create_session():
         else:
             return jsonify({"error": "Invalid file type"}), 400
 
-    # Capture category + PE status
-    category = student.category
-    pe_flag = student.physical_education
-
     session = StudentSession(
         student_id=student.id,
         user_id=user_id,
@@ -75,8 +71,8 @@ def create_session():
         duration_hours=duration_hours,
         photo=filename,
         outcomes=outcomes,
-        category=category,
-        physical_education=pe_flag
+        category=student.category,
+        physical_education=student.physical_education
     )
     db.session.add(session)
     db.session.commit()
@@ -84,8 +80,8 @@ def create_session():
     return jsonify({
         "message": "Session recorded",
         "session_id": session.id,
-        "category": category.value,
-        "physical_education": pe_flag
+        "category": session.category.value,
+        "physical_education": session.physical_education
     }), 201
 
 
@@ -99,6 +95,8 @@ def list_sessions():
     if not user:
         return jsonify({"error": "User not found"}), 404
 
+    allowed_site_ids = get_allowed_site_ids(user)
+
     grade = request.args.get('grade')
     category = request.args.get('category')
     pe_filter = request.args.get('pe')
@@ -109,7 +107,7 @@ def list_sessions():
     per_page = request.args.get('per_page', 20, type=int)
 
     query = StudentSession.query.join(Student).filter(
-        Student.school_id == user.school_id,
+        Student.school_id.in_(allowed_site_ids),
         Student.deleted == False
     )
 
@@ -164,15 +162,15 @@ def list_sessions():
         "page": paginated.page,
         "pages": paginated.pages
     }), 200
-   
-@student_sessions_bp.route('/bulk_ upload', methods=['POST'])
+
+
+@student_sessions_bp.route('/bulk_upload', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def bulk_upload_sessions():
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
-
     if not user:
         return jsonify({"error": "User not found"}), 404
 
@@ -182,18 +180,21 @@ def bulk_upload_sessions():
     file = request.files['file']
     photo_zip = request.files.get('photos')  # Optional
 
-    # Validate filters
+    # Filters
     grade_filter = request.form.get('grade')
     category_filter = request.form.get('category')
     pe_filter = request.form.get('pe')
 
+    allowed_site_ids = get_allowed_site_ids(user)
 
-    # Load student map (filtered)
-    student_query = Student.query.filter(Student.school_id == user.school_id, Student.deleted == False)
+    # Student filtering
+    student_query = Student.query.filter(
+        Student.school_id.in_(allowed_site_ids),
+        Student.deleted == False
+    )
     if grade_filter:
         student_query = student_query.filter(Student.grade == grade_filter)
     if category_filter:
-        from app.models import CategoryEnum
         try:
             category_enum = CategoryEnum(category_filter)
             student_query = student_query.filter(Student.category == category_enum)
@@ -207,21 +208,26 @@ def bulk_upload_sessions():
     if not student_map:
         return jsonify({"error": "No students matched the filters"}), 400
 
-    # Extract CSV
     ext = file.filename.rsplit('.', 1)[1].lower()
-    if ext == 'csv':
-        df = pd.read_csv(file)
-    elif ext in ['xls', 'xlsx']:
-        df = pd.read_excel(file)
-    else:
-        return jsonify({"error": "Unsupported file format. Use CSV or Excel."}), 400
+    try:
+        if ext == 'csv':
+            df = pd.read_csv(file)
+        elif ext in ['xls', 'xlsx']:
+            df = pd.read_excel(file)
+        else:
+            return jsonify({"error": "Unsupported file format. Use CSV or Excel."}), 400
+    except Exception as e:
+        return jsonify({"error": "Failed to read file", "details": str(e)}), 400
 
-    # Load ZIP photos if provided
+    # Photo handling
     photo_files = {}
     if photo_zip:
-        zip_data = zipfile.ZipFile(BytesIO(photo_zip.read()))
-        for name in zip_data.namelist():
-            photo_files[name] = zip_data.read(name)
+        try:
+            zip_data = zipfile.ZipFile(BytesIO(photo_zip.read()))
+            for name in zip_data.namelist():
+                photo_files[name] = zip_data.read(name)
+        except Exception as e:
+            return jsonify({"error": "Failed to read ZIP file", "details": str(e)}), 400
 
     created_sessions = []
 
@@ -233,12 +239,11 @@ def bulk_upload_sessions():
         try:
             date_obj = datetime.strptime(str(row['date']), '%Y-%m-%d').date()
             duration = float(row['duration_hours'])
-        except Exception as e:
-            continue  # Skip malformed rows
+        except Exception:
+            continue
 
         photo_filename = row.get('photo_filename')
         saved_photo = None
-
         if photo_filename and photo_filename in photo_files:
             secure_name = secure_filename(photo_filename)
             photo_path = os.path.join(current_app.config['UPLOAD_FOLDER'], 'session_photos')
@@ -247,6 +252,7 @@ def bulk_upload_sessions():
                 f.write(photo_files[photo_filename])
             saved_photo = secure_name
 
+        student = student_map[student_id]
         session = StudentSession(
             student_id=student_id,
             user_id=user.id,
@@ -254,7 +260,9 @@ def bulk_upload_sessions():
             date=date_obj,
             duration_hours=duration,
             outcomes=row.get('outcomes'),
-            photo=saved_photo
+            photo=saved_photo,
+            category=student.category,
+            physical_education=student.physical_education
         )
         db.session.add(session)
         created_sessions.append(session)

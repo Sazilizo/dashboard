@@ -11,144 +11,88 @@ from flask_cors import cross_origin
 
 students_bp = Blueprint('students', __name__)
 
-@students_bp.route('/', methods=['GET'])
+students_bp.route("/", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def list_students():
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
+    user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    # Check role
-    allowed_roles = ['admin', 'superuser', 'viewer']
-    user_is_elevated = user.role in allowed_roles
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 10, type=int)
+    search_term = request.args.get("search", type=str)
+    raw_site_ids = request.args.getlist("school_id", type=int)
 
-    # Get site_id(s) from query
-    site_param = request.args.get("site_id")
-    if site_param:
-        try:
-            requested_site_ids = [int(s.strip()) for s in site_param.split(",")]
-        except ValueError:
-            return jsonify({"error": "Invalid site_id(s)"}), 400
-    else:
-        requested_site_ids = [user.school_id]  # default
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, raw_site_ids)
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
 
-    # 🔐 Enforce access control
-    if not user_is_elevated:
-        # Force to only their assigned school
-        if any(site_id != user.school_id for site_id in requested_site_ids):
-            return jsonify({"error": "Access denied to one or more requested sites"}), 403
-        requested_site_ids = [user.school_id]
-
-    # Pagination & filters
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 10, type=int)
-    search_term = request.args.get('search', type=str)
-    grade_filter = request.args.get('grade', type=str)
-    category_filter = request.args.get('category', type=str)
-    year_filter = request.args.get('year', type=int)
-    pe_filter = request.args.get('pe')
-
-    # Query filtered by allowed school_ids
     query = Student.query.filter(
-        Student.school_id.in_(requested_site_ids),
-        Student.deleted == False
+        Student.deleted == False,
+        Student.school_id.in_(allowed_site_ids)
     )
 
-    # Extra filters
-    if grade_filter:
-        query = query.filter(Student.grade == grade_filter)
-
-    if category_filter:
-        try:
-            category_enum = CategoryEnum(category_filter)
-            query = query.filter(Student.category == category_enum)
-        except ValueError:
-            return jsonify({"error": "Invalid category filter"}), 400
-
-    if year_filter:
-        query = query.filter(Student.year == year_filter)
-
-    if pe_filter is not None:
-        pe_bool = pe_filter.lower() in ['true', '1', 'yes']
-        query = query.filter(Student.physical_education == pe_bool)
-
-    # Pagination + Search
-    paginated = apply_pagination_and_search(query, Student, search_term, ['full_name'], page, per_page)
+    paginated = apply_pagination_and_search(
+        query,
+        Student,
+        search_term,
+        ["name", "surname", "parent_name", "parent_contact"],
+        page,
+        per_page
+    )
 
     return jsonify({
-        'students': [{
-            'id': s.id,
-            'full_name': s.full_name,
-            'grade': s.grade,
-            'category': s.category.value,
-            'physical_education': s.physical_education,
-            'year': s.year,
-            'school_id': s.school_id,
-            'photo': s.photo,
-            'parent_permission_pdf': s.parent_permission_pdf
-        } for s in paginated.items],
-        'total': paginated.total,
-        'page': paginated.page,
-        'pages': paginated.pages
+        "students": [s.to_dict() for s in paginated.items],
+        "total": paginated.total,
+        "page": paginated.page,
+        "pages": paginated.pages
     }), 200
 
-@students_bp.route('/create', methods=['POST'])
+
+@students_bp.route("/create", methods=["POST"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@limiter.limit("20 per minute")
 @jwt_required()
-@role_required('head_tutor', 'head_coach', 'admin', 'superuser')
-def create_students():
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
+@role_required("superuser", "admin", "head_tutor")
+def create_student():
+    user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({"error": "User not found"}), 404
 
     data = request.get_json()
-    if not data:
-        return jsonify({"error": "No input data provided"}), 400
+    name = data.get("name")
+    surname = data.get("surname")
+    school_id = data.get("school_id")
 
-    students_data = data if isinstance(data, list) else [data]
-    created_students = []
+    if not name or not surname or not school_id:
+        return jsonify({"error": "Missing required fields"}), 400
 
-    for idx, item in enumerate(students_data, start=1):
-        required = ['full_name', 'grade', 'category', 'year']
-        missing = [field for field in required if field not in item]
-        if missing:
-            return jsonify({"error": f"Missing required fields in entry {idx}: {missing}"}), 400
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, [school_id])
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
 
-        try:
-            category_enum = CategoryEnum(item['category'])
-        except ValueError:
-            return jsonify({"error": f"Invalid category value in entry {idx}: {item['category']}"}), 400
+    student = Student(
+        name=name,
+        surname=surname,
+        grade=data.get("grade"),
+        category=data.get("category"),
+        school_id=school_id,
+        parent_name=data.get("parent_name"),
+        parent_contact=data.get("parent_contact"),
+        permission_pdf=data.get("permission_pdf"),
+        start_date=datetime.strptime(data.get("start_date"), "%Y-%m-%d").date()
+            if data.get("start_date") else None
+    )
 
-        pe_value = item.get('physical_education', False)
-        if isinstance(pe_value, str):
-            pe_value = pe_value.strip().lower() in ['true', '1', 'yes']
-
-        student = Student(
-            full_name=item['full_name'].strip(),
-            grade=item['grade'].strip(),
-            category=category_enum,
-            physical_education=pe_value,
-            year=int(item['year']),
-            school_id=user.school_id,
-            photo=item.get('photo'),
-            parent_permission_pdf=item.get('parent_permission_pdf')
-        )
-        db.session.add(student)
-        created_students.append(student)
-
+    db.session.add(student)
     db.session.commit()
 
-    return jsonify({
-        "message": f"{len(created_students)} student(s) created successfully.",
-        "students": [{"id": s.id, "full_name": s.full_name} for s in created_students]
-    }), 201
+    return jsonify({"message": "Student created successfully", "student": student.to_dict()}), 201
 
 @limiter.limit("10 per minute")
-@students_bp.route('/<int:student_id>', methods=['PUT'])
+@students_bp.route('/update/<int:student_id>', methods=['PUT'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
@@ -272,7 +216,7 @@ def get_attendance_summary():
     return jsonify(result)
 
 
-@students_bp.route('/<int:student_id>/attendance', methods=['GET'])
+@students_bp.route('/attendance/<int:student_id>', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def get_student_attendance(student_id):
@@ -329,59 +273,68 @@ def delete_attendance(attendance_id):
     db.session.commit()
     return jsonify({"message": "Deleted"}), 200
  
-@limiter.limit("3 per minute")
-@students_bp.route('/<int:student_id>', methods=['DELETE'])
+
+@students_bp.route("/remove/<int:student_id>", methods=["DELETE"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@role_required('admin', 'superuser')
+@role_required("superuser", "admin", "head_tutor")
 def delete_student(student_id):
-    student = Student.query.filter_by(id=student_id, deleted=False).first_or_404()
     user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
 
-    if not user or user.school_id != student.school_id:
-        return jsonify({"error": "Access forbidden: school mismatch"}), 403
+    student = Student.query.get_or_404(student_id)
+
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, [student.school_id])
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
 
     student.soft_delete()
     db.session.commit()
-    return jsonify({"message": "Student soft-deleted"}), 200
+    return jsonify({"message": "Student soft-deleted successfully"}), 200
 
 
-@students_bp.route('/deleted', methods=['GET'])
+@students_bp.route("/deleted", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@role_required('admin', 'superuser')
+@role_required("superuser", "admin", "head_tutor")
 def list_deleted_students():
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    deleted_students = Student.query.filter_by(school_id=user.school_id, deleted=True).all()
+    raw_site_ids = request.args.getlist("school_id", type=int)
 
-    return jsonify({
-        "deleted_students": [{
-            "id": s.id,
-            "full_name": s.full_name,
-            "grade": s.grade,
-            "year": s.year,
-            "category": s.category.value,
-            "deleted_at": s.deleted_at.isoformat() if s.deleted_at else None
-        } for s in deleted_students]
-    }), 200
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, raw_site_ids)
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
 
+    students = Student.query.filter(
+        Student.deleted == True,
+        Student.school_id.in_(allowed_site_ids)
+    ).all()
 
-@students_bp.route('/<int:student_id>/restore', methods=['POST'])
+    return jsonify([s.to_dict() for s in students]), 200
+@students_bp.route("/restore/<int:student_id>", methods=["POST"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@role_required('admin', 'superuser')
+@role_required("superuser", "admin", "head_tutor")
 def restore_student(student_id):
-    student = Student.query.filter_by(id=student_id, deleted=True).first()
-    if not student:
-        return jsonify({"error": "Deleted student not found"}), 404
-
     user = User.query.get(get_jwt_identity())
-    if not user or user.school_id != student.school_id:
-        return jsonify({"error": "Access forbidden: school mismatch"}), 403
+    if not user:
+        return jsonify({"error": "User not found"}), 404
 
-    student.restore()
+    student = Student.query.get_or_404(student_id)
+
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, [student.school_id])
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
+
+    student.deleted = False
+    student.deleted_at = None
     db.session.commit()
     return jsonify({"message": "Student restored successfully"}), 200
+
