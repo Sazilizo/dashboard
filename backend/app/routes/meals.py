@@ -40,18 +40,28 @@ def create_meal():
     db.session.commit()
     return jsonify({"message": "Meal created", "meal_id": meal.id}), 201
 
+from flask_jwt_extended import get_jwt_identity
+from app.models import Meal, MealDistribution, User
+from utils.formSchema import generate_schema_from_model
+
 @meals_bp.route("/form_schema", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-def student_form_schema():
+def form_schema():
     model_name = request.args.get("model", "Meal")  # Default to "Meal"
+    
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+
     if model_name == "Meal":
-        schema = generate_schema_from_model(Meal, "Meal")
+        schema = generate_schema_from_model(Meal, "Meal", current_user=current_user)
     elif model_name == "MealDistribution":
-        schema = generate_schema_from_model(MealDistribution, "MealDistribution")
+        schema = generate_schema_from_model(MealDistribution, "MealDistribution", current_user=current_user)
     else:
         return jsonify({"error": "Invalid model for schema"}), 400
+
     return jsonify(schema)
+
 
 @limiter.limit("10 per minute")
 @meals_bp.route('/record', methods=['POST'])

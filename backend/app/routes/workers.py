@@ -73,8 +73,8 @@ def list_workers():
 @workers_bp.route("/form_schema", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-def student_form_schema():
-    schema = generate_schema_from_model(Worker, "Worker")
+def form_schema():
+    schema = generate_schema_from_model(Worker, "Worker",)
     return jsonify(schema)
 
 @workers_bp.route('/create', methods=['POST'])

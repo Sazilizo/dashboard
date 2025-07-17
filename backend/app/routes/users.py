@@ -26,7 +26,7 @@ def list_users():
 @users_bp.route("/form_schema", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-def student_form_schema():
+def form_schema():
     schema = generate_schema_from_model(User, "User")
     return jsonify(schema)
 
