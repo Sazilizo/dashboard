@@ -12,6 +12,8 @@ from io import BytesIO
 from werkzeug.utils import secure_filename
 from datetime import datetime
 from sqlalchemy import func
+from utils.formSchema import generate_schema_from_model
+
 
 workers_bp = Blueprint('workers', __name__)
 UPLOAD_FOLDER = 'uploads/workers'
@@ -67,6 +69,13 @@ def list_workers():
         "page": paginated.page,
         "pages": paginated.pages
     }), 200
+
+@workers_bp.route("/form_schema", methods=["GET"])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@jwt_required()
+def student_form_schema():
+    schema = generate_schema_from_model(Worker, "Worker")
+    return jsonify(schema)
 
 @workers_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)

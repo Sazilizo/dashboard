@@ -57,7 +57,7 @@ def list_students():
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def student_form_schema():
-    schema = generate_schema_from_model(Student)
+    schema = generate_schema_from_model(Student, "Student")
     return jsonify(schema)
 
 
