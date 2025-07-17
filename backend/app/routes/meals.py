@@ -44,7 +44,13 @@ def create_meal():
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def student_form_schema():
-    schema = generate_schema_from_model(Meal, "Meal")
+    model_name = request.args.get("model", "Meal")  # Default to "Meal"
+    if model_name == "Meal":
+        schema = generate_schema_from_model(Meal, "Meal")
+    elif model_name == "MealDistribution":
+        schema = generate_schema_from_model(MealDistribution, "MealDistribution")
+    else:
+        return jsonify({"error": "Invalid model for schema"}), 400
     return jsonify(schema)
 
 @limiter.limit("10 per minute")
