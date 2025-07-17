@@ -7,9 +7,10 @@ from sqlalchemy import func
 from utils.decorators import role_required
 from utils.pagination import apply_pagination_and_search
 from utils.access_control import get_allowed_site_ids
-from flask_cors import cross_origin
+from flask_cors import cross_origin, CORS
 
-students_bp = Blueprint('students', __name__)
+students_bp = Blueprint("students", __name__)
+CORS(students_bp, origins="http://localhost:3000", supports_credentials=True)
 
 students_bp.route("/", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
