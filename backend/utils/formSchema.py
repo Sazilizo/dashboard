@@ -1,8 +1,9 @@
-from sqlalchemy import String, Integer, Date, Boolean, Enum
-from app.models import CategoryEnum
+from app.models import School
+from sqlalchemy import Boolean, Integer, String, Enum
+import enum
 
-def generate_schema_from_model(model, model_name: str):
-    exclude_fields = {'id', 'created_at', 'deleted_at', 'updated_at', 'deleted'}
+def generate_schema_from_model(model, model_name):
+    exclude_fields = {"id", "created_at", "updated_at", "deleted_at"}
 
     schema = []
     for column in model.__table__.columns:
@@ -10,40 +11,55 @@ def generate_schema_from_model(model, model_name: str):
         if name in exclude_fields:
             continue
 
-        field = {
+        field_schema = {
             "name": name,
             "label": name.replace("_", " ").title(),
-            "upload": False  # default: not a file field
+            "required": not column.nullable and not column.default,
         }
 
-        # Type detection
+        # Detect field type
         if isinstance(column.type, String):
-            if name.endswith('_pdf') or name == 'photo':
-                field["type"] = "file"
-                field["upload"] = True
-                field["upload_url"] = get_upload_url(model_name, name)
+            if "photo" in name or "pdf" in name or "file" in name:
+                field_schema["type"] = "file"
+            elif "email" in name:
+                field_schema["type"] = "email"
             else:
-                field["type"] = "text"
+                field_schema["type"] = "text"
+
         elif isinstance(column.type, Integer):
-            field["type"] = "number"
-        elif isinstance(column.type, Date):
-            field["type"] = "date"
+            if name == "school_id":
+                field_schema["type"] = "select"
+                field_schema["options"] = [
+                    {"label": school.name, "value": school.id}
+                    for school in School.query.all()
+                ]
+            else:
+                field_schema["type"] = "number"
+
         elif isinstance(column.type, Boolean):
-            field["type"] = "checkbox"
+            field_schema["type"] = "checkbox"
+
         elif isinstance(column.type, Enum):
-            field["type"] = "select"
-            field["options"] = [e.value for e in column.type.enum_class]
+            enum_class = column.type.enum_class
+            if enum_class and issubclass(enum_class, enum.Enum):
+                field_schema["type"] = "select"
+                field_schema["options"] = [
+                    {"label": e.value.upper(), "value": e.value}
+                    for e in enum_class
+                ]
+            else:
+                field_schema["type"] = "select"
+                field_schema["options"] = column.type.enums
+
+        elif "date" in str(column.type).lower():
+            field_schema["type"] = "date"
+
         else:
-            field["type"] = "text"
+            field_schema["type"] = "text"
 
-        schema.append(field)
+        schema.append(field_schema)
 
-    return schema
-
-
-def get_upload_url(model_name, field_name):
-    if model_name == 'student' and field_name == 'photo':
-        return "/upload/student/photo/:id"
-    elif model_name == 'worker':
-        return "/upload/worker/files/:id"
-    return None
+    return {
+        "model": model_name,
+        "fields": schema,
+    }
