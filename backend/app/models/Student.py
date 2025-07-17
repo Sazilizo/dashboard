@@ -21,6 +21,20 @@ class Student(db.Model, SoftDeleteMixin):
     meal_logs = db.relationship('MealDistribution', backref='student', lazy=True)
     attendance_records = db.relationship('AttendanceRecord', back_populates='student')
 
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "full_name": self.full_name,
+            "grade": self.grade,
+            "category": self.category.value if self.category else None,
+            "physical_education": self.physical_education,
+            "year": self.year,
+            "school_id": self.school_id,
+            "photo": self.photo,
+            "parent_permission_pdf": self.parent_permission_pdf,
+        }
+
+
 
 
 class Assessment(db.Model):
