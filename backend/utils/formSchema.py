@@ -58,7 +58,7 @@ def generate_schema_from_model(model, model_name, current_user=None):
             elif name == "recorded_by":
                 if current_user:
                     field_schema["type"] = "text"
-                    field_schema["default"] = current_user.full_name
+                    field_schema["default"] = current_user.username
                     field_schema["readonly"] = True
                 else:
                     field_schema["type"] = "text"
