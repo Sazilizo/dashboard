@@ -7,6 +7,7 @@ from utils.decorators import role_required
 from werkzeug.security import generate_password_hash
 from datetime import datetime
 from flask_cors import cross_origin
+from utils.formSchema import generate_schema_from_model
 
 users_bp = Blueprint('users', __name__)
 
@@ -22,6 +23,12 @@ def list_users():
         'school_id': u.school_id
     } for u in users]), 200
 
+@users_bp.route("/form_schema", methods=["GET"])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@jwt_required()
+def student_form_schema():
+    schema = generate_schema_from_model(Users, "Users")
+    return jsonify(schema)
 
 @users_bp.route('/create', methods=['POST'])
 @jwt_required()
@@ -73,7 +80,7 @@ def create_user():
     }), 201
 
 
-@users_bp.route('/<int:user_id>', methods=['PUT'])
+@users_bp.route('update/<int:user_id>', methods=['PUT'])
 @jwt_required()
 @role_required('superuser', 'hr')
 def update_user(user_id):
@@ -150,7 +157,7 @@ def update_own_account():
     }), 200
 
 
-@users_bp.route('/<int:user_id>', methods=['DELETE'])
+@users_bp.route('remove/<int:user_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('hr')
@@ -208,7 +215,7 @@ def list_removal_reviews():
         } for r in reviews
     ]), 200
 
-@users_bp.route('/<int:user_id>/restore', methods=['POST'])
+@users_bp.route('/restore/<int:user_id>', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('superuser', 'hr')

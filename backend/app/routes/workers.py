@@ -171,7 +171,7 @@ def list_deleted_workers():
         w.to_dict() for w in query.all()
     ]), 200
 
-@workers_bp.route('/<int:worker_id>/restore', methods=['POST'])
+@workers_bp.route('/restore/<int:worker_id>/', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('hr', 'superuser')
@@ -191,7 +191,7 @@ def restore_worker(worker_id):
     db.session.commit()
     return jsonify({"message": "Worker restored successfully"}), 200
 
-@workers_bp.route('/delete/<int:worker_id>', methods=['DELETE'])
+@workers_bp.route('/remove/<int:worker_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('hr')
@@ -229,7 +229,7 @@ def worker_stats():
 
     return jsonify({role: count for role, count in query.all()}), 200
 
-@workers_bp.route('/<int:worker_id>/download-docs', methods=['GET'])
+@workers_bp.route('/download/<int:worker_id>/', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('superuser', 'admin', 'hr')

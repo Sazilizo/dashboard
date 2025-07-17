@@ -19,7 +19,7 @@ def save_training_photo(file, prefix="training"):
         return path
     return None
 
-@worker_trainings_bp.route('/<int:worker_id>/trainings', methods=['POST'])
+@worker_trainings_bp.route('/record/<int:worker_id>/', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def add_training(worker_id):
@@ -58,7 +58,7 @@ def add_training(worker_id):
     return jsonify({"message": "Training added"}), 201
 
 
-@worker_trainings_bp.route('/<int:worker_id>/trainings', methods=['GET'])
+@worker_trainings_bp.route('list/<int:worker_id>/', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def list_trainings(worker_id):

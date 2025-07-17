@@ -157,7 +157,7 @@ def school_meal_aggregate(school_id):
     }), 200
 
 
-@meal_stats_bp.route('/type-breakdown', methods=['GET'])
+@meal_stats_bp.route('/type/breakdown', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')

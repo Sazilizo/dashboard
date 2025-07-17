@@ -7,6 +7,7 @@ import os
 from werkzeug.utils import secure_filename
 from datetime import datetime
 from flask_cors import cross_origin
+from utils.formSchema import generate_schema_from_model
 
 meals_bp = Blueprint('meals', __name__)
 
@@ -16,7 +17,7 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@meals_bp.route('/create-meal', methods=['POST'])
+@meals_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @limiter.limit("10 per minute")
 @jwt_required()
@@ -39,8 +40,15 @@ def create_meal():
     db.session.commit()
     return jsonify({"message": "Meal created", "meal_id": meal.id}), 201
 
+@meals_bp.route("/form_schema", methods=["GET"])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@jwt_required()
+def student_form_schema():
+    schema = generate_schema_from_model(Meal, "Meal")
+    return jsonify(schema)
+
 @limiter.limit("10 per minute")
-@meals_bp.route('/record-meal', methods=['POST'])
+@meals_bp.route('/record', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('admin', 'superuser', 'head_coach', 'head_tutor')

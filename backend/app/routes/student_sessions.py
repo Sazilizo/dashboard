@@ -9,6 +9,8 @@ from io import BytesIO
 import zipfile, pandas as pd
 from app.extensions import db
 from flask_cors import cross_origin
+from utils.formSchema import generate_schema_from_model
+
 
 student_sessions_bp = Blueprint('student_sessions', __name__)
 
@@ -17,7 +19,14 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@student_sessions_bp.route('/create_session', methods=['POST'])
+@student_sessions_bp.route("/form_schema", methods=["GET"])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@jwt_required()
+def student_form_schema():
+    schema = generate_schema_from_model(StudentSession, "StudentSession")
+    return jsonify(schema)
+
+@student_sessions_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @session_role_required()
@@ -85,7 +94,7 @@ def create_session():
     }), 201
 
 
-@student_sessions_bp.route('/list_sessions', methods=['GET'])
+@student_sessions_bp.route('/sessions', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @session_role_required()
@@ -164,7 +173,7 @@ def list_sessions():
     }), 200
 
 
-@student_sessions_bp.route('/bulk_upload', methods=['POST'])
+@student_sessions_bp.route('/bulkupload', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
