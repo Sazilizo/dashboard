@@ -22,7 +22,7 @@ def allowed_file(filename):
 
 @student_sessions_bp.route("/form_schema", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def form_schema():
     schema = generate_schema_from_model(StudentSession, "StudentSession")
@@ -31,7 +31,7 @@ def form_schema():
 
 @student_sessions_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @session_role_required()
 def create_session():
@@ -124,7 +124,7 @@ def create_session():
 
 @student_sessions_bp.route('/sessions', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @session_role_required()
 def list_sessions():
@@ -204,7 +204,7 @@ def list_sessions():
 
 @student_sessions_bp.route('/bulkupload', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def bulk_upload_sessions():

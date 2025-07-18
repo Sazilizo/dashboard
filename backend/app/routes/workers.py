@@ -30,7 +30,7 @@ def save_file(file, prefix=""):
 
 @workers_bp.route('/list', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def list_workers():
     user = User.query.get(get_jwt_identity())
@@ -74,7 +74,7 @@ def list_workers():
 
 @workers_bp.route("/form_schema", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def form_schema():
     schema = generate_schema_from_model(Worker, "Worker",)
@@ -82,7 +82,7 @@ def form_schema():
 
 @workers_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('superuser', 'hr')
 def create_worker():
@@ -153,7 +153,7 @@ def create_worker():
 
 @workers_bp.route('/update/<int:worker_id>', methods=['PUT'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('superuser', 'hr')
 def update_worker(worker_id):
@@ -238,7 +238,7 @@ def update_worker(worker_id):
 
 @workers_bp.route('/deleted', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('admin','hr', 'superuser')
 def list_deleted_workers():
@@ -263,7 +263,7 @@ def list_deleted_workers():
 
 @workers_bp.route('/restore/<int:worker_id>/', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('hr', 'superuser')
 def restore_worker(worker_id):
@@ -284,7 +284,7 @@ def restore_worker(worker_id):
 
 @workers_bp.route('/remove/<int:worker_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('hr')
 def delete_worker(worker_id):
@@ -301,7 +301,7 @@ def delete_worker(worker_id):
 
 @workers_bp.route('/stats', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('superuser', 'admin', 'hr')
 def worker_stats():
@@ -324,7 +324,7 @@ def worker_stats():
 
 @workers_bp.route('/download/<int:worker_id>/', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('superuser', 'admin', 'hr')
 def download_worker_documents(worker_id):

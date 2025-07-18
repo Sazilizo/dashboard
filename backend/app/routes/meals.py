@@ -20,7 +20,7 @@ def allowed_file(filename):
 @meals_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @limiter.limit("10 per minute")
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('admin', 'superuser', 'head_coach', 'head_tutor')
 def create_meal():
@@ -47,7 +47,7 @@ from utils.formSchema import generate_schema_from_model
 
 @meals_bp.route("/form_schema", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def form_schema():
     model_name = request.args.get("model", "Meal")  # Default to "Meal"
@@ -68,7 +68,7 @@ def form_schema():
 @limiter.limit("10 per minute")
 @meals_bp.route('/record', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('admin', 'superuser', 'head_coach', 'head_tutor')
 def record_meal():

@@ -22,7 +22,7 @@ def save_training_photo(file, prefix="training"):
 
 @worker_trainings_bp.route('/record/<int:worker_id>/', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def add_training(worker_id):
     worker = Worker.query.get_or_404(worker_id)
@@ -62,7 +62,7 @@ def add_training(worker_id):
 
 @worker_trainings_bp.route('list/<int:worker_id>/', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def list_trainings(worker_id):
     worker = Worker.query.get_or_404(worker_id)

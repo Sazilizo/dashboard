@@ -7,7 +7,7 @@ from utils.maintenance import maintenance_guard
 dashboard_bp = Blueprint('dashboard', __name__)
 
 @dashboard_bp.route('/summary')
-@maintenance_guard()
+# @maintenance_guard()
 def summary():
     site_ids = request.args.get('site_id')
 

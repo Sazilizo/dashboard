@@ -14,7 +14,7 @@ meal_stats_bp = Blueprint('meal_stats', __name__)
 
 @meal_stats_bp.route('/daily', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def daily_stats():
@@ -53,7 +53,7 @@ def daily_stats():
 
 @meal_stats_bp.route('/monthly', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def monthly_stats():
@@ -108,7 +108,7 @@ def monthly_stats():
 
 @meal_stats_bp.route('/student/<int:student_id>', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def student_meal_stats(student_id):
     student = Student.query.get_or_404(student_id)
@@ -129,7 +129,7 @@ def student_meal_stats(student_id):
 
 @meal_stats_bp.route('/school/<int:school_id>', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def school_meal_aggregate(school_id):
     start_date = request.args.get('start_date')
@@ -165,7 +165,7 @@ def school_meal_aggregate(school_id):
 
 @meal_stats_bp.route('/type/breakdown', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def type_breakdown():

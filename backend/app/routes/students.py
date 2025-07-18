@@ -18,7 +18,7 @@ students_bp = Blueprint("students", __name__)
 
 @students_bp.route('/list', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def list_students():
     user = User.query.get(get_jwt_identity())
@@ -58,7 +58,7 @@ def list_students():
 
 @students_bp.route("/form_schema", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def form_schema():
     schema = generate_schema_from_model(Student, "Student")
@@ -66,7 +66,7 @@ def form_schema():
 
 @students_bp.route("/create", methods=["POST"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required("superuser", "admin", "head_tutor")
 def create_student():
@@ -110,7 +110,7 @@ def create_student():
 @limiter.limit("10 per minute")
 @students_bp.route('/update/<int:student_id>', methods=['PUT'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def update_student(student_id):
@@ -155,7 +155,7 @@ def update_student(student_id):
 
 @students_bp.route('/attendance/mark', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def mark_attendance():
     data = request.get_json()
@@ -190,7 +190,7 @@ def mark_attendance():
 
 @students_bp.route('/attendance/summary', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def get_attendance_summary():
     school_id = request.args.get('school_id', type=int)
@@ -239,7 +239,7 @@ def get_attendance_summary():
 
 @students_bp.route('/attendance/<int:student_id>', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def get_student_attendance(student_id):
     student = Student.query.get_or_404(student_id)
@@ -256,7 +256,7 @@ def get_student_attendance(student_id):
 
 @students_bp.route('/attendance/stats', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def attendance_stats():
     school_id = request.args.get('school_id', type=int)
@@ -289,7 +289,7 @@ def attendance_stats():
 
 @students_bp.route('/attendance/<int:attendance_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 def delete_attendance(attendance_id):
     attendance = AttendanceRecord.query.get_or_404(attendance_id)
@@ -300,7 +300,7 @@ def delete_attendance(attendance_id):
 
 @students_bp.route("/remove/<int:student_id>", methods=["DELETE"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required("superuser", "admin", "head_tutor")
 def delete_student(student_id):
@@ -322,7 +322,7 @@ def delete_student(student_id):
 
 @students_bp.route("/deleted", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required("superuser", "admin", "head_tutor")
 def list_deleted_students():
@@ -345,7 +345,7 @@ def list_deleted_students():
     return jsonify([s.to_dict() for s in students]), 200
 @students_bp.route("/restore/<int:student_id>", methods=["POST"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required("superuser", "admin", "head_tutor")
 def restore_student(student_id):

@@ -25,7 +25,7 @@ def save_file(file, folder):
 
 @upload_bp.route('/student/photo/<int:student_id>', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def upload_student_photo(student_id):
@@ -50,7 +50,7 @@ def upload_student_photo(student_id):
 
 @upload_bp.route('/worker/files/<int:worker_id>', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('admin', 'superuser')
 def upload_worker_files(worker_id):

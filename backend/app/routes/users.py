@@ -12,10 +12,9 @@ from utils.maintenance import maintenance_guard
 
 
 users_bp = Blueprint('users', __name__)
+
 @users_bp.route('/create', methods=['POST'])
-
-
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('superuser', 'hr')
 def create_user():
@@ -70,7 +69,7 @@ def create_user():
 
 
 @users_bp.route('/update/<int:user_id>', methods=['PUT'])
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('superuser', 'hr')
 def update_user(user_id):
@@ -116,7 +115,7 @@ def update_user(user_id):
 
 @users_bp.route('/update/me', methods=['PUT'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('superuser', 'admin', 'head_tutor', 'head_coach', "maintanance_user")
 def update_own_account():
@@ -157,7 +156,7 @@ def update_own_account():
     }), 200
 
 @users_bp.route('/promote/<int:worker_id>', methods=['POST'])
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('superuser', 'hr')
 def promote_worker_to_user(worker_id):
@@ -192,7 +191,7 @@ def promote_worker_to_user(worker_id):
 
 
 @users_bp.route('/demote/<int:user_id>', methods=['POST'])
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('superuser', 'hr')
 def demote_user_to_worker(user_id):
@@ -235,7 +234,7 @@ def demote_user_to_worker(user_id):
 
 @users_bp.route('remove/<int:user_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('hr', 'superuser')
 def hr_soft_delete_user(user_id):
@@ -277,7 +276,7 @@ def hr_soft_delete_user(user_id):
 
 @users_bp.route('/removed', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('superuser', 'admin')
 def list_removal_reviews():
@@ -295,7 +294,7 @@ def list_removal_reviews():
 
 @users_bp.route('/restore/<int:user_id>', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('superuser', 'hr')
 def restore_user(user_id):
