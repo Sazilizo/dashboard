@@ -15,8 +15,8 @@ users_bp = Blueprint('users', __name__)
 @users_bp.route('/create', methods=['POST'])
 
 
-@jwt_required()
 @maintenance_guard()
+@jwt_required()
 @role_required('superuser', 'hr')
 def create_user():
     data = request.form
@@ -70,8 +70,8 @@ def create_user():
 
 
 @users_bp.route('/update/<int:user_id>', methods=['PUT'])
-@jwt_required()
 @maintenance_guard()
+@jwt_required()
 @role_required('superuser', 'hr')
 def update_user(user_id):
     user = User.query.filter_by(id=user_id, deleted=False).first_or_404()
@@ -116,8 +116,8 @@ def update_user(user_id):
 
 @users_bp.route('/update/me', methods=['PUT'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@jwt_required()
 @maintenance_guard()
+@jwt_required()
 @role_required('superuser', 'admin', 'head_tutor', 'head_coach', "maintanance_user")
 def update_own_account():
     user_id = get_jwt_identity()
@@ -157,8 +157,8 @@ def update_own_account():
     }), 200
 
 @users_bp.route('/promote/<int:worker_id>', methods=['POST'])
-@jwt_required()
 @maintenance_guard()
+@jwt_required()
 @role_required('superuser', 'hr')
 def promote_worker_to_user(worker_id):
     data = request.form or request.json
@@ -192,8 +192,8 @@ def promote_worker_to_user(worker_id):
 
 
 @users_bp.route('/demote/<int:user_id>', methods=['POST'])
-@jwt_required()
 @maintenance_guard()
+@jwt_required()
 @role_required('superuser', 'hr')
 def demote_user_to_worker(user_id):
     data = request.form or request.json
@@ -235,8 +235,8 @@ def demote_user_to_worker(user_id):
 
 @users_bp.route('remove/<int:user_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@jwt_required()
 @maintenance_guard()
+@jwt_required()
 @role_required('hr', 'superuser')
 def hr_soft_delete_user(user_id):
     current_user_id = get_jwt_identity()
@@ -277,8 +277,8 @@ def hr_soft_delete_user(user_id):
 
 @users_bp.route('/removed', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@jwt_required()
 @maintenance_guard()
+@jwt_required()
 @role_required('superuser', 'admin')
 def list_removal_reviews():
     reviews = UserRemovalReview.query.order_by(UserRemovalReview.created_at.desc()).all()
@@ -295,8 +295,8 @@ def list_removal_reviews():
 
 @users_bp.route('/restore/<int:user_id>', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@jwt_required()
 @maintenance_guard()
+@jwt_required()
 @role_required('superuser', 'hr')
 def restore_user(user_id):
     user = User.query.filter_by(id=user_id, deleted=True).first()

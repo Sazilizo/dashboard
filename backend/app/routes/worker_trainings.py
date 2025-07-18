@@ -62,8 +62,8 @@ def add_training(worker_id):
 
 @worker_trainings_bp.route('list/<int:worker_id>/', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@jwt_required()
 @maintenance_guard()
+@jwt_required()
 def list_trainings(worker_id):
     worker = Worker.query.get_or_404(worker_id)
     trainings = [{
