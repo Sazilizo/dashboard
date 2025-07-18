@@ -1,6 +1,7 @@
 from datetime import datetime
 from app.extensions import db
 from .base import SoftDeleteMixin, CategoryEnum, TermEnum
+from sqlalchemy.dialects.postgresql import JSON
 
 class Student(db.Model, SoftDeleteMixin):
     __tablename__ = 'students'
@@ -44,7 +45,7 @@ class Assessment(db.Model):
     student_id = db.Column(db.Integer, db.ForeignKey('students.id'), nullable=False)
     term = db.Column(db.Enum(TermEnum), nullable=False, index=True)
     score = db.Column(db.Float, nullable=False)
-
+    specs = db.Column(JSON, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -66,5 +67,6 @@ class StudentSession(db.Model):
     outcomes = db.Column(db.Text, nullable=True)
     category = db.Column(db.Enum(CategoryEnum), nullable=False, index=True)
     physical_education = db.Column(db.Boolean, default=False, index=True)
+    term = db.Column(db.Enum(TermEnum), nullable=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 

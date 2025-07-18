@@ -10,7 +10,8 @@ import zipfile, pandas as pd
 from app.extensions import db
 from flask_cors import cross_origin
 from utils.formSchema import generate_schema_from_model
-
+from utils.maintenance import maintenance_guard
+# from app.specs_config import SPEC_OPTIONS
 
 student_sessions_bp = Blueprint('student_sessions', __name__)
 
@@ -21,13 +22,16 @@ def allowed_file(filename):
 
 @student_sessions_bp.route("/form_schema", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 def form_schema():
     schema = generate_schema_from_model(StudentSession, "StudentSession")
     return jsonify(schema)
 
+
 @student_sessions_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 @session_role_required()
 def create_session():
@@ -42,6 +46,18 @@ def create_session():
         duration_hours = float(request.form['duration_hours'])
     except (ValueError, TypeError) as e:
         return jsonify({"error": "Invalid data types or formats", "details": str(e)}), 400
+
+    # specs is optional, expected as JSON string in form data
+    specs_json = request.form.get('specs')
+    specs = None
+    if specs_json:
+        import json
+        try:
+            specs = json.loads(specs_json)
+            if not isinstance(specs, dict):
+                raise ValueError("Specs must be a JSON object")
+        except Exception as e:
+            return jsonify({"error": "Invalid specs JSON", "details": str(e)}), 400
 
     photo_file = request.files.get('photo')
     outcomes = request.form.get('outcomes', '').strip()
@@ -59,6 +75,17 @@ def create_session():
     allowed_site_ids = get_allowed_site_ids(user)
     if student.school_id not in allowed_site_ids:
         return jsonify({"error": "Access forbidden: not allowed to access this student's school"}), 403
+
+    # Validate specs keys against allowed keys for category
+    if specs:
+        allowed_keys = {item['key'] for item in SPEC_OPTIONS.get(student.category.value, [])}
+        invalid_keys = set(specs.keys()) - allowed_keys
+        if invalid_keys:
+            return jsonify({
+                "error": "Invalid specs keys",
+                "invalid_keys": list(invalid_keys),
+                "allowed_keys": list(allowed_keys)
+            }), 400
 
     # File handling
     filename = None
@@ -81,7 +108,8 @@ def create_session():
         photo=filename,
         outcomes=outcomes,
         category=student.category,
-        physical_education=student.physical_education
+        physical_education=student.physical_education,
+        specs=specs
     )
     db.session.add(session)
     db.session.commit()
@@ -90,12 +118,13 @@ def create_session():
         "message": "Session recorded",
         "session_id": session.id,
         "category": session.category.value,
-        "physical_education": session.physical_education
+        "physical_education": session.physical_education,
+        "specs": session.specs
     }), 201
-
 
 @student_sessions_bp.route('/sessions', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 @session_role_required()
 def list_sessions():
@@ -175,6 +204,7 @@ def list_sessions():
 
 @student_sessions_bp.route('/bulkupload', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def bulk_upload_sessions():

@@ -2,10 +2,12 @@ from flask import Blueprint, request, jsonify
 from sqlalchemy import func
 from app.models import School, Student, Worker, Role, MealDistribution
 from app.extensions import db
+from utils.maintenance import maintenance_guard
 
 dashboard_bp = Blueprint('dashboard', __name__)
 
 @dashboard_bp.route('/summary')
+@maintenance_guard()
 def summary():
     site_ids = request.args.get('site_id')
 

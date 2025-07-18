@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import User, Role
+from app.models import User, Role, Worker, AuditLog
 from app.models.UserRemoval import UserRemovalReview
 from app.extensions import db
 from utils.decorators import role_required
@@ -8,33 +8,20 @@ from werkzeug.security import generate_password_hash
 from datetime import datetime
 from flask_cors import cross_origin
 from utils.formSchema import generate_schema_from_model
+from utils.maintenance import maintenance_guard
+
 
 users_bp = Blueprint('users', __name__)
-
-@users_bp.route('/', methods=['GET'])
-@jwt_required()
-@role_required('superuser', 'admin','hr')
-def list_users():
-    users = User.query.filter_by(deleted=False).all()
-    return jsonify([{
-        'id': u.id,
-        'username': u.username,
-        'role_id': u.role_id,
-        'school_id': u.school_id
-    } for u in users]), 200
-
-@users_bp.route("/form_schema", methods=["GET"])
-@cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@jwt_required()
-def form_schema():
-    schema = generate_schema_from_model(User, "User")
-    return jsonify(schema)
-
 @users_bp.route('/create', methods=['POST'])
+
+
 @jwt_required()
+@maintenance_guard()
 @role_required('superuser', 'hr')
 def create_user():
-    data = request.get_json()
+    data = request.form
+    # file = request.files.get('profile_picture')  # optional file field
+
     if not data:
         return jsonify({"error": "No input data provided"}), 400
 
@@ -63,9 +50,11 @@ def create_user():
     new_user = User(
         username=username.strip(),
         role_id=role_id,
-        school_id=school_id
+        school_id=school_id,
+        # profile_picture=file.read() if file else None  # if storing as blob
     )
     new_user.set_password(password)
+
     db.session.add(new_user)
     db.session.commit()
 
@@ -80,12 +69,15 @@ def create_user():
     }), 201
 
 
-@users_bp.route('update/<int:user_id>', methods=['PUT'])
+@users_bp.route('/update/<int:user_id>', methods=['PUT'])
 @jwt_required()
+@maintenance_guard()
 @role_required('superuser', 'hr')
 def update_user(user_id):
     user = User.query.filter_by(id=user_id, deleted=False).first_or_404()
-    data = request.get_json()
+    data = request.form
+    # file = request.files.get('profile_picture')
+
     if not data:
         return jsonify({"error": "No input data provided"}), 400
 
@@ -115,6 +107,9 @@ def update_user(user_id):
         except ValueError:
             return jsonify({"error": "school_id must be an integer"}), 400
 
+    # if file:
+    #     user.profile_picture = file.read()
+
     db.session.commit()
     return jsonify({"message": "User updated successfully"}), 200
 
@@ -122,11 +117,13 @@ def update_user(user_id):
 @users_bp.route('/update/me', methods=['PUT'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@role_required('superuser', 'admin', 'head_tutor', 'head_coach')
+@maintenance_guard()
+@role_required('superuser', 'admin', 'head_tutor', 'head_coach', "maintanance_user")
 def update_own_account():
     user_id = get_jwt_identity()
     user = User.query.filter_by(id=user_id, deleted=False).first_or_404()
-    data = request.get_json()
+    data = request.form
+    # file = request.files.get("profile_picture")
 
     if not data:
         return jsonify({"error": "No input data provided"}), 400
@@ -146,6 +143,9 @@ def update_own_account():
     if 'password' in data:
         user.set_password(data['password'])
 
+    # if file:
+    #     user.profile_picture = file.read()
+
     db.session.commit()
     return jsonify({
         "message": "Your account has been updated successfully",
@@ -156,11 +156,88 @@ def update_own_account():
         }
     }), 200
 
+@users_bp.route('/promote/<int:worker_id>', methods=['POST'])
+@jwt_required()
+@maintenance_guard()
+@role_required('superuser', 'hr')
+def promote_worker_to_user(worker_id):
+    data = request.form or request.json
+    new_role_id = data.get("role_id")
+    school_id = data.get("school_id")
+    reason = data.get("reason", "")
+
+    worker = Worker.query.get_or_404(worker_id)
+    current_user = User.query.get(get_jwt_identity())
+
+    # Create new User
+    user = User(
+        username=worker.email,
+        email=worker.email,
+        password_hash=generate_password_hash("temporary123"),  # or force reset later
+        role_id=new_role_id,
+        school_id=school_id,
+    )
+    db.session.add(user)
+
+    # Log audit
+    audit = AuditLog(
+        user_id=current_user.id,
+        action=f"Promoted worker (id={worker.id}) to user with role_id={new_role_id}",
+        ip_address=request.remote_addr
+    )
+    db.session.add(audit)
+    db.session.commit()
+
+    return jsonify({"message": "Worker promoted to user"}), 201
+
+
+@users_bp.route('/demote/<int:user_id>', methods=['POST'])
+@jwt_required()
+@maintenance_guard()
+@role_required('superuser', 'hr')
+def demote_user_to_worker(user_id):
+    data = request.form or request.json
+    reason = data.get("reason", "")
+    warning = data.get("warning", "")
+
+    current_user = User.query.get(get_jwt_identity())
+    user = User.query.get_or_404(user_id)
+
+    # Ensure the worker record exists
+    worker = Worker.query.filter_by(email=user.email).first()
+    if not worker:
+        return jsonify({"error": "Linked worker not found"}), 404
+
+    # Log into UserRemovalReview
+    review = UserRemovalReview(
+        removed_user_id=user.id,
+        removed_by_id=current_user.id,
+        reason=reason,
+        warning=warning
+    )
+    db.session.add(review)
+
+    # Also log into AuditLog
+    audit = AuditLog(
+        user_id=current_user.id,
+        action=f"Demoted user (id={user.id}) to worker",
+        ip_address=request.remote_addr
+    )
+    db.session.add(audit)
+
+    # Delete the user
+    db.session.delete(user)
+    db.session.commit()
+
+    return jsonify({
+        "message": f"User demoted to worker. Reason: {reason}"
+    }), 200
 
 @users_bp.route('remove/<int:user_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@role_required('hr')
+@maintenance_guard()
+@role_required('hr', 'superuser')
 def hr_soft_delete_user(user_id):
     current_user_id = get_jwt_identity()
     current_user = User.query.get(current_user_id)
@@ -201,7 +278,8 @@ def hr_soft_delete_user(user_id):
 @users_bp.route('/removed', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@role_required('superuser')
+@maintenance_guard()
+@role_required('superuser', 'admin')
 def list_removal_reviews():
     reviews = UserRemovalReview.query.order_by(UserRemovalReview.created_at.desc()).all()
     return jsonify([
@@ -218,6 +296,7 @@ def list_removal_reviews():
 @users_bp.route('/restore/<int:user_id>', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
+@maintenance_guard()
 @role_required('superuser', 'hr')
 def restore_user(user_id):
     user = User.query.filter_by(id=user_id, deleted=True).first()

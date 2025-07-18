@@ -9,13 +9,16 @@ from utils.pagination import apply_pagination_and_search
 from utils.access_control import get_allowed_site_ids
 from flask_cors import cross_origin, CORS
 from utils.formSchema import generate_schema_from_model
+from utils.maintenance import maintenance_guard
 
 students_bp = Blueprint("students", __name__)
 # students_bp.strict_slashes = False
 # CORS(students_bp, origins="http://localhost:3000", supports_credentials=True)
 
+
 @students_bp.route('/list', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 def list_students():
     user = User.query.get(get_jwt_identity())
@@ -55,14 +58,15 @@ def list_students():
 
 @students_bp.route("/form_schema", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 def form_schema():
     schema = generate_schema_from_model(Student, "Student")
     return jsonify(schema)
 
-
 @students_bp.route("/create", methods=["POST"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 @role_required("superuser", "admin", "head_tutor")
 def create_student():
@@ -70,7 +74,9 @@ def create_student():
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    data = request.get_json()
+    data = request.form
+    file = request.files.get("permission_pdf")
+
     name = data.get("name")
     surname = data.get("surname")
     school_id = data.get("school_id")
@@ -79,7 +85,7 @@ def create_student():
         return jsonify({"error": "Missing required fields"}), 400
 
     try:
-        allowed_site_ids = get_allowed_site_ids(user, [school_id])
+        allowed_site_ids = get_allowed_site_ids(user, [int(school_id)])
     except (ValueError, PermissionError) as e:
         return jsonify({"error": str(e)}), 403
 
@@ -91,7 +97,7 @@ def create_student():
         school_id=school_id,
         parent_name=data.get("parent_name"),
         parent_contact=data.get("parent_contact"),
-        permission_pdf=data.get("permission_pdf"),
+        permission_pdf=file.read() if file else None,
         start_date=datetime.strptime(data.get("start_date"), "%Y-%m-%d").date()
             if data.get("start_date") else None
     )
@@ -104,48 +110,52 @@ def create_student():
 @limiter.limit("10 per minute")
 @students_bp.route('/update/<int:student_id>', methods=['PUT'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def update_student(student_id):
     student = Student.query.filter_by(id=student_id, deleted=False).first_or_404()
     user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
 
-    if not user or user.school_id != student.school_id:
-        return jsonify({"error": "Access forbidden: school mismatch"}), 403
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, [student.school_id])
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
 
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "No input data provided"}), 400
+    data = request.form
+    file = request.files.get("permission_pdf")
 
-    if 'full_name' in data:
-        student.full_name = data['full_name'].strip()
+    if 'name' in data:
+        student.name = data.get('name').strip()
+    if 'surname' in data:
+        student.surname = data.get('surname').strip()
     if 'grade' in data:
-        student.grade = data['grade'].strip()
+        student.grade = data.get('grade')
     if 'category' in data:
         try:
-            student.category = CategoryEnum(data['category'])
+            student.category = CategoryEnum(data.get('category'))
         except ValueError:
             return jsonify({"error": "Invalid category"}), 400
-    if 'physical_education' in data:
-        pe_val = data['physical_education']
-        if isinstance(pe_val, str):
-            pe_val = pe_val.strip().lower() in ['true', '1', 'yes']
-        student.physical_education = pe_val
-    if 'year' in data:
+    if 'parent_name' in data:
+        student.parent_name = data.get('parent_name')
+    if 'parent_contact' in data:
+        student.parent_contact = data.get('parent_contact')
+    if 'start_date' in data:
         try:
-            student.year = int(data['year'])
-        except (ValueError, TypeError):
-            return jsonify({"error": "Year must be an integer"}), 400
-    if 'photo' in data:
-        student.photo = data['photo']
-    if 'parent_permission_pdf' in data:
-        student.parent_permission_pdf = data['parent_permission_pdf']
+            student.start_date = datetime.strptime(data.get('start_date'), "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "Invalid start date format"}), 400
+    if file:
+        student.permission_pdf = file.read()
 
     db.session.commit()
-    return jsonify({"message": "Student updated"}), 200
+    return jsonify({"message": "Student updated successfully"}), 200
 
 @students_bp.route('/attendance/mark', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 def mark_attendance():
     data = request.get_json()
@@ -180,6 +190,7 @@ def mark_attendance():
 
 @students_bp.route('/attendance/summary', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 def get_attendance_summary():
     school_id = request.args.get('school_id', type=int)
@@ -228,6 +239,7 @@ def get_attendance_summary():
 
 @students_bp.route('/attendance/<int:student_id>', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 def get_student_attendance(student_id):
     student = Student.query.get_or_404(student_id)
@@ -244,6 +256,7 @@ def get_student_attendance(student_id):
 
 @students_bp.route('/attendance/stats', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 def attendance_stats():
     school_id = request.args.get('school_id', type=int)
@@ -276,6 +289,7 @@ def attendance_stats():
 
 @students_bp.route('/attendance/<int:attendance_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 def delete_attendance(attendance_id):
     attendance = AttendanceRecord.query.get_or_404(attendance_id)
@@ -286,6 +300,7 @@ def delete_attendance(attendance_id):
 
 @students_bp.route("/remove/<int:student_id>", methods=["DELETE"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 @role_required("superuser", "admin", "head_tutor")
 def delete_student(student_id):
@@ -307,6 +322,7 @@ def delete_student(student_id):
 
 @students_bp.route("/deleted", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 @role_required("superuser", "admin", "head_tutor")
 def list_deleted_students():
@@ -329,6 +345,7 @@ def list_deleted_students():
     return jsonify([s.to_dict() for s in students]), 200
 @students_bp.route("/restore/<int:student_id>", methods=["POST"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 @role_required("superuser", "admin", "head_tutor")
 def restore_student(student_id):

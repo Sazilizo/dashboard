@@ -1,6 +1,7 @@
 from app.models import School, Student, Meal
 from sqlalchemy import Boolean, Integer, String, Enum
 import enum
+from utils.specs_config import SPEC_OPTIONS  
 
 def generate_schema_from_model(model, model_name, current_user=None):
     exclude_fields = {"id", "created_at", "updated_at", "deleted_at"}
@@ -26,7 +27,6 @@ def generate_schema_from_model(model, model_name, current_user=None):
                 field_schema["type"] = "text"
 
         elif isinstance(column.type, Integer):
-            # SCHOOL SELECT
             if name == "school_id":
                 field_schema["type"] = "select"
                 field_schema["options"] = [
@@ -46,7 +46,6 @@ def generate_schema_from_model(model, model_name, current_user=None):
                     for student in students
                 ]
                 field_schema["depends_on"] = "school_id"
-
 
             elif name == "meal_id":
                 field_schema["type"] = "select"
@@ -69,7 +68,6 @@ def generate_schema_from_model(model, model_name, current_user=None):
         elif isinstance(column.type, Boolean):
             field_schema["type"] = "checkbox"
 
-
         elif isinstance(column.type, Enum):
             enum_class = column.type.enum_class
             if enum_class and issubclass(enum_class, enum.Enum):
@@ -89,6 +87,42 @@ def generate_schema_from_model(model, model_name, current_user=None):
             field_schema["type"] = "text"
 
         schema.append(field_schema)
+
+    # Add specs field dynamically if model is StudentSession and current_user is provided
+    if model_name == "StudentSession" and current_user:
+        role = current_user.role.name
+        specs_options = []
+
+        if role in ("admin", "superuser"):
+            # combine all specs across categories
+            all_specs = []
+            for spec_list in SPEC_OPTIONS.values():
+                all_specs.extend(spec_list)
+            # deduplicate by key
+            seen = set()
+            unique_specs = []
+            for spec in all_specs:
+                if spec['key'] not in seen:
+                    seen.add(spec['key'])
+                    unique_specs.append(spec)
+            specs_options = unique_specs
+
+        elif role == "head_coach":
+            specs_options = SPEC_OPTIONS.get("physical_education", [])
+
+        elif role == "head_tutor":
+            specs_options = SPEC_OPTIONS.get("reading", [])
+
+        if specs_options:
+            schema.append({
+                "name": "specs",
+                "label": "Performance Specs",
+                "type": "json_object",
+                "group": [{"key": o["key"], "label": o["label"]} for o in specs_options],
+                "required": False,
+                "description": "Enter performance scores for each area"
+            })
+
 
     return {
         "model": model_name,

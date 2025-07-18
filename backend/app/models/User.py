@@ -25,6 +25,8 @@ class User(db.Model, SoftDeleteMixin):
 
     role = db.relationship('Role', back_populates='users')
     school = db.relationship('School', back_populates='users')
+    worker_id = db.Column(db.Integer, db.ForeignKey('workers.id'), nullable=True)
+    worker = db.relationship('Worker', backref=db.backref('user', uselist=False))
 
     audit_logs = db.relationship('AuditLog', backref='user', lazy=True)
     logged_sessions = db.relationship('StudentSession', backref='user', lazy=True)

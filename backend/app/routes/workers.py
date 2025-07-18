@@ -5,6 +5,7 @@ from app.extensions import db
 from utils.decorators import role_required
 from utils.pagination import apply_pagination_and_search
 from utils.access_control import get_allowed_site_ids
+from utils.maintenance import maintenance_guard
 from flask_cors import cross_origin
 import os
 import zipfile
@@ -29,6 +30,7 @@ def save_file(file, prefix=""):
 
 @workers_bp.route('/list', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 def list_workers():
     user = User.query.get(get_jwt_identity())
@@ -72,6 +74,7 @@ def list_workers():
 
 @workers_bp.route("/form_schema", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 def form_schema():
     schema = generate_schema_from_model(Worker, "Worker",)
@@ -80,7 +83,8 @@ def form_schema():
 @workers_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@role_required('superuser', 'admin', 'hr')
+@maintenance_guard()
+@role_required('superuser', 'hr')
 def create_worker():
     name = request.form.get('name')
     role_id = request.form.get('role_id')
@@ -147,10 +151,96 @@ def create_worker():
         }
     }), 201
 
+@workers_bp.route('/update/<int:worker_id>', methods=['PUT'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@jwt_required()
+@maintenance_guard()
+@role_required('superuser', 'hr')
+def update_worker(worker_id):
+    worker = Worker.query.filter_by(id=worker_id, deleted=False).first_or_404()
+    user = User.query.get(get_jwt_identity())
+
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, [worker.school_id])
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
+
+    if worker.school_id not in allowed_site_ids:
+        return jsonify({"error": "Access forbidden: school mismatch"}), 403
+
+    data = request.form
+
+    # Update simple fields if provided
+    if 'name' in data:
+        worker.name = data['name'].strip()
+    if 'role_id' in data:
+        try:
+            role_id = int(data['role_id'])
+            role = Role.query.get(role_id)
+            if not role:
+                return jsonify({"error": "Invalid role_id"}), 400
+            worker.role_id = role_id
+        except ValueError:
+            return jsonify({"error": "role_id must be an integer"}), 400
+    if 'school_id' in data:
+        try:
+            school_id = int(data['school_id'])
+            # Check if user is allowed to update to this school
+            allowed_site_ids = get_allowed_site_ids(user, [school_id])
+            if school_id not in allowed_site_ids:
+                return jsonify({"error": "Not authorized to assign this school_id"}), 403
+            worker.school_id = school_id
+        except ValueError:
+            return jsonify({"error": "school_id must be an integer"}), 400
+    if 'id_number' in data:
+        worker.id_number = data['id_number'].strip()
+    if 'contact_number' in data:
+        worker.contact_number = data['contact_number'].strip()
+    if 'email' in data:
+        worker.email = data['email'].strip()
+    if 'start_date' in data:
+        try:
+            worker.start_date = datetime.strptime(data['start_date'], "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "Invalid start_date format. Use YYYY-MM-DD"}), 400
+
+    # Update file uploads if provided
+    photo = request.files.get('photo')
+    cv_pdf = request.files.get('cv_pdf')
+    id_copy_pdf = request.files.get('id_copy_pdf')
+    clearance_pdf = request.files.get('clearance_pdf')
+    child_protection_pdf = request.files.get('child_protection_pdf')
+
+    if photo:
+        photo_path = save_file(photo, prefix=worker.name)
+        worker.photo = photo_path
+    if cv_pdf:
+        cv_path = save_file(cv_pdf, prefix=worker.name)
+        worker.cv_pdf = cv_path
+    if id_copy_pdf:
+        id_copy_path = save_file(id_copy_pdf, prefix=worker.name)
+        worker.id_copy_pdf = id_copy_path
+    if clearance_pdf:
+        clearance_path = save_file(clearance_pdf, prefix=worker.name)
+        worker.clearance_pdf = clearance_path
+    if child_protection_pdf:
+        child_protection_path = save_file(child_protection_pdf, prefix=worker.name)
+        worker.child_protection_pdf = child_protection_path
+
+    db.session.commit()
+
+    return jsonify({
+        "message": "Worker updated successfully",
+        "worker": worker.to_dict()
+    }), 200
+
+
+
 @workers_bp.route('/deleted', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@role_required('hr', 'superuser')
+@maintenance_guard()
+@role_required('admin','hr', 'superuser')
 def list_deleted_workers():
     user = User.query.get(get_jwt_identity())
     if not user:
@@ -174,6 +264,7 @@ def list_deleted_workers():
 @workers_bp.route('/restore/<int:worker_id>/', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
+@maintenance_guard()
 @role_required('hr', 'superuser')
 def restore_worker(worker_id):
     worker = Worker.query.get_or_404(worker_id)
@@ -194,6 +285,7 @@ def restore_worker(worker_id):
 @workers_bp.route('/remove/<int:worker_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
+@maintenance_guard()
 @role_required('hr')
 def delete_worker(worker_id):
     worker = Worker.query.get_or_404(worker_id)
@@ -210,6 +302,7 @@ def delete_worker(worker_id):
 @workers_bp.route('/stats', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
+@maintenance_guard()
 @role_required('superuser', 'admin', 'hr')
 def worker_stats():
     user = User.query.get(get_jwt_identity())
@@ -232,6 +325,7 @@ def worker_stats():
 @workers_bp.route('/download/<int:worker_id>/', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
+@maintenance_guard()
 @role_required('superuser', 'admin', 'hr')
 def download_worker_documents(worker_id):
     worker = Worker.query.get_or_404(worker_id)

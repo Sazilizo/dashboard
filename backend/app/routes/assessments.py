@@ -5,11 +5,13 @@ from utils.decorators import role_required
 from sqlalchemy import func, and_
 from app.extensions import db
 from flask_cors import cross_origin
+from utils.maintenance import maintenance_guard
 
 assessments_bp = Blueprint('assessments', __name__)
 
 @assessments_bp.route('/student/<int:student_id>', methods=['POST', 'PUT'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def create_or_update_assessment(student_id):
@@ -54,6 +56,7 @@ def create_or_update_assessment(student_id):
 
 @assessments_bp.route('/delete/<int:assessment_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 @role_required('admin', 'superuser')
 def delete_assessment(assessment_id):
@@ -90,6 +93,7 @@ def build_filters(filters, user):
 
 @assessments_bp.route('/averages', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@maintenance_guard()
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def get_averages():
