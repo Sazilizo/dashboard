@@ -11,7 +11,7 @@ from app.extensions import db
 from flask_cors import cross_origin
 from utils.formSchema import generate_schema_from_model
 from utils.maintenance import maintenance_guard
-# from app.specs_config import SPEC_OPTIONS
+from utils.specs_config import SPEC_OPTIONS
 
 student_sessions_bp = Blueprint('student_sessions', __name__)
 
