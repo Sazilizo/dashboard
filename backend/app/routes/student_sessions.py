@@ -12,6 +12,10 @@ from flask_cors import cross_origin
 from utils.formSchema import generate_schema_from_model
 from utils.maintenance import maintenance_guard
 from utils.specs_config import SPEC_OPTIONS
+from collections import defaultdict
+import statistics
+import json
+from sqlalchemy.orm import joinedload
 
 student_sessions_bp = Blueprint('student_sessions', __name__)
 
@@ -35,10 +39,13 @@ def form_schema():
 @jwt_required()
 @session_role_required()
 def create_session():
+    # Required fields
     required_fields = ['student_id', 'session_name', 'date', 'duration_hours']
-    if not all(f in request.form for f in required_fields):
-        return jsonify({"error": "Missing required form fields"}), 400
+    missing_fields = [f for f in required_fields if f not in request.form]
+    if missing_fields:
+        return jsonify({"error": f"Missing fields: {missing_fields}"}), 400
 
+    # Parse and validate inputs
     try:
         student_id = int(request.form['student_id'])
         session_name = request.form['session_name'].strip()
@@ -47,61 +54,62 @@ def create_session():
     except (ValueError, TypeError) as e:
         return jsonify({"error": "Invalid data types or formats", "details": str(e)}), 400
 
-    # specs is optional, expected as JSON string in form data
-    specs_json = request.form.get('specs')
+    # Optional specs (expected as JSON string)
     specs = None
-    if specs_json:
-        import json
+    specs_raw = request.form.get('specs')
+    if specs_raw:
         try:
-            specs = json.loads(specs_json)
+            specs = json.loads(specs_raw)
             if not isinstance(specs, dict):
                 raise ValueError("Specs must be a JSON object")
         except Exception as e:
             return jsonify({"error": "Invalid specs JSON", "details": str(e)}), 400
 
-    photo_file = request.files.get('photo')
     outcomes = request.form.get('outcomes', '').strip()
+    photo_file = request.files.get('photo')
 
-    # Validate access
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
+    # Authenticated user
+    user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({"error": "User not found"}), 404
 
+    # Student access
     student = Student.query.get(student_id)
     if not student:
         return jsonify({"error": "Student not found"}), 404
 
     allowed_site_ids = get_allowed_site_ids(user)
     if student.school_id not in allowed_site_ids:
-        return jsonify({"error": "Access forbidden: not allowed to access this student's school"}), 403
+        return jsonify({"error": "Forbidden: You are not allowed to access this student's school"}), 403
 
-    # Validate specs keys against allowed keys for category
+    # Validate spec keys based on category
     if specs:
-        allowed_keys = {item['key'] for item in SPEC_OPTIONS.get(student.category.value, [])}
+        category_key = student.category.value if student.category else None
+        allowed_keys = {item['key'] for item in SPEC_OPTIONS.get(category_key, [])}
         invalid_keys = set(specs.keys()) - allowed_keys
         if invalid_keys:
             return jsonify({
-                "error": "Invalid specs keys",
+                "error": "Invalid spec keys",
                 "invalid_keys": list(invalid_keys),
                 "allowed_keys": list(allowed_keys)
             }), 400
 
-    # File handling
+    # Handle file upload
     filename = None
     if photo_file:
         if allowed_file(photo_file.filename):
             filename = secure_filename(photo_file.filename)
-            upload_path = os.path.join(current_app.config['UPLOAD_FOLDER'], 'session_photos')
-            os.makedirs(upload_path, exist_ok=True)
-            photo_path = os.path.join(upload_path, filename)
+            upload_folder = os.path.join(current_app.config['UPLOAD_FOLDER'], 'session_photos')
+            os.makedirs(upload_folder, exist_ok=True)
+            photo_path = os.path.join(upload_folder, filename)
             photo_file.save(photo_path)
         else:
             return jsonify({"error": "Invalid file type"}), 400
 
+    # Create session record
     session = StudentSession(
         student_id=student.id,
-        user_id=user_id,
+        user_id=user.id,
         session_name=session_name,
         date=date_obj,
         duration_hours=duration_hours,
@@ -111,13 +119,14 @@ def create_session():
         physical_education=student.physical_education,
         specs=specs
     )
+
     db.session.add(session)
     db.session.commit()
 
     return jsonify({
-        "message": "Session recorded",
+        "message": "Session created successfully",
         "session_id": session.id,
-        "category": session.category.value,
+        "category": session.category.value if session.category else None,
         "physical_education": session.physical_education,
         "specs": session.specs
     }), 201
@@ -200,6 +209,145 @@ def list_sessions():
         "page": paginated.page,
         "pages": paginated.pages
     }), 200
+
+@student_sessions_bp.route('/stats/<int:student_id>', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@jwt_required()
+def student_stats(student_id):
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    allowed_site_ids = get_allowed_site_ids(user)
+
+    student = Student.query.get(student_id)
+    if not student or student.school_id not in allowed_site_ids:
+        return jsonify({"error": "Student not found or access denied"}), 404
+
+    sessions = StudentSession.query.filter_by(student_id=student_id).all()
+    if not sessions:
+        return jsonify({"specs": {}, "session_count": 0})
+
+    # Aggregate specs (e.g., average)
+    from collections import defaultdict
+    import statistics
+
+    spec_accumulator = defaultdict(list)
+    for session in sessions:
+        if session.specs:
+            for key, value in session.specs.items():
+                try:
+                    spec_accumulator[key].append(float(value))
+                except ValueError:
+                    continue
+
+    averaged_specs = {
+        key: round(statistics.mean(values), 2)
+        for key, values in spec_accumulator.items() if values
+    }
+
+    return jsonify({
+        "student_id": student_id,
+        "student_name": student.full_name,
+        "specs": averaged_specs,
+        "session_count": len(sessions)
+    })
+
+
+@student_sessions_bp.route('/stats', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@jwt_required()
+def all_students_stats():
+    user = User.query.get(get_jwt_identity())
+    allowed_site_ids = get_allowed_site_ids(user)
+
+    students = Student.query.filter(Student.school_id.in_(allowed_site_ids)).all()
+    results = []
+
+    for student in students:
+        sessions = StudentSession.query.filter_by(student_id=student.id).all()
+        if not sessions:
+            continue
+
+        spec_accumulator = defaultdict(list)
+        for session in sessions:
+            if session.specs:
+                for key, value in session.specs.items():
+                    try:
+                        spec_accumulator[key].append(float(value))
+                    except ValueError:
+                        continue
+
+        averaged_specs = {
+            key: round(statistics.mean(values), 2)
+            for key, values in spec_accumulator.items() if values
+        }
+
+        results.append({
+            "student_id": student.id,
+            "student_name": student.full_name,
+            "specs": averaged_specs,
+            "session_count": len(sessions)
+        })
+
+    return jsonify(results)
+
+
+@student_sessions_bp.route('/specs/summary', methods=['GET'])
+@jwt_required()
+def get_specs_summary():
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # Support ?school_id=... (multi) and ?group_by=grade|category
+    raw_site_ids = request.args.getlist("school_id", type=int)
+    group_by = request.args.get("group_by")  # 'grade', 'category', or None
+
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, raw_site_ids)
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
+
+    # Load sessions with student info
+    sessions = (
+        StudentSession.query
+        .join(Student)
+        .options(joinedload(StudentSession.student))
+        .filter(Student.school_id.in_(allowed_site_ids))
+        .all()
+    )
+
+    # Group: student ID (default), or by grade/category
+    grouped_specs = defaultdict(lambda: defaultdict(list))  # e.g., {"grade 3": {"reading": [80, 90]}}
+
+    for session in sessions:
+        student = session.student
+        if not student or not session.specs or not isinstance(session.specs, dict):
+            continue
+
+        if group_by == "grade":
+            key = student.grade
+        elif group_by == "category":
+            key = student.category.value if student.category else "Unknown"
+        else:
+            key = str(student.id)  # default: per student
+
+        for spec_key, val in session.specs.items():
+            if isinstance(val, (int, float)):
+                grouped_specs[key][spec_key].append(val)
+
+    # Compute means
+    response = []
+    for group_key, spec_dict in grouped_specs.items():
+        averages = {
+            spec_name: round(statistics.mean(values), 2)
+            for spec_name, values in spec_dict.items()
+        }
+        response.append({
+            "group": group_key,
+            "averages": averages
+        })
+
+    return jsonify(response), 200
 
 
 @student_sessions_bp.route('/bulkupload', methods=['POST'])

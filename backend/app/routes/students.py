@@ -56,6 +56,20 @@ def list_students():
         "pages": paginated.pages
     }), 200
 
+@students_bp.route('/<int:student_id>', methods=['GET'])
+@jwt_required()
+def get_student(student_id):
+    user = User.query.get(get_jwt_identity())
+    student = Student.query.filter_by(id=student_id, deleted=False).first()
+
+    if not student:
+        return jsonify({"error": "Student not found"}), 404
+
+    if student.school_id not in get_allowed_site_ids(user):
+        return jsonify({"error": "Not authorized"}), 403
+
+    return jsonify(student.to_dict(include_related=True)), 200
+
 @students_bp.route("/form_schema", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 # @maintenance_guard()

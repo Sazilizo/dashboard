@@ -22,19 +22,49 @@ class Student(db.Model, SoftDeleteMixin):
     meal_logs = db.relationship('MealDistribution', backref='student', lazy=True)
     attendance_records = db.relationship('AttendanceRecord', back_populates='student')
 
-    def to_dict(self):
-        return {
+    def to_dict(self, include_related=False):
+        data = {
             "id": self.id,
             "full_name": self.full_name,
             "grade": self.grade,
             "category": self.category.value if self.category else None,
-            "sessions":self.sessions,
             "physical_education": self.physical_education,
             "year": self.year,
             "school_id": self.school_id,
             "photo": self.photo,
             "parent_permission_pdf": self.parent_permission_pdf,
         }
+
+        if include_related:
+            data["assessments"] = [
+                {
+                    "id": a.id,
+                    "term": a.term.value,
+                    "score": a.score,
+                    "specs": a.specs,
+                    "created_at": a.created_at.isoformat(),
+                    "updated_at": a.updated_at.isoformat(),
+                }
+                for a in self.assessments
+            ]
+            data["sessions"] = [
+                {
+                    "id": s.id,
+                    "session_name": s.session_name,
+                    "date": s.date.isoformat(),
+                    "duration_hours": s.duration_hours,
+                    "photo": s.photo,
+                    "outcomes": s.outcomes,
+                    "term": s.term.value,
+                    "category": s.category.value,
+                    "physical_education": s.physical_education,
+                    "created_at": s.created_at.isoformat(),
+                }
+                for s in self.sessions
+            ]
+
+        return data
+
 
 
 
