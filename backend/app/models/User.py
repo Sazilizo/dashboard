@@ -21,7 +21,7 @@ class User(db.Model, SoftDeleteMixin):
     password_hash = db.Column(db.String(512), nullable=False)
 
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
-    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
+    school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=True)
 
     role = db.relationship('Role', back_populates='users')
     school = db.relationship('School', back_populates='users')
