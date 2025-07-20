@@ -8,7 +8,7 @@ import os
 from flask_cors import cross_origin
 from utils.maintenance import maintenance_guard
 
-worker_trainings_bp = Blueprint('worker_trainings', __name__)
+worker_trainings_bp = Blueprint('workertrainings', __name__)
 UPLOAD_FOLDER = 'uploads/trainings'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 

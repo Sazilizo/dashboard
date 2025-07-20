@@ -9,6 +9,7 @@ from .meals_stats import meal_stats_bp
 from .worker_trainings import worker_trainings_bp
 from .base_route import base_bp 
 from .dashboard import dashboard_bp
+from .student_sessions import student_sessions_bp
 
 def register_routes(app):
     app.register_blueprint(base_bp)
@@ -20,6 +21,7 @@ def register_routes(app):
     app.register_blueprint(assessments_bp, url_prefix='/assessments')
     app.register_blueprint(student_sessions_bp, url_prefix='/sessions')
     app.register_blueprint(meals_bp, url_prefix="/meals")
-    app.register_blueprint(meal_stats_bp, url_prefix='/meal_stats')
-    app.register_blueprint(worker_trainings_bp, url_prefix="/worker_trainings")
+    app.register_blueprint(meal_stats_bp, url_prefix='/mealstats')
+    app.register_blueprint(worker_trainings_bp, url_prefix="/trainings")
+    app.register_blueprint(student_sessions_bp, url_prefix="studentsessions")
 

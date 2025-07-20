@@ -10,7 +10,7 @@ from flask_cors import cross_origin
 from utils.maintenance import maintenance_guard
 
 
-meal_stats_bp = Blueprint('meal_stats', __name__)
+meal_stats_bp = Blueprint('mealstats', __name__)
 
 @meal_stats_bp.route('/daily', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)

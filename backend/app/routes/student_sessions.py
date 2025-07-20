@@ -17,7 +17,7 @@ import statistics
 import json
 from sqlalchemy.orm import joinedload
 
-student_sessions_bp = Blueprint('student_sessions', __name__)
+student_sessions_bp = Blueprint('studentsessions', __name__)
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
