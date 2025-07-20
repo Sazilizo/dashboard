@@ -23,5 +23,4 @@ def register_routes(app):
     app.register_blueprint(meals_bp, url_prefix="/meals")
     app.register_blueprint(meal_stats_bp, url_prefix='/mealstats')
     app.register_blueprint(worker_trainings_bp, url_prefix="/trainings")
-    app.register_blueprint(student_sessions_bp, url_prefix="studentsessions")
 
