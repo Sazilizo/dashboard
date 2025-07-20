@@ -50,18 +50,21 @@ from utils.formSchema import generate_schema_from_model
 # @maintenance_guard()
 @jwt_required()
 def form_schema():
-    model_name = request.args.get("model", "Meal")  # Default to "Meal"
-    
-    current_user_id = get_jwt_identity()
-    current_user = User.query.get(current_user_id)
+    model_name = request.args.get("model")
 
-    if model_name == "Meal":
-        schema = generate_schema_from_model(Meal, "Meal", current_user=current_user)
-    elif model_name == "MealDistribution":
-        schema = generate_schema_from_model(MealDistribution, "MealDistribution", current_user=current_user)
-    else:
-        return jsonify({"error": "Invalid model for schema"}), 400
+    MODEL_MAP = {
+        "Meal":Meal,
+        "MealDistribution": MealDistribution,
+        "User": User,
+        # Add others only if you want to support them from this blueprint
+    }
 
+    model_class = MODEL_MAP.get(model_name)
+    if not model_class:
+        return jsonify({"error": f"Model '{model_name}' is not supported in this route."}), 400
+
+    current_user = User.query.get(get_jwt_identity())
+    schema = generate_schema_from_model(model_class, model_name, current_user=current_user)
     return jsonify(schema)
 
 
