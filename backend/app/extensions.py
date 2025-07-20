@@ -13,6 +13,6 @@ migrate= Migrate()
 limiter = Limiter(
     key_func=get_remote_address,
     storage_uri=os.getenv("REDIS_URL"),
-    default_limits=["20000 per day", "1000 per hour"],
+    default_limits=["200000 per day", "6000 per hour"],
     on_breach=log_rate_limit_violation
 )

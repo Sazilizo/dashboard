@@ -34,7 +34,6 @@ def form_schema():
 
 @assessments_bp.route('/student/<int:student_id>', methods=['POST', 'PUT'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-# @maintenance_guard()
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def create_or_update_assessment(student_id):
@@ -47,9 +46,10 @@ def create_or_update_assessment(student_id):
     data = request.get_json() or {}
     term = data.get('term')
     score = data.get('score')
+    specs = data.get('specs') or {}
 
     if term is None or score is None:
-        return jsonify({"error": "term and score required"}), 400
+        return jsonify({"error": "term and score are required"}), 400
 
     try:
         term_enum = TermEnum(term)
@@ -59,14 +59,32 @@ def create_or_update_assessment(student_id):
     if not isinstance(score, (int, float)):
         return jsonify({"error": "Score must be a number"}), 400
 
+    # Validate specs
+    if not isinstance(specs, dict):
+        return jsonify({"error": "Specs must be a JSON object"}), 400
+
+    for k, v in specs.items():
+        if not isinstance(v, (int, float)):
+            return jsonify({"error": f"Spec '{k}' must be a number"}), 400
+        if not (0 <= v <= 100):
+            return jsonify({"error": f"Spec '{k}' must be between 0 and 100"}), 400
+
+    # Create or update
     assessment = Assessment.query.filter_by(student_id=student.id, term=term_enum).first()
     if assessment:
         assessment.score = score
+        assessment.specs = specs
     else:
-        assessment = Assessment(student_id=student.id, term=term_enum, score=score)
+        assessment = Assessment(
+            student_id=student.id,
+            term=term_enum,
+            score=score,
+            specs=specs
+        )
         db.session.add(assessment)
 
     db.session.commit()
+
     return jsonify({
         "message": "Assessment saved",
         "assessment": {

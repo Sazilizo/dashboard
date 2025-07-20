@@ -62,7 +62,6 @@ def generate_schema_from_model(model, model_name, current_user=None):
                     field_schema["readonly"] = True
                 else:
                     field_schema["type"] = "text"
-
             else:
                 field_schema["type"] = "number"
 
@@ -89,17 +88,15 @@ def generate_schema_from_model(model, model_name, current_user=None):
 
         schema.append(field_schema)
 
-    # Add specs field dynamically if model is StudentSession and current_user is provided
-    if model_name == "StudentSession" and current_user:
+    # Add specs field dynamically if model is StudentSession or Assessment and current_user is provided
+    if model_name in ("StudentSession", "Assessment") and current_user:
         role = current_user.role.name
         specs_options = []
 
         if role in ("admin", "superuser"):
-            # combine all specs across categories
             all_specs = []
             for spec_list in SPEC_OPTIONS.values():
                 all_specs.extend(spec_list)
-            # deduplicate by key
             seen = set()
             unique_specs = []
             for spec in all_specs:
@@ -114,6 +111,10 @@ def generate_schema_from_model(model, model_name, current_user=None):
         elif role == "head_tutor":
             specs_options = SPEC_OPTIONS.get("reading", [])
 
+        else:
+            # fallback default if role is unknown
+            specs_options = SPEC_OPTIONS.get("reading", [])
+
         if specs_options:
             schema.append({
                 "name": "specs",
@@ -121,9 +122,8 @@ def generate_schema_from_model(model, model_name, current_user=None):
                 "type": "json_object",
                 "group": [{"key": o["key"], "label": o["label"]} for o in specs_options],
                 "required": False,
-                "description": "Enter performance scores for each area"
+                "description": "Enter performance scores out of 100"
             })
-
 
     return {
         "model": model_name,
