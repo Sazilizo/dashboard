@@ -20,6 +20,10 @@ class School(db.Model):
             "name": self.name,
             "address": self.address,
             "contact_number":self.contact_number,
-            "email":self.email
+            "email":self.email,
+            "workers":self.workers,
+            "students":self.students,
+            "meals":self.meals_given,
+            "users":self.users
         }
 

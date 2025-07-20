@@ -287,7 +287,7 @@ def attendance_stats():
 
     return jsonify(result)
 
-@students_bp.route('/attendance/<int:attendance_id>', methods=['DELETE'])
+@students_bp.route('/attendance/delete/<int:attendance_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 # @maintenance_guard()
 @jwt_required()

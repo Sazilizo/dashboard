@@ -50,7 +50,8 @@ def create_or_update_assessment(student_id):
             "id": assessment.id,
             "student_id": assessment.student_id,
             "term": assessment.term.value,
-            "score": assessment.score
+            "score": assessment.score,
+            "specs": assessment.specs
         }
     }), 200
 

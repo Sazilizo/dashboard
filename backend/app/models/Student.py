@@ -28,6 +28,7 @@ class Student(db.Model, SoftDeleteMixin):
             "full_name": self.full_name,
             "grade": self.grade,
             "category": self.category.value if self.category else None,
+            "sessions":self.sessions,
             "physical_education": self.physical_education,
             "year": self.year,
             "school_id": self.school_id,
