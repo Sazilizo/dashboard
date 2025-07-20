@@ -8,9 +8,31 @@ from utils.decorators import role_required
 from utils.access_control import get_allowed_site_ids
 from flask_cors import cross_origin
 from utils.maintenance import maintenance_guard
-
+from utils.formSchema import generate_schema_from_model
 
 meal_stats_bp = Blueprint('mealstats', __name__)
+
+@meal_stats_bp.route("/form_schema", methods=["GET"])
+@jwt_required()
+def form_schema():
+    model_name = request.args.get("model")
+
+    MODEL_MAP = {
+        "MealDistribution": MealDistribution,
+        "Student": Student,
+        "User": User,
+        "Meal":Meal
+        # Add others only if you want to support them from this blueprint
+    }
+
+    model_class = MODEL_MAP.get(model_name)
+    if not model_class:
+        return jsonify({"error": f"Model '{model_name}' is not supported in this route."}), 400
+
+    current_user = User.query.get(get_jwt_identity())
+    schema = generate_schema_from_model(model_class, model_name, current_user=current_user)
+    return jsonify(schema)
+
 
 @meal_stats_bp.route('/daily', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
@@ -39,7 +61,7 @@ def daily_stats():
     except (ValueError, PermissionError) as e:
         return jsonify({"error": str(e)}), 403
 
-    # 🔍 Filter by allowed school_ids
+    # Filter by allowed school_ids
     stats = db.session.query(
         Meal.type.label("meal_type"),
         func.count(MealDistribution.id).label("count")

@@ -13,6 +13,28 @@ from utils.maintenance import maintenance_guard
 
 users_bp = Blueprint('users', __name__)
 
+@users_bp.route("/form_schema", methods=["GET"])
+@jwt_required()
+def form_schema():
+    model_name = request.args.get("model")
+
+    MODEL_MAP = {
+        "AuditLog":AuditLog,
+        "Worker": Worker,
+        "User": User,
+        "Role":Role,
+        "UserRemovalReview":UserRemovalReview
+        # Add others only if you want to support them from this blueprint
+    }
+
+    model_class = MODEL_MAP.get(model_name)
+    if not model_class:
+        return jsonify({"error": f"Model '{model_name}' is not supported in this route."}), 400
+
+    current_user = User.query.get(get_jwt_identity())
+    schema = generate_schema_from_model(model_class, model_name, current_user=current_user)
+    return jsonify(schema)
+
 @users_bp.route('/create', methods=['POST'])
 # @maintenance_guard()
 @jwt_required()

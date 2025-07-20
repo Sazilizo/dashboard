@@ -1,12 +1,13 @@
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import jwt_required
-from app.models import Worker, TrainingRecord
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.models import Worker, TrainingRecord, User
 from app.extensions import db
 from werkzeug.utils import secure_filename
 from datetime import datetime
 import os
 from flask_cors import cross_origin
 from utils.maintenance import maintenance_guard
+from utils.formSchema import generate_schema_from_model
 
 worker_trainings_bp = Blueprint('workertrainings', __name__)
 UPLOAD_FOLDER = 'uploads/trainings'
@@ -19,6 +20,26 @@ def save_training_photo(file, prefix="training"):
         file.save(path)
         return path
     return None
+
+@worker_trainings_bp.route("/form_schema", methods=["GET"])
+@jwt_required()
+def form_schema():
+    model_name = request.args.get("model")
+
+    MODEL_MAP = {
+        "TrainingRecord": TrainingRecord,
+        "Worker": Worker,
+        "User": User,
+        # Add others only if you want to support them from this blueprint
+    }
+
+    model_class = MODEL_MAP.get(model_name)
+    if not model_class:
+        return jsonify({"error": f"Model '{model_name}' is not supported in this route."}), 400
+
+    current_user = User.query.get(get_jwt_identity())
+    schema = generate_schema_from_model(model_class, model_name, current_user=current_user)
+    return jsonify(schema)
 
 @worker_trainings_bp.route('/record/<int:worker_id>/', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)

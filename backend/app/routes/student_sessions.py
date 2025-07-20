@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import Student, User, StudentSession, CategoryEnum
+from app.models import Student, User, StudentSession, CategoryEnum, Assessment
 from utils.decorators import role_required, session_role_required, get_allowed_site_ids
 from werkzeug.utils import secure_filename
 from datetime import datetime
@@ -29,9 +29,22 @@ def allowed_file(filename):
 # @maintenance_guard()
 @jwt_required()
 def form_schema():
-    schema = generate_schema_from_model(StudentSession, "StudentSession")
-    return jsonify(schema)
+    model_name = request.args.get("model")
 
+    MODEL_MAP = {
+        "StudentSession": StudentSession,
+        "Student": Student,
+        "User": User,
+        "Assessment":Assessment
+    }
+
+    model_class = MODEL_MAP.get(model_name)
+    if not model_class:
+        return jsonify({"error": f"Model '{model_name}' is not supported in this route."}), 400
+
+    current_user = User.query.get(get_jwt_identity())
+    schema = generate_schema_from_model(model_class, model_name, current_user=current_user)
+    return jsonify(schema)
 
 @student_sessions_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)

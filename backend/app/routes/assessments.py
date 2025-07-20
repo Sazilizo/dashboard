@@ -6,12 +6,35 @@ from sqlalchemy import func, and_
 from app.extensions import db
 from flask_cors import cross_origin
 from utils.maintenance import maintenance_guard
+from utils.formSchema import generate_schema_from_model
 
 assessments_bp = Blueprint('assessments', __name__)
 
+@assessments_bp.route("/form_schema", methods=["GET"])
+@jwt_required()
+def form_schema():
+    model_name = request.args.get("model")
+
+    MODEL_MAP = {
+        "Assessment":Assessment,
+        "Student": Student,
+        "User": User,
+        "TermEnum":TermEnum,
+        "CategoryEnum":CategoryEnum
+        # Add others only if you want to support them from this blueprint
+    }
+
+    model_class = MODEL_MAP.get(model_name)
+    if not model_class:
+        return jsonify({"error": f"Model '{model_name}' is not supported in this route."}), 400
+
+    current_user = User.query.get(get_jwt_identity())
+    schema = generate_schema_from_model(model_class, model_name, current_user=current_user)
+    return jsonify(schema)
+
 @assessments_bp.route('/student/<int:student_id>', methods=['POST', 'PUT'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def create_or_update_assessment(student_id):
@@ -57,7 +80,7 @@ def create_or_update_assessment(student_id):
 
 @assessments_bp.route('/delete/<int:assessment_id>', methods=['DELETE'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('admin', 'superuser')
 def delete_assessment(assessment_id):
@@ -94,7 +117,7 @@ def build_filters(filters, user):
 
 @assessments_bp.route('/averages', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@maintenance_guard()
+# @maintenance_guard()
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
 def get_averages():

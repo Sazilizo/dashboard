@@ -3,6 +3,7 @@ from sqlalchemy import Boolean, Integer, String, Enum
 import enum
 from utils.specs_config import SPEC_OPTIONS  
 
+
 def generate_schema_from_model(model, model_name, current_user=None):
     exclude_fields = {"id", "created_at", "updated_at", "deleted_at"}
     schema = []
