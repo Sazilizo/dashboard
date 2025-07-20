@@ -13,20 +13,18 @@ from flask_cors import cross_origin
 from utils.maintenance import maintenance_guard
 
 auth_bp = Blueprint('auth', __name__)
-
 @auth_bp.route('/register', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-# @maintenance_guard()
 @limiter.limit("5 per minute", override_defaults=False)
 def register():
     data = request.get_json()
     username = data.get('username', '').strip()
     password = data.get('password', '')
-    role_name = data.get('role', '')  # e.g. 'admin'
-    school_name = data.get('school', '')  # e.g. 'My School'
+    role_name = data.get('role', '').strip()  # e.g. 'admin'
+    school_name = data.get('school', '').strip()  # optional for privileged roles
 
-    if not username or not password or not role_name or not school_name:
-        return jsonify({"error": "Username, password, role and school are required"}), 400
+    if not username or not password or not role_name:
+        return jsonify({"error": "Username, password, and role are required"}), 400
 
     # Check if username already exists
     if User.query.filter_by(username=username).first():
@@ -37,24 +35,34 @@ def register():
     if not role:
         return jsonify({"error": f"Role '{role_name}' not found"}), 400
 
-    # Find school by name
-    school = School.query.filter_by(name=school_name).first()
-    if not school:
-        return jsonify({"error": f"School '{school_name}' not found"}), 400
+    # Roles that do NOT require a school
+    privileged_roles = {"superuser", "admin", "hr", "guest"}
+
+    school = None
+    if role_name not in privileged_roles:
+        if not school_name:
+            return jsonify({"error": "School is required for this role"}), 400
+        school = School.query.filter_by(name=school_name).first()
+        if not school:
+            return jsonify({"error": f"School '{school_name}' not found"}), 400
 
     # Create user with hashed password
     user = User(
         username=username,
         role_id=role.id,
-        school_id=school.id,
+        school_id=school.id if school else None
     )
     user.set_password(password)
 
     db.session.add(user)
     db.session.commit()
 
-    return jsonify({"message": "User created", "user_id": user.id}), 201
-
+    return jsonify({
+        "message": "User created",
+        "user_id": user.id,
+        "school_id": user.school_id,
+        "role": role_name
+    }), 201
 
 @auth_bp.route('/login', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
