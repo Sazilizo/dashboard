@@ -20,7 +20,7 @@ students_bp = Blueprint("students", __name__)
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 # @maintenance_guard()
 @jwt_required()
-@session_role_required
+@session_role_required()
 def list_students():
     user = User.query.get(get_jwt_identity())
     if not user:
@@ -59,7 +59,7 @@ def list_students():
 
 @students_bp.route('/<int:student_id>', methods=['GET'])
 @jwt_required()
-@session_role_required
+@session_role_required()
 def get_student(student_id):
     user = User.query.get(get_jwt_identity())
     student = Student.query.filter_by(id=student_id, deleted=False).first()

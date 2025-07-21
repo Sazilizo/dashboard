@@ -72,10 +72,29 @@ def generate_schema_from_model(model, model_name, current_user=None):
             enum_class = column.type.enum_class
             if enum_class and issubclass(enum_class, enum.Enum):
                 field_schema["type"] = "select"
-                field_schema["options"] = [
-                    {"label": e.value.upper(), "value": e.value}
-                    for e in enum_class
-                ]
+                # Explicitly filter 'category' field options based on user role
+                if name == "category" and current_user:
+                    role = current_user.role.name.lower()
+                    all_options = [
+                        {"label": e.value.upper(), "value": e.value}
+                        for e in enum_class
+                    ]
+                    if role == "head_tutor":
+                        # Only allow 'academic' (or similar) category
+                        filtered = [opt for opt in all_options if opt["value"] in ["academic", "reading"]]
+                        field_schema["options"] = filtered
+                    elif role == "head_coach":
+                        # Only allow 'physical_education' (or similar) category
+                        filtered = [opt for opt in all_options if opt["value"] in ["physical_education", "pe"]]
+                        field_schema["options"] = filtered
+                    else:
+                        # Admins, superusers, etc. see all
+                        field_schema["options"] = all_options
+                else:
+                    field_schema["options"] = [
+                        {"label": e.value.upper(), "value": e.value}
+                        for e in enum_class
+                    ]
             else:
                 field_schema["type"] = "select"
                 field_schema["options"] = column.type.enums
