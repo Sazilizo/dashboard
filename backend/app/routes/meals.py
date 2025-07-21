@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import Meal, MealDistribution, Student, User, School
 from app.extensions import db, jwt, limiter
-from utils.decorators import role_required
+from utils.decorators import role_required, session_role_required
 import os
 from werkzeug.utils import secure_filename
 from datetime import datetime
@@ -24,6 +24,7 @@ def allowed_file(filename):
 @limiter.limit("10 per minute")
 # @maintenance_guard()
 @jwt_required()
+@session_role_required()
 @role_required('admin', 'superuser', 'head_coach', 'head_tutor')
 def create_meal():
     data = request.form
@@ -48,6 +49,7 @@ def create_meal():
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 # @maintenance_guard()
 @jwt_required()
+@session_role_required()
 def form_schema():
     model_name = request.args.get("model")
 
@@ -69,6 +71,8 @@ def form_schema():
 @meals_bp.route('/list', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
+@session_role_required()
+@role_required('admin', 'superuser', 'head_coach', 'head_tutor')
 def list_meals():
     allowed_site_ids = get_allowed_site_ids()
 
@@ -99,6 +103,7 @@ def list_meals():
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 # @maintenance_guard()
 @jwt_required()
+@session_role_required()
 @role_required('admin', 'superuser', 'head_coach', 'head_tutor')
 def record_meal():
     try:

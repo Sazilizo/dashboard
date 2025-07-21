@@ -4,7 +4,7 @@ from app.models import Student, User, CategoryEnum, AttendanceRecord, AcademicSe
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func
-from utils.decorators import role_required
+from utils.decorators import role_required, session_role_required
 from utils.pagination import apply_pagination_and_search
 from utils.access_control import get_allowed_site_ids
 from flask_cors import cross_origin, CORS
@@ -20,6 +20,7 @@ students_bp = Blueprint("students", __name__)
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 # @maintenance_guard()
 @jwt_required()
+@session_role_required
 def list_students():
     user = User.query.get(get_jwt_identity())
     if not user:
@@ -58,6 +59,7 @@ def list_students():
 
 @students_bp.route('/<int:student_id>', methods=['GET'])
 @jwt_required()
+@session_role_required
 def get_student(student_id):
     user = User.query.get(get_jwt_identity())
     student = Student.query.filter_by(id=student_id, deleted=False).first()
@@ -98,6 +100,7 @@ def form_schema():
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 # @maintenance_guard()
 @jwt_required()
+@session_role_required()
 @role_required("superuser", "admin", "head_tutor")
 def create_student():
     user = User.query.get(get_jwt_identity())
