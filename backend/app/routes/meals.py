@@ -9,6 +9,8 @@ from datetime import datetime
 from flask_cors import cross_origin
 from utils.formSchema import generate_schema_from_model
 from utils.maintenance import maintenance_guard
+from sqlalchemy import func
+from utils.access_control import get_allowed_site_ids
 meals_bp = Blueprint('meals', __name__)
 
 UPLOAD_FOLDER = 'uploads/meal_photos'
@@ -41,9 +43,6 @@ def create_meal():
     db.session.commit()
     return jsonify({"message": "Meal created", "meal_id": meal.id}), 201
 
-from flask_jwt_extended import get_jwt_identity
-from app.models import Meal, MealDistribution, User
-from utils.formSchema import generate_schema_from_model
 
 @meals_bp.route("/form_schema", methods=["GET"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
@@ -71,31 +70,30 @@ def form_schema():
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 def list_meals():
-    # Optionally get school_id(s) from query params for filtering
-    school_ids = request.args.get('school_id')
-    # Assuming meals are linked to schools somehow, otherwise ignore filtering here
-    query = Meal.query
+    allowed_site_ids = get_allowed_site_ids()
 
-    # If you want to filter by school_id and Meal model has a school_id attribute:
-    # if school_ids:
-    #     ids = [int(s) for s in school_ids.split(",")]
-    #     query = query.filter(Meal.school_id.in_(ids))
+    results = (
+        db.session.query(
+            Meal.name,
+            Meal.type,
+            Meal.ingredients,
+            func.count(Meal.id).label('count')
+        )
+        .filter(Meal.school_id.in_(allowed_site_ids))
+        .group_by(Meal.name, Meal.type, Meal.ingredients)
+        .order_by(func.count(Meal.id).desc())
+        .all()
+    )
 
-    meals = query.all()
-
-    result = [
+    return jsonify([
         {
-            "id": meal.id,
-            "name": meal.name,
-            "has_fruit": meal.has_fruit,
-            "ingredients": meal.ingredients,
-            # add other fields as needed
+            "name": name,
+            "type": meal_type,
+            "ingredients": ingredients,
+            "count": count
         }
-        for meal in meals
-    ]
-
-    return jsonify(result), 200
-
+        for name, meal_type, ingredients, count in results
+    ])
 @limiter.limit("10 per minute")
 @meals_bp.route('/record', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)

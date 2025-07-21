@@ -11,14 +11,15 @@ class Student(db.Model, SoftDeleteMixin):
     grade = db.Column(db.String(50), nullable=False)
     category = db.Column(db.Enum(CategoryEnum), nullable=False, default=CategoryEnum.un, index=True)
     physical_education = db.Column(db.Boolean, default=False, index=True)
-    year = db.Column(db.Integer, nullable=False, index=True)
+    year = db.Column(db.Integer, nullable=False, index=True, default=lambda: datetime.utcnow().year)
     school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
 
     photo = db.Column(db.String(255), nullable=True)
     parent_permission_pdf = db.Column(db.String(255), nullable=True)
 
     assessments = db.relationship('Assessment', backref='student', lazy=True, cascade="all, delete-orphan")
-    sessions = db.relationship('StudentSession', backref='student', lazy=True)
+    academic_sessions = db.relationship('AcademicSession', back_populates='student', lazy=True, cascade="all, delete-orphan")
+    pe_sessions = db.relationship('PESession', back_populates='student', lazy=True, cascade="all, delete-orphan")
     meal_logs = db.relationship('MealDistribution', backref='student', lazy=True)
     attendance_records = db.relationship('AttendanceRecord', back_populates='student')
 
@@ -47,26 +48,36 @@ class Student(db.Model, SoftDeleteMixin):
                 }
                 for a in self.assessments
             ]
-            data["sessions"] = [
+            data["academic_sessions"] = [
                 {
                     "id": s.id,
                     "session_name": s.session_name,
-                    "date": s.date.isoformat(),
+                    "date": s.date.isoformat() if s.date else None,
                     "duration_hours": s.duration_hours,
                     "photo": s.photo,
                     "outcomes": s.outcomes,
-                    "term": s.term.value,
-                    "category": s.category.value,
-                    "physical_education": s.physical_education,
+                    "specs": s.specs,
                     "created_at": s.created_at.isoformat(),
+                    "updated_at": s.updated_at.isoformat(),
                 }
-                for s in self.sessions
+                for s in self.academic_sessions
+            ]
+            data["pe_sessions"] = [
+                {
+                    "id": s.id,
+                    "session_name": s.session_name,
+                    "date": s.date.isoformat() if s.date else None,
+                    "duration_hours": s.duration_hours,
+                    "photo": s.photo,
+                    "outcomes": s.outcomes,
+                    "specs": s.specs,
+                    "created_at": s.created_at.isoformat(),
+                    "updated_at": s.updated_at.isoformat(),
+                }
+                for s in self.pe_sessions
             ]
 
         return data
-
-
-
 
 
 class Assessment(db.Model):
@@ -85,19 +96,39 @@ class Assessment(db.Model):
     )
 
 
-class StudentSession(db.Model):
-    __tablename__ = 'student_sessions'
+class AcademicSession(db.Model):
+    __tablename__ = 'academic_sessions'
 
     id = db.Column(db.Integer, primary_key=True)
     student_id = db.Column(db.Integer, db.ForeignKey('students.id'), nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)  # Head tutor/coach
-    session_name = db.Column(db.String(100), nullable=False)
-    date = db.Column(db.Date, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    session_name = db.Column(db.String(255), nullable=False)
+    date = db.Column(db.Date, nullable=True)
     duration_hours = db.Column(db.Float, nullable=False)
-    photo = db.Column(db.String(255), nullable=True)
-    outcomes = db.Column(db.Text, nullable=True)
-    category = db.Column(db.Enum(CategoryEnum), nullable=False, index=True)
-    physical_education = db.Column(db.Boolean, default=False, index=True)
-    term = db.Column(db.Enum(TermEnum), nullable=False, index=True)
+    photo = db.Column(db.String(255))
+    outcomes = db.Column(db.Text)
+    specs = db.Column(JSON)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    student = db.relationship("Student", back_populates="academic_sessions")
+    user = db.relationship("User", backref="academic_sessions")
+
+
+class PESession(db.Model):
+    __tablename__ = 'pe_sessions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    student_id = db.Column(db.Integer, db.ForeignKey('students.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    session_name = db.Column(db.String(255), nullable=False)
+    date = db.Column(db.Date, nullable=False)
+    duration_hours = db.Column(db.Float, nullable=False) 
+    photo = db.Column(db.String(255))
+    outcomes = db.Column(db.Text)
+    specs = db.Column(JSON)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    student = db.relationship("Student", back_populates="pe_sessions")
+    user = db.relationship("User", backref="pe_sessions")

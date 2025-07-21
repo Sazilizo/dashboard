@@ -88,12 +88,13 @@ def generate_schema_from_model(model, model_name, current_user=None):
 
         schema.append(field_schema)
 
-    # Add specs field dynamically if model is StudentSession or Assessment and current_user is provided
-    if model_name in ("StudentSession", "Assessment") and current_user:
+    # ----- Add `specs` field for models requiring performance data -----
+    if model_name in ("StudentSession", "Assessment", "AcademicSession", "PESession") and current_user:
         role = current_user.role.name
         specs_options = []
 
-        if role in ("admin", "superuser"):
+        if role in ("admin", "superuser", "hr"):
+            # Include all unique specs across all domains
             all_specs = []
             for spec_list in SPEC_OPTIONS.values():
                 all_specs.extend(spec_list)
@@ -112,7 +113,6 @@ def generate_schema_from_model(model, model_name, current_user=None):
             specs_options = SPEC_OPTIONS.get("reading", [])
 
         else:
-            # fallback default if role is unknown
             specs_options = SPEC_OPTIONS.get("reading", [])
 
         if specs_options:

@@ -1,6 +1,6 @@
 from .User import User, Role, TokenBlocklist
 from .School import School
-from .Student import Student, Assessment, StudentSession
+from .Student import Student, Assessment, AcademicSession, PESession
 from .Meal import Meal, MealDistribution
 from .Worker import Worker
 from .base import SoftDeleteMixin, CategoryEnum, TermEnum

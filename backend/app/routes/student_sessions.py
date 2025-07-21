@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models import Student, User, StudentSession, CategoryEnum, Assessment
-from utils.decorators import role_required, session_role_required, get_allowed_site_ids
+from app.models import Student, User, AcademicSession, CategoryEnum, Assessment, PESession
+from utils.decorators import role_required, session_role_required, get_allowed_site_ids, school_access_required
 from werkzeug.utils import secure_filename
 from datetime import datetime
 import os
@@ -32,10 +32,11 @@ def form_schema():
     model_name = request.args.get("model")
 
     MODEL_MAP = {
-        "StudentSession": StudentSession,
+        "AcademicSession": AcademicSession,
         "Student": Student,
         "User": User,
-        "Assessment":Assessment
+        "Assessment":Assessment,
+        "PESession":PESession
     }
 
     model_class = MODEL_MAP.get(model_name)
@@ -48,7 +49,6 @@ def form_schema():
 
 @student_sessions_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-# @maintenance_guard()
 @jwt_required()
 @session_role_required()
 def create_session():
@@ -58,7 +58,6 @@ def create_session():
     if missing_fields:
         return jsonify({"error": f"Missing fields: {missing_fields}"}), 400
 
-    # Parse and validate inputs
     try:
         student_id = int(request.form['student_id'])
         session_name = request.form['session_name'].strip()
@@ -67,7 +66,19 @@ def create_session():
     except (ValueError, TypeError) as e:
         return jsonify({"error": "Invalid data types or formats", "details": str(e)}), 400
 
-    # Optional specs (expected as JSON string)
+    # Determine session type by role or optional override
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    role = user.role
+    session_type = request.form.get('session_type')
+    if not session_type:
+        session_type = 'pe' if role == 'head_coach' else 'academic'
+
+    session_model = PESession if session_type == 'pe' else AcademicSession
+
+    # Optional specs
     specs = None
     specs_raw = request.form.get('specs')
     if specs_raw:
@@ -81,12 +92,6 @@ def create_session():
     outcomes = request.form.get('outcomes', '').strip()
     photo_file = request.files.get('photo')
 
-    # Authenticated user
-    user = User.query.get(get_jwt_identity())
-    if not user:
-        return jsonify({"error": "User not found"}), 404
-
-    # Student access
     student = Student.query.get(student_id)
     if not student:
         return jsonify({"error": "Student not found"}), 404
@@ -95,7 +100,7 @@ def create_session():
     if student.school_id not in allowed_site_ids:
         return jsonify({"error": "Forbidden: You are not allowed to access this student's school"}), 403
 
-    # Validate spec keys based on category
+    # Validate spec keys
     if specs:
         category_key = student.category.value if student.category else None
         allowed_keys = {item['key'] for item in SPEC_OPTIONS.get(category_key, [])}
@@ -119,8 +124,8 @@ def create_session():
         else:
             return jsonify({"error": "Invalid file type"}), 400
 
-    # Create session record
-    session = StudentSession(
+    # Create session record (either AcademicSession or PESession)
+    session = session_model(
         student_id=student.id,
         user_id=user.id,
         session_name=session_name,
@@ -137,132 +142,95 @@ def create_session():
     db.session.commit()
 
     return jsonify({
-        "message": "Session created successfully",
+        "message": f"{session_type.capitalize()} session created successfully",
         "session_id": session.id,
         "category": session.category.value if session.category else None,
         "physical_education": session.physical_education,
         "specs": session.specs
     }), 201
 
-@student_sessions_bp.route('/sessions', methods=['GET'])
-@cross_origin(origins="http://localhost:3000", supports_credentials=True)
-# @maintenance_guard()
+
+@student_sessions_bp.route('/list', methods=['GET'])
 @jwt_required()
-@session_role_required()
+@school_access_required()
 def list_sessions():
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
+    user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({"error": "User not found"}), 404
 
+    session_type = request.args.get('session_type')
+    if not session_type:
+        session_type = 'pe' if user.role == 'head_coach' else 'academic'
+    
+    SessionModel = PESession if session_type == 'pe' else AcademicSession
+
+    # Filter by site
     allowed_site_ids = get_allowed_site_ids(user)
+    query = SessionModel.query.join(Student).filter(Student.school_id.in_(allowed_site_ids))
 
-    grade = request.args.get('grade')
-    category = request.args.get('category')
-    pe_filter = request.args.get('pe')
-    search = request.args.get('search', '').strip().lower()
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 20, type=int)
+    # Optional filters
+    if student_id := request.args.get('student_id'):
+        query = query.filter(SessionModel.student_id == int(student_id))
 
-    query = StudentSession.query.join(Student).filter(
-        Student.school_id.in_(allowed_site_ids),
-        Student.deleted == False
-    )
+    if term := request.args.get('term'):
+        query = query.filter(SessionModel.specs['term'].astext == term)
 
-    if grade:
-        query = query.filter(Student.grade == grade)
+    sessions = query.order_by(SessionModel.date.desc()).all()
 
-    if category:
-        try:
-            category_enum = CategoryEnum(category)
-            query = query.filter(Student.category == category_enum)
-        except ValueError:
-            return jsonify({"error": f"Invalid category: {category}"}), 400
-
-    if pe_filter is not None:
-        pe_bool = pe_filter.lower() in ['true', '1', 'yes']
-        query = query.filter(Student.physical_education == pe_bool)
-
-    if search:
-        query = query.filter(Student.full_name.ilike(f"%{search}%"))
-
-    if start_date:
-        try:
-            start_date_obj = datetime.strptime(start_date, "%Y-%m-%d").date()
-            query = query.filter(StudentSession.date >= start_date_obj)
-        except ValueError:
-            return jsonify({"error": "Invalid start_date format, use YYYY-MM-DD"}), 400
-
-    if end_date:
-        try:
-            end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").date()
-            query = query.filter(StudentSession.date <= end_date_obj)
-        except ValueError:
-            return jsonify({"error": "Invalid end_date format, use YYYY-MM-DD"}), 400
-
-    paginated = query.order_by(StudentSession.date.desc()).paginate(page=page, per_page=per_page, error_out=False)
-
-    return jsonify({
-        "sessions": [{
+    session_list = []
+    for s in sessions:
+        session_list.append({
             "id": s.id,
             "student_id": s.student_id,
-            "student_name": s.student.full_name,
+            "student_name": s.student.full_name if s.student else None,
             "session_name": s.session_name,
             "date": s.date.isoformat(),
             "duration_hours": s.duration_hours,
-            "category": s.category.value,
-            "grade": s.student.grade,
-            "physical_education": s.student.physical_education,
+            "category": s.category.value if hasattr(s, 'category') and s.category else None,
+            "physical_education": getattr(s, 'physical_education', False),
+            "specs": s.specs,
+            "outcomes": s.outcomes,
             "photo": s.photo,
-            "outcomes": s.outcomes
-        } for s in paginated.items],
-        "total": paginated.total,
-        "page": paginated.page,
-        "pages": paginated.pages
-    }), 200
+        })
 
-@student_sessions_bp.route('/stats/<int:student_id>', methods=['GET'])
-@cross_origin(origins="http://localhost:3000", supports_credentials=True)
+    return jsonify(session_list), 200
+
+@student_sessions_bp.route('/students/<int:student_id>/stats', methods=['GET'])
 @jwt_required()
-def student_stats(student_id):
-    user_id = get_jwt_identity()
-    user = User.query.get(user_id)
+@school_access_required()
+def get_student_stats(student_id):
+    user = User.query.get(get_jwt_identity())
     allowed_site_ids = get_allowed_site_ids(user)
 
     student = Student.query.get(student_id)
     if not student or student.school_id not in allowed_site_ids:
         return jsonify({"error": "Student not found or access denied"}), 404
 
-    sessions = StudentSession.query.filter_by(student_id=student_id).all()
+    # Choose session model based on user role
+    SessionModel = PESession if user.role == 'head_coach' else AcademicSession
+    sessions = SessionModel.query.filter_by(student_id=student.id).all()
+
     if not sessions:
-        return jsonify({"specs": {}, "session_count": 0})
+        return jsonify({"message": "No sessions recorded"}), 200
 
-    # Aggregate specs (e.g., average)
+    # Group by term
     from collections import defaultdict
-    import statistics
+    grouped = defaultdict(list)
+    for s in sessions:
+        term = s.specs.get("term") if s.specs else None
+        grouped[term].append(s)
 
-    spec_accumulator = defaultdict(list)
-    for session in sessions:
-        if session.specs:
-            for key, value in session.specs.items():
-                try:
-                    spec_accumulator[key].append(float(value))
-                except ValueError:
-                    continue
-
-    averaged_specs = {
-        key: round(statistics.mean(values), 2)
-        for key, values in spec_accumulator.items() if values
+    term_averages = {
+        term or "unknown": get_specs_summary(sess_list)
+        for term, sess_list in grouped.items()
     }
 
     return jsonify({
-        "student_id": student_id,
+        "student_id": student.id,
         "student_name": student.full_name,
-        "specs": averaged_specs,
-        "session_count": len(sessions)
-    })
+        "category": student.category.value if student.category else None,
+        "stats": term_averages
+    }), 200
 
 
 @student_sessions_bp.route('/stats', methods=['GET'])
@@ -276,7 +244,7 @@ def all_students_stats():
     results = []
 
     for student in students:
-        sessions = StudentSession.query.filter_by(student_id=student.id).all()
+        sessions = AcademicSession.query.filter_by(student_id=student.id).all()
         if not sessions:
             continue
 
@@ -311,44 +279,53 @@ def get_specs_summary():
     if not user:
         return jsonify({"error": "Unauthorized"}), 401
 
-    # Support ?school_id=... (multi) and ?group_by=grade|category
+    # Optional filtering
     raw_site_ids = request.args.getlist("school_id", type=int)
-    group_by = request.args.get("group_by")  # 'grade', 'category', or None
+    group_by = request.args.get("group_by")  # 'grade', 'category', 'term', or None
+    session_type = request.args.get("session_type")  # 'academic' or 'pe'
 
     try:
         allowed_site_ids = get_allowed_site_ids(user, raw_site_ids)
     except (ValueError, PermissionError) as e:
         return jsonify({"error": str(e)}), 403
 
-    # Load sessions with student info
+    # Pick session model based on role or query
+    if not session_type:
+        session_type = 'pe' if user.role == 'head_coach' else 'academic'
+
+    SessionModel = PESession if session_type == 'pe' else AcademicSession
+
+    # Query sessions with attached student
     sessions = (
-        StudentSession.query
+        SessionModel.query
         .join(Student)
-        .options(joinedload(StudentSession.student))
+        .options(joinedload(SessionModel.student))
         .filter(Student.school_id.in_(allowed_site_ids))
         .all()
     )
 
-    # Group: student ID (default), or by grade/category
-    grouped_specs = defaultdict(lambda: defaultdict(list))  # e.g., {"grade 3": {"reading": [80, 90]}}
+    grouped_specs = defaultdict(lambda: defaultdict(list))  # e.g., {"grade 3": {"reading": [80]}}
 
     for session in sessions:
         student = session.student
         if not student or not session.specs or not isinstance(session.specs, dict):
             continue
 
+        # Determine grouping key
         if group_by == "grade":
-            key = student.grade
+            key = f"Grade {student.grade}"
         elif group_by == "category":
             key = student.category.value if student.category else "Unknown"
+        elif group_by == "term":
+            key = session.specs.get("term", "Unknown")
         else:
-            key = str(student.id)  # default: per student
+            key = str(student.id)
 
         for spec_key, val in session.specs.items():
             if isinstance(val, (int, float)):
                 grouped_specs[key][spec_key].append(val)
 
-    # Compute means
+    # Compute average per spec
     response = []
     for group_key, spec_dict in grouped_specs.items():
         averages = {
@@ -361,7 +338,6 @@ def get_specs_summary():
         })
 
     return jsonify(response), 200
-
 
 @student_sessions_bp.route('/bulkupload', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
@@ -453,7 +429,7 @@ def bulk_upload_sessions():
             saved_photo = secure_name
 
         student = student_map[student_id]
-        session = StudentSession(
+        session = AcademicSession(
             student_id=student_id,
             user_id=user.id,
             session_name=row.get('session_name', '').strip(),

@@ -1,6 +1,6 @@
 from datetime import datetime
 from app.extensions import db, jwt, limiter
-from app.models import Student, User, CategoryEnum, AttendanceRecord
+from app.models import Student, User, CategoryEnum, AttendanceRecord, AcademicSession, PESession,Assessment
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func
@@ -75,8 +75,24 @@ def get_student(student_id):
 # @maintenance_guard()
 @jwt_required()
 def form_schema():
-    schema = generate_schema_from_model(Student, "Student")
+    model_name = request.args.get("model")
+
+    MODEL_MAP = {
+        "AcademicSession": AcademicSession,
+        "Student": Student,
+        "User": User,
+        "Assessment":Assessment,
+        "PESession":PESession
+    }
+
+    model_class = MODEL_MAP.get(model_name)
+    if not model_class:
+        return jsonify({"error": f"Model '{model_name}' is not supported in this route."}), 400
+
+    current_user = User.query.get(get_jwt_identity())
+    schema = generate_schema_from_model(model_class, model_name, current_user=current_user)
     return jsonify(schema)
+
 
 @students_bp.route("/create", methods=["POST"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
