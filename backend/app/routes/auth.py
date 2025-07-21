@@ -1,18 +1,19 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import (
     create_access_token, create_refresh_token, jwt_required,
-    get_jwt_identity, get_jwt,
+    get_jwt_identity, get_jwt
 )
 from werkzeug.security import check_password_hash
 from app.models import User, Role, School, TokenBlocklist
 from app.extensions import db, jwt, limiter
 from utils.audit import log_event
-import re
+from utils.maintenance import maintenance_guard
 from datetime import datetime, timedelta
 from flask_cors import cross_origin
-from utils.maintenance import maintenance_guard
+import re
 
 auth_bp = Blueprint('auth', __name__)
+
 @auth_bp.route('/register', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @limiter.limit("5 per minute", override_defaults=False)
@@ -20,22 +21,19 @@ def register():
     data = request.get_json()
     username = data.get('username', '').strip()
     password = data.get('password', '')
-    role_name = data.get('role', '').strip()  # e.g. 'admin'
-    school_name = data.get('school', '').strip()  # optional for privileged roles
+    role_name = data.get('role', '').strip()
+    school_name = data.get('school', '').strip()
 
     if not username or not password or not role_name:
         return jsonify({"error": "Username, password, and role are required"}), 400
 
-    # Check if username already exists
     if User.query.filter_by(username=username).first():
         return jsonify({"error": "Username already exists"}), 400
 
-    # Find role by name
     role = Role.query.filter_by(name=role_name).first()
     if not role:
         return jsonify({"error": f"Role '{role_name}' not found"}), 400
 
-    # Roles that do NOT require a school
     privileged_roles = {"superuser", "admin", "hr", "guest"}
 
     school = None
@@ -46,7 +44,6 @@ def register():
         if not school:
             return jsonify({"error": f"School '{school_name}' not found"}), 400
 
-    # Create user with hashed password
     user = User(
         username=username,
         role_id=role.id,
@@ -66,7 +63,6 @@ def register():
 
 @auth_bp.route('/login', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-# @maintenance_guard()
 @limiter.limit("5 per minute", override_defaults=False)
 def login():
     try:
@@ -96,11 +92,19 @@ def login():
             )
             refresh_token = create_refresh_token(identity=str(user.id))
 
+            # Set the refresh token as a secure HttpOnly cookie
+            response = jsonify({"access_token": access_token})
+            response.set_cookie(
+                "refresh_token",
+                refresh_token,
+                httponly=True,
+                secure=True,
+                samesite="Lax",
+                max_age=60 * 60 * 24 * 7  # 7 days
+            )
+
             log_event("LOGIN_SUCCESS", user_id=user.id, ip=ip, description=f"{username} logged in")
-            return jsonify({
-                "access_token": access_token,
-                "refresh_token": refresh_token
-            }), 200
+            return response, 200
 
         log_event("LOGIN_FAILED", ip=ip, description=f"Failed login attempt for {username}")
         return jsonify({"error": "Invalid username or password"}), 401
@@ -109,10 +113,8 @@ def login():
         log_event("LOGIN_ERROR", ip=request.remote_addr, description=str(e))
         return jsonify({"error": "An unexpected error occurred", "details": str(e)}), 500
 
-
 @auth_bp.route('/me', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-# @maintenance_guard()
 @jwt_required()
 def get_current_user():
     user_id = get_jwt_identity()
@@ -129,15 +131,20 @@ def get_current_user():
         "school_id": user.school_id
     }), 200
 
-
 @auth_bp.route('/refresh', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-# @maintenance_guard()
-@jwt_required(refresh=True)
 def refresh_access_token():
     try:
-        user_id = get_jwt_identity()
+        refresh_token = request.cookies.get("refresh_token")
+        if not refresh_token:
+            return jsonify({"error": "Missing refresh token"}), 401
+
+        from flask_jwt_extended import decode_token
+        decoded = decode_token(refresh_token)
+
+        user_id = decoded["sub"]
         user = User.query.get(user_id)
+
         if not user:
             return jsonify({"error": "User not found"}), 404
 
@@ -154,7 +161,7 @@ def refresh_access_token():
         return jsonify({"access_token": access_token}), 200
 
     except Exception as e:
-        log_event("REFRESH_TOKEN_ERROR", user_id=user_id, ip=request.remote_addr, description=str(e))
+        log_event("REFRESH_TOKEN_ERROR", ip=request.remote_addr, description=str(e))
         return jsonify({"error": "Failed to refresh token", "details": str(e)}), 500
 
 @auth_bp.route("/logout", methods=["POST"])
@@ -175,4 +182,7 @@ def logout():
     db.session.add(block_token)
     db.session.commit()
 
-    return jsonify(msg="Successfully logged out"), 200
+    response = jsonify(msg="Successfully logged out")
+    response.delete_cookie("refresh_token")
+
+    return response, 200
