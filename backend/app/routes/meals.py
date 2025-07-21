@@ -67,6 +67,34 @@ def form_schema():
     schema = generate_schema_from_model(model_class, model_name, current_user=current_user)
     return jsonify(schema)
 
+@meals_bp.route('/list', methods=['GET'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@jwt_required()
+def list_meals():
+    # Optionally get school_id(s) from query params for filtering
+    school_ids = request.args.get('school_id')
+    # Assuming meals are linked to schools somehow, otherwise ignore filtering here
+    query = Meal.query
+
+    # If you want to filter by school_id and Meal model has a school_id attribute:
+    # if school_ids:
+    #     ids = [int(s) for s in school_ids.split(",")]
+    #     query = query.filter(Meal.school_id.in_(ids))
+
+    meals = query.all()
+
+    result = [
+        {
+            "id": meal.id,
+            "name": meal.name,
+            "has_fruit": meal.has_fruit,
+            "ingredients": meal.ingredients,
+            # add other fields as needed
+        }
+        for meal in meals
+    ]
+
+    return jsonify(result), 200
 
 @limiter.limit("10 per minute")
 @meals_bp.route('/record', methods=['POST'])
