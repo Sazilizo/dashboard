@@ -112,7 +112,7 @@ class AcademicSession(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     student = db.relationship("Student", back_populates="academic_sessions")
-    user = db.relationship("User", backref="academic_sessions")
+    user = db.relationship('User', back_populates='logged_academic_sessions')
 
 
 class PESession(db.Model):
@@ -131,4 +131,4 @@ class PESession(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     student = db.relationship("Student", back_populates="pe_sessions")
-    user = db.relationship("User", backref="pe_sessions")
+    user = db.relationship('User', back_populates='logged_pe_sessions')
