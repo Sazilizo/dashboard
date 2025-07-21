@@ -28,8 +28,8 @@ class User(db.Model, SoftDeleteMixin):
     worker = db.relationship('Worker', backref=db.backref('user', uselist=False))
 
     audit_logs = db.relationship('AuditLog', backref='user', lazy=True)
-    logged_academic_sessions = db.relationship('AcademicSession', backref='user', lazy=True)
-    logged_pe_sessions = db.relationship('PESession', backref='user', lazy=True)
+    logged_academic_sessions = db.relationship('AcademicSession', back_populates='user', lazy=True)
+    logged_pe_sessions = db.relationship('PESession', back_populates='user', lazy=True)
     recorded_meals = db.relationship('MealDistribution', backref='recorded_by_user', lazy=True,
                                      foreign_keys='MealDistribution.recorded_by')
 
