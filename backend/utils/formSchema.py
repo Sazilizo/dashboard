@@ -19,9 +19,21 @@ def generate_schema_from_model(model, model_name, current_user=None):
             "required": not column.nullable and not column.default,
         }
 
-        if isinstance(column.type, String):
+        # JSON/JSONB support
+        if column.type.__class__.__name__ == "JSON":
+            field_schema["type"] = "json"
+            # Add contentType for frontend to set correct Content-Type header
+            field_schema["contentType"] = "application/json"
+            field_schema["note"] = "For JSON fields, ensure the request Content-Type is application/json. 415 errors mean the backend did not receive JSON."
+
+        elif isinstance(column.type, String):
             if "photo" in name or "pdf" in name or "file" in name:
                 field_schema["type"] = "file"
+                # Optionally restrict file types
+                if "photo" in name:
+                    field_schema["accept"] = "image/*"
+                elif "pdf" in name:
+                    field_schema["accept"] = "application/pdf"
             elif "email" in name:
                 field_schema["type"] = "email"
             else:
@@ -103,6 +115,7 @@ def generate_schema_from_model(model, model_name, current_user=None):
             field_schema["type"] = "date"
 
         else:
+            # Fallback for unknown types
             field_schema["type"] = "text"
 
         schema.append(field_schema)
