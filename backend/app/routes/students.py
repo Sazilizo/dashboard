@@ -15,10 +15,8 @@ students_bp = Blueprint("students", __name__)
 # students_bp.strict_slashes = False
 # CORS(students_bp, origins="http://localhost:3000", supports_credentials=True)
 
-
 @students_bp.route('/list', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-# @maintenance_guard()
 @jwt_required()
 def list_students():
     user = User.query.get(get_jwt_identity())
@@ -28,8 +26,14 @@ def list_students():
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 10, type=int)
     search_term = request.args.get("search", type=str)
-    raw_site_ids = request.args.getlist("school_id", type=int)
 
+    # Multi-select filters
+    raw_site_ids = request.args.getlist("school_id", type=int)
+    grades = request.args.getlist("grade")  # grades are strings like "4", "5"
+    categories = request.args.getlist("category")  # like ["general", "special"]
+    session_types = request.args.getlist("session_type")  # like ["PE", "Academics"]
+
+    # Access control
     try:
         allowed_site_ids = get_allowed_site_ids(user, raw_site_ids)
     except (ValueError, PermissionError) as e:
@@ -40,6 +44,23 @@ def list_students():
         Student.school_id.in_(allowed_site_ids)
     )
 
+    # Apply grade filter if provided
+    if grades:
+        query = query.filter(Student.grade.in_(grades))
+
+    # Apply category filter if provided
+    if categories:
+        query = query.filter(Student.category.in_(categories))
+
+    # Apply session type logic
+    if session_types:
+        if "PE" in session_types and "Academics" not in session_types:
+            query = query.filter(Student.physical_education.is_(True))
+        elif "Academics" in session_types and "PE" not in session_types:
+            query = query.filter(Student.physical_education.is_(False))
+        # If both are selected, we don’t filter
+
+    # Search + pagination
     paginated = apply_pagination_and_search(
         query,
         Student,
