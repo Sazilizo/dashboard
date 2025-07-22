@@ -130,18 +130,18 @@ def create_student():
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    form = request.form
-    files = request.files
-    model_fields = {c.name for c in Student.__table__.columns if c.name not in {"id", "created_at", "updated_at", "deleted"}}
+    form = request.form or request.json or {}
+    model_fields = {
+        c.name
+        for c in Student.__table__.columns
+        if c.name not in {"id", "created_at", "updated_at", "deleted", "photo", "birth_cert_pdf", "id_copy_pdf"}
+    }
 
     student_data = {}
+
     for field in model_fields:
         if field in form:
-            student_data[field] = form.get(field)
-        elif field in files:
-            uploaded = files.get(field)
-            if isinstance(uploaded, FileStorage):
-                student_data[field] = uploaded.read()
+            student_data[field] = form[field]
 
     # Type conversions
     if "school_id" in student_data:
@@ -158,12 +158,14 @@ def create_student():
     except (ValueError, PermissionError) as e:
         return jsonify({"error": str(e)}), 403
 
-    # Create and save student
     student = Student(**student_data)
     db.session.add(student)
     db.session.commit()
 
-    return jsonify({"message": "Student created successfully", "student": student.to_dict()}), 201
+    return jsonify({
+        "message": "Student created successfully",
+        "student": student.to_dict()
+    }), 201
 
 @limiter.limit("10 per minute")
 @students_bp.route('/update/<int:student_id>', methods=['PUT'])
