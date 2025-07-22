@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
-from utils.access_control import role_required, session_role_required
+from utils.decorators import role_required, session_role_required
 from app.models import School, Student, Worker, MealDistribution, User
 from app.extensions import db
 
