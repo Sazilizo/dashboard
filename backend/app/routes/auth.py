@@ -133,18 +133,11 @@ def get_current_user():
 
 @auth_bp.route('/refresh', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
+@jwt_required(refresh=True)
 def refresh_access_token():
     try:
-        refresh_token = request.cookies.get("refresh_token")
-        if not refresh_token:
-            return jsonify({"error": "Missing refresh token"}), 401
-
-        from flask_jwt_extended import decode_token
-        decoded = decode_token(refresh_token)
-
-        user_id = decoded["sub"]
+        user_id = get_jwt_identity()
         user = User.query.get(user_id)
-
         if not user:
             return jsonify({"error": "User not found"}), 404
 
@@ -159,7 +152,6 @@ def refresh_access_token():
         log_event("REFRESH_TOKEN", user_id=user.id, ip=request.remote_addr)
 
         return jsonify({"access_token": access_token}), 200
-
     except Exception as e:
         log_event("REFRESH_TOKEN_ERROR", ip=request.remote_addr, description=str(e))
         return jsonify({"error": "Failed to refresh token", "details": str(e)}), 500
