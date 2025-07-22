@@ -3,13 +3,14 @@ from app.extensions import db, jwt, limiter
 from app.models import Student, User, CategoryEnum, AttendanceRecord, AcademicSession, PESession,Assessment
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from sqlalchemy import func
+from sqlalchemy import func, inspect
 from utils.decorators import role_required, session_role_required
 from utils.pagination import apply_pagination_and_search
 from utils.access_control import get_allowed_site_ids
 from flask_cors import cross_origin, CORS
 from utils.formSchema import generate_schema_from_model
 from utils.maintenance import maintenance_guard
+from werkzeug.datastructures import FileStorage
 
 students_bp = Blueprint("students", __name__)
 # students_bp.strict_slashes = False
@@ -121,7 +122,6 @@ def form_schema():
 
 @students_bp.route("/create", methods=["POST"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-# @maintenance_guard()
 @jwt_required()
 @session_role_required()
 @role_required("superuser", "admin", "head_tutor")
@@ -130,34 +130,36 @@ def create_student():
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    data = request.form
-    file = request.files.get("permission_pdf")
+    form = request.form
+    files = request.files
+    model_fields = {c.name for c in Student.__table__.columns if c.name not in {"id", "created_at", "updated_at", "deleted"}}
 
-    name = data.get("name")
-    surname = data.get("surname")
-    school_id = data.get("school_id")
+    student_data = {}
+    for field in model_fields:
+        if field in form:
+            student_data[field] = form.get(field)
+        elif field in files:
+            uploaded = files.get(field)
+            if isinstance(uploaded, FileStorage):
+                student_data[field] = uploaded.read()
 
-    if not name or not surname or not school_id:
-        return jsonify({"error": "Missing required fields"}), 400
+    # Type conversions
+    if "school_id" in student_data:
+        student_data["school_id"] = int(student_data["school_id"])
+
+    if "start_date" in student_data and student_data["start_date"]:
+        try:
+            student_data["start_date"] = datetime.strptime(student_data["start_date"], "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "Invalid date format for start_date"}), 400
 
     try:
-        allowed_site_ids = get_allowed_site_ids(user, [int(school_id)])
+        allowed_site_ids = get_allowed_site_ids(user, [student_data["school_id"]])
     except (ValueError, PermissionError) as e:
         return jsonify({"error": str(e)}), 403
 
-    student = Student(
-        name=name,
-        surname=surname,
-        grade=data.get("grade"),
-        category=data.get("category"),
-        school_id=school_id,
-        parent_name=data.get("parent_name"),
-        parent_contact=data.get("parent_contact"),
-        permission_pdf=file.read() if file else None,
-        start_date=datetime.strptime(data.get("start_date"), "%Y-%m-%d").date()
-            if data.get("start_date") else None
-    )
-
+    # Create and save student
+    student = Student(**student_data)
     db.session.add(student)
     db.session.commit()
 

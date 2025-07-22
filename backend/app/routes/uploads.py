@@ -23,30 +23,34 @@ def save_file(file, folder):
     file.save(filepath)
     return filepath.replace('\\', '/')  # normalize path for JSON
 
-@upload_bp.route('/student/photo/<int:student_id>', methods=['POST'])
-@cross_origin(origins="http://localhost:3000", supports_credentials=True)
-# @maintenance_guard()
+@upload_bp.route('/student/files/<int:student_id>', methods=['POST'])
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
-def upload_student_photo(student_id):
+def upload_student_files(student_id):
     student = Student.query.get_or_404(student_id)
     user = User.query.get(get_jwt_identity())
     if user.school_id != student.school_id:
         return jsonify({"error": "Access forbidden: school mismatch"}), 403
 
-    if 'photo' not in request.files:
-        return jsonify({"error": "No photo part in request"}), 400
+    updated_files = []
+    file_fields = ['photo', 'birth_cert_pdf', 'id_copy_pdf']
 
-    file = request.files['photo']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-    if file and allowed_file(file.filename):
-        filepath = save_file(file, 'students')
-        student.photo = filepath
-        db.session.commit()
-        return jsonify({"message": "Student photo uploaded", "photo": filepath}), 200
+    for file_key in file_fields:
+        file = request.files.get(file_key)
+        if file and allowed_file(file.filename):
+            filepath = save_file(file, 'students')
+            setattr(student, file_key, filepath)
+            updated_files.append(file_key)
 
-    return jsonify({"error": "Invalid file type"}), 400
+    if not updated_files:
+        return jsonify({"error": "No valid files uploaded"}), 400
+
+    db.session.commit()
+    return jsonify({
+        "message": "Student files uploaded successfully",
+        "updated_files": updated_files
+    }), 200
+
 
 @upload_bp.route('/worker/files/<int:worker_id>', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
