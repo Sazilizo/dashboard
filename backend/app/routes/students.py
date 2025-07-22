@@ -27,40 +27,45 @@ def list_students():
     per_page = request.args.get("per_page", 10, type=int)
     search_term = request.args.get("search", type=str)
 
-    # Multi-select filters
+    # Get filters
     raw_site_ids = request.args.getlist("school_id", type=int)
-    grades = request.args.getlist("grade")  # grades are strings like "4", "5"
-    categories = request.args.getlist("category")  # like ["general", "special"]
-    session_types = request.args.getlist("session_type")  # like ["PE", "Academics"]
+    grades = request.args.getlist("grade")
+    categories = request.args.getlist("category")
+    session_types = request.args.getlist("session_type")
 
-    # Access control
+    # Determine which schools user is allowed to view
     try:
-        allowed_site_ids = get_allowed_site_ids(user, raw_site_ids)
+        allowed_site_ids = get_allowed_site_ids(user, raw_site_ids if raw_site_ids else None)
     except (ValueError, PermissionError) as e:
         return jsonify({"error": str(e)}), 403
 
+    # Start query with base filters
     query = Student.query.filter(
         Student.deleted == False,
         Student.school_id.in_(allowed_site_ids)
     )
 
-    # Apply grade filter if provided
+    # Grade filter — only if at least one grade is selected
     if grades:
         query = query.filter(Student.grade.in_(grades))
 
-    # Apply category filter if provided
+    # Category filter — only if selected
     if categories:
         query = query.filter(Student.category.in_(categories))
 
-    # Apply session type logic
+    # Session type logic (PE vs Academics)
     if session_types:
-        if "PE" in session_types and "Academics" not in session_types:
-            query = query.filter(Student.physical_education.is_(True))
-        elif "Academics" in session_types and "PE" not in session_types:
-            query = query.filter(Student.physical_education.is_(False))
-        # If both are selected, we don’t filter
+        pe_selected = "PE" in session_types
+        acad_selected = "Academics" in session_types
 
-    # Search + pagination
+        if pe_selected and not acad_selected:
+            query = query.filter(Student.physical_education.is_(True))
+        elif acad_selected and not pe_selected:
+            query = query.filter(Student.physical_education.is_(False))
+        # If both selected, skip filtering
+        # If none selected, also skip filtering (e.g., empty session_types)
+
+    # Apply pagination and search
     paginated = apply_pagination_and_search(
         query,
         Student,
