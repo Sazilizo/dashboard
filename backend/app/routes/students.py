@@ -27,13 +27,11 @@ def list_students():
     per_page = request.args.get("per_page", 10, type=int)
     search_term = request.args.get("search", type=str)
 
-    # Get filters
     raw_site_ids = request.args.getlist("school_id", type=int)
     grades = request.args.getlist("grade")
     categories = request.args.getlist("category")
     session_types = request.args.getlist("session_type")
 
-    # Determine which schools user is allowed to view
     try:
         allowed_site_ids = get_allowed_site_ids(user, raw_site_ids if raw_site_ids else None)
     except (ValueError, PermissionError) as e:
@@ -45,15 +43,16 @@ def list_students():
         Student.school_id.in_(allowed_site_ids)
     )
 
-    # Grade filter — only if at least one grade is selected
+    # Map and apply grade filter if any grades selected
     if grades:
-        query = query.filter(Student.grade.in_(grades))
+        mapped_grades = [g if g.startswith("Grade") else f"Grade {g}" for g in grades]
+        query = query.filter(Student.grade.in_(mapped_grades))
 
-    # Category filter — only if selected
+    # Category filter
     if categories:
         query = query.filter(Student.category.in_(categories))
 
-    # Session type logic (PE vs Academics)
+    # Session type logic
     if session_types:
         pe_selected = "PE" in session_types
         acad_selected = "Academics" in session_types
@@ -62,10 +61,8 @@ def list_students():
             query = query.filter(Student.physical_education.is_(True))
         elif acad_selected and not pe_selected:
             query = query.filter(Student.physical_education.is_(False))
-        # If both selected, skip filtering
-        # If none selected, also skip filtering (e.g., empty session_types)
+        # If both or none selected, no filter applied
 
-    # Apply pagination and search
     paginated = apply_pagination_and_search(
         query,
         Student,
@@ -81,6 +78,7 @@ def list_students():
         "page": paginated.page,
         "pages": paginated.pages
     }), 200
+
 
 @students_bp.route('/<int:student_id>', methods=['GET'])
 @jwt_required()
