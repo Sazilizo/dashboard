@@ -105,53 +105,44 @@ def role_required(*allowed_roles):
     return decorator
 
 def school_access_required():
-    """
-    Universal decorator that ensures users can only access their allowed schools.
-    Works with both URL parameters and request body data.
-    """
-    def decorator(fn):
-        @wraps(fn)
+    def decorator(f):
+        @wraps(f)
         def wrapper(*args, **kwargs):
-            user_id = get_jwt_identity()
-            if not user_id:
-                return jsonify({"error": "Missing or invalid JWT token"}), 401
+            current_user = User.query.get(get_jwt_identity())
+            allowed_site_ids = current_user.get_allowed_site_ids()
 
-            user = User.query.get(user_id)
-            if not user:
-                return jsonify({"error": "User not found"}), 401
-
-            # Get school_id from various sources
             school_id = None
-            
-            # Check URL parameters
+
+            # 1. First check query params (e.g., ?school_id=19)
             if 'school_id' in request.args:
                 school_id = request.args.get('school_id', type=int)
-            elif request.args.getlist('school_id'):
-                school_ids = request.args.getlist('school_id', type=int)
-                
-            # Check JSON body
+
+            # 2. Check for 'school_id' in JSON body (safely)
             elif request.is_json:
-                data = request.get_json()
-                if data and 'school_id' in data:
+                data = request.get_json(silent=True) or {}
+                if 'school_id' in data:
                     school_id = data.get('school_id')
-            
-            # Check if accessing student data (validate student's school)
-            student_id = kwargs.get('student_id') or (request.get_json() or {}).get('student_id')
+
+            # 3. If accessing a specific student (validate school through that)
+            student_id = kwargs.get('student_id')
+            if not student_id and request.is_json:
+                json_data = request.get_json(silent=True) or {}
+                student_id = json_data.get('student_id')
+
             if student_id:
                 student = Student.query.get(student_id)
-                if student:
-                    school_id = student.school_id
+                if not student or student.school_id not in allowed_site_ids:
+                    return jsonify({"error": "Unauthorized access to this student."}), 403
 
-            # If we have a school_id, validate access
-            if school_id:
-                try:
-                    allowed_site_ids = get_allowed_site_ids(user, [school_id])
-                    if school_id not in allowed_site_ids:
-                        return jsonify({"error": "Access denied to this school"}), 403
-                except (ValueError, PermissionError) as e:
-                    return jsonify({"error": str(e)}), 403
+            elif school_id:
+                if school_id not in allowed_site_ids:
+                    return jsonify({"error": "Unauthorized access to this school."}), 403
 
-            return fn(*args, **kwargs)
+            # No school_id or student_id present, and user isn't privileged
+            elif not allowed_site_ids:
+                return jsonify({"error": "No valid school access."}), 403
+
+            return f(*args, **kwargs)
         return wrapper
     return decorator
 
