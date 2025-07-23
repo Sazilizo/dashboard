@@ -15,7 +15,7 @@ class Worker(db.Model, SoftDeleteMixin):
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
     school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
     story = db.Column(db.Text, nullable=True)  # Their goal/motivation
-    role = db.relationship('Role', back_populates='users')
+    role = db.relationship('Role', back_populates='workers')
 
     id_copy_pdf = db.Column(db.String(255), nullable=True)
     cv_pdf = db.Column(db.String(255), nullable=True)

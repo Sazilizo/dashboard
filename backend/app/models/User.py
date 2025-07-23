@@ -8,7 +8,7 @@ class Role(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80), nullable=False, unique=True)
 
-    workers = db.relationship('Worker', backref='role', lazy=True)
+    workers = db.relationship('Worker', back_populates='role')
     users = db.relationship('User', back_populates='role', lazy=True)
 
 class User(db.Model, SoftDeleteMixin):
