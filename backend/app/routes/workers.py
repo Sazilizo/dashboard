@@ -85,47 +85,58 @@ def form_schema():
 # @maintenance_guard()
 @jwt_required()
 @role_required('superuser', 'hr')
+
 def create_worker():
     name = request.form.get('name')
     last_name = request.form.get('last_name')
-    role_id = request.form.get('role_id')
-    school_id = request.form.get('school_id')
+    role_name = request.form.get('role_id')  # Treat role_id as role name string
+    school_id_str = request.form.get('school_id')
     id_number = request.form.get('id_number')
     contact_number = request.form.get('contact_number')
     email = request.form.get('email')
     start_date_str = request.form.get('start_date')
 
-    missing = [f for f in ('name', 'role_id', 'school_id') if not request.form.get(f)]
+    # Check required fields
+    missing = [f for f in ('name', 'last_name', 'role_id', 'school_id') if not request.form.get(f)]
     if missing:
         return jsonify({"error": f"Missing required fields: {missing}"}), 400
 
+    # Validate school_id
     try:
-        role_id = int(role_id)
-        school_id = int(school_id)
+        school_id = int(school_id_str)
     except ValueError:
-        return jsonify({"error": "role_id and school_id must be integers"}), 400
+        return jsonify({"error": "school_id must be an integer"}), 400
 
+    # Lookup role by name
+    role = Role.query.filter_by(name=role_name).first()
+    if not role:
+        return jsonify({"error": f"Role '{role_name}' does not exist"}), 400
+
+    # Validate start_date format
     try:
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date() if start_date_str else None
     except ValueError:
         return jsonify({"error": "Invalid start_date format. Use YYYY-MM-DD"}), 400
 
+    # Check school access permissions
     user = User.query.get(get_jwt_identity())
     try:
         allowed_site_ids = get_allowed_site_ids(user, [school_id])
     except (ValueError, PermissionError) as e:
         return jsonify({"error": str(e)}), 403
 
+    # Handle file uploads
     photo = save_file(request.files.get('photo'), prefix=name)
     cv_pdf = save_file(request.files.get('cv_pdf'), prefix=name)
     id_copy_pdf = save_file(request.files.get('id_copy_pdf'), prefix=name)
     clearance_pdf = save_file(request.files.get('clearance_pdf'), prefix=name)
     child_protection_pdf = save_file(request.files.get('child_protection_pdf'), prefix=name)
 
+    # Create and save the Worker
     worker = Worker(
         name=name.strip(),
         last_name=last_name.strip(),
-        role_id=role_id,
+        role_id=role.id,
         school_id=school_id,
         id_number=id_number,
         contact_number=contact_number,
@@ -146,12 +157,14 @@ def create_worker():
         "worker": {
             "id": worker.id,
             "name": worker.name,
+            "last_name": worker.last_name,
             "role_id": worker.role_id,
             "school_id": worker.school_id,
             "email": worker.email,
             "start_date": worker.start_date.isoformat() if worker.start_date else None
         }
     }), 201
+
 
 @workers_bp.route('/update/<int:worker_id>', methods=['PUT'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
