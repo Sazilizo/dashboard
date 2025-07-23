@@ -103,7 +103,7 @@ def form_schema():
 def create_worker():
     name = request.form.get('name')
     last_name = request.form.get('last_name')
-    role_id = request.form('role_id')
+    role_id = request.form.get('role_id')
     school_id_str = request.form.get('school_id')
     id_number = request.form.get('id_number')
     contact_number = request.form.get('contact_number')
