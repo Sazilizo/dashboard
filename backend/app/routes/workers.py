@@ -89,7 +89,7 @@ def form_schema():
 def create_worker():
     name = request.form.get('name')
     last_name = request.form.get('last_name')
-    role = request.form.get('role')  # Treat role_id as role name string
+    role_id = request.form('role_id')
     school_id_str = request.form.get('school_id')
     id_number = request.form.get('id_number')
     contact_number = request.form.get('contact_number')
@@ -108,9 +108,9 @@ def create_worker():
         return jsonify({"error": "school_id must be an integer"}), 400
 
     # Lookup role by name
-    role = Role.query.filter_by(name=role).first()
+    role = Role.query.get(role_id)
     if not role:
-        return jsonify({"error": f"Role '{role}' does not exist"}), 400
+        return jsonify({"error": "Invalid role_id"}), 400
 
     # Validate start_date format
     try:
