@@ -77,8 +77,22 @@ def list_workers():
 # @maintenance_guard()
 @jwt_required()
 def form_schema():
-    schema = generate_schema_from_model(Worker, "Worker",)
+    model_name = request.args.get("model")
+
+    MODEL_MAP = {
+        "Worker": Worker,
+        "User": User,
+        "Role": Role
+    }
+
+    model_class = MODEL_MAP.get(model_name)
+    if not model_class:
+        return jsonify({"error": f"Model '{model_name}' is not supported in this route."}), 400
+
+    current_user = User.query.get(get_jwt_identity())
+    schema = generate_schema_from_model(model_class, model_name, current_user=current_user)
     return jsonify(schema)
+
 
 @workers_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
@@ -158,7 +172,7 @@ def create_worker():
             "id": worker.id,
             "name": worker.name,
             "last_name": worker.last_name,
-            "role_id": worker.role_id,
+            "role_id": worker.role,
             "school_id": worker.school_id,
             "email": worker.email,
             "start_date": worker.start_date.isoformat() if worker.start_date else None
