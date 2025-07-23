@@ -83,7 +83,7 @@ def list_students():
 
 @students_bp.route('/<int:student_id>', methods=['GET'])
 @jwt_required()
-@session_role_required()
+@role_required("superuser", "admin", "head_tutor", "head_coach")
 def get_student(student_id):
     user = User.query.get(get_jwt_identity())
     student = Student.query.filter_by(id=student_id, deleted=False).first()
