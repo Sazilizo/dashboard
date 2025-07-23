@@ -150,7 +150,7 @@ def create_worker():
     worker = Worker(
         name=name.strip(),
         last_name=last_name.strip(),
-        role=role,
+        role_id=role.id, 
         school_id=school_id,
         id_number=id_number,
         contact_number=contact_number,
@@ -163,21 +163,15 @@ def create_worker():
         child_protection_pdf=child_protection_pdf
     )
 
+
     db.session.add(worker)
     db.session.commit()
 
     return jsonify({
         "message": "Worker created successfully",
-        "worker": {
-            "id": worker.id,
-            "name": worker.name,
-            "last_name": worker.last_name,
-            "role_id": worker.role,
-            "school_id": worker.school_id,
-            "email": worker.email,
-            "start_date": worker.start_date.isoformat() if worker.start_date else None
-        }
+        "worker": worker.to_dict()
     }), 201
+
 
 
 @workers_bp.route('/update/<int:worker_id>', methods=['PUT'])
