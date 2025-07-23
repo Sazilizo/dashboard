@@ -136,7 +136,7 @@ def create_worker():
     worker = Worker(
         name=name.strip(),
         last_name=last_name.strip(),
-        role_id=role.id,
+        role=role,
         school_id=school_id,
         id_number=id_number,
         contact_number=contact_number,
