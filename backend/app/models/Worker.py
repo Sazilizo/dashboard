@@ -15,6 +15,7 @@ class Worker(db.Model, SoftDeleteMixin):
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
     school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
     story = db.Column(db.Text, nullable=True)  # Their goal/motivation
+    role = db.relationship('Role', back_populates='users')
 
     id_copy_pdf = db.Column(db.String(255), nullable=True)
     cv_pdf = db.Column(db.String(255), nullable=True)
@@ -29,7 +30,7 @@ class Worker(db.Model, SoftDeleteMixin):
             "email": self.email,
             "contact_number": self.contact_number,
             "school_id": self.school_id,
-            "role_id": self.role_id,
+            "role": self.role,
             "start_date": self.start_date.isoformat() if self.start_date else None,
             "photo": self.photo,
             "cv_pdf": self.cv_pdf,
