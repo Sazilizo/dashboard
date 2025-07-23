@@ -1,4 +1,4 @@
-from app.models import School, Student, Meal
+from app.models import School, Student, Meal, Role, Assessment,Worker
 from sqlalchemy import Boolean, Integer, String, Enum
 import enum
 from utils.specs_config import SPEC_OPTIONS  
@@ -45,6 +45,13 @@ def generate_schema_from_model(model, model_name, current_user=None):
                 field_schema["options"] = [
                     {"label": school.name, "value": school.id}
                     for school in School.query.order_by(School.name).all()
+                ]
+
+            elif name == "role_id":
+                field_schema["type"] = "select"
+                field_schema["options"] = [
+                    {"label": role.name, "value": role.id}
+                    for role in Role.query.order_by(Role.name).all()
                 ]
 
             elif name == "student_id":
