@@ -14,7 +14,7 @@ from werkzeug.utils import secure_filename
 from datetime import datetime
 from sqlalchemy import func
 from utils.formSchema import generate_schema_from_model
-
+from .uploads import allowed_file
 
 workers_bp = Blueprint('workers', __name__)
 UPLOAD_FOLDER = 'uploads/workers'

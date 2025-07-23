@@ -1,6 +1,6 @@
 import os
 import uuid
-import magic
+import filetype
 from flask import Blueprint, request, jsonify, current_app, send_from_directory
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from werkzeug.utils import secure_filename
@@ -16,11 +16,30 @@ ALLOWED_MIME_TYPES = {
     'image/jpeg', 'image/png', 'image/gif', 'application/pdf'
 }
 
+ALLOWED_EXTENSIONS = {'pdf', 'jpg', 'jpeg', 'png'}
+ALLOWED_MIME_TYPES = {
+    'application/pdf',
+    'image/jpeg',
+    'image/png',
+}
+
 def allowed_file(file):
-    filename_ok = '.' in file.filename and file.filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-    mime = magic.from_buffer(file.read(2048), mime=True)
+    if '.' not in file.filename:
+        return False
+
+    ext = file.filename.rsplit('.', 1)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        return False
+
+    header = file.read(262)
+    kind = filetype.guess(header)
     file.seek(0)
-    return filename_ok and mime in ALLOWED_MIME_TYPES
+
+    if not kind:
+        return False
+
+    return kind.mime in ALLOWED_MIME_TYPES
+
 
 def save_file(file, folder, old_path=None):
     filename = secure_filename(file.filename)
@@ -42,6 +61,8 @@ def save_file(file, folder, old_path=None):
 def serve_file(path):
     directory, filename = os.path.split(path)
     return send_from_directory(directory, filename)
+
+
 @upload_bp.route('/student/files/<int:student_id>', methods=['POST'])
 @jwt_required()
 @role_required('head_tutor', 'head_coach', 'admin', 'superuser')
