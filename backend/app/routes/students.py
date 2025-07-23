@@ -119,7 +119,6 @@ def form_schema():
     schema = generate_schema_from_model(model_class, model_name, current_user=current_user)
     return jsonify(schema)
 
-
 @students_bp.route("/create", methods=["POST"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
@@ -130,9 +129,9 @@ def create_student():
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    form = request.form
-    if not form:
-        return jsonify({"error": "No form data provided"}), 400
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No JSON data provided"}), 400
 
     model_fields = {
         c.name
@@ -140,7 +139,7 @@ def create_student():
         if c.name not in {"id", "created_at", "updated_at", "deleted", "photo", "birth_cert_pdf", "id_copy_pdf"}
     }
 
-    student_data = {field: form.get(field) for field in model_fields if form.get(field) is not None}
+    student_data = {field: data.get(field) for field in model_fields if data.get(field) is not None}
 
     # Validate required school_id and convert to int
     try:
