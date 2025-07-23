@@ -87,6 +87,7 @@ def form_schema():
 @role_required('superuser', 'hr')
 def create_worker():
     name = request.form.get('name')
+    last_name = request.form.get('last_name')
     role_id = request.form.get('role_id')
     school_id = request.form.get('school_id')
     id_number = request.form.get('id_number')
@@ -123,6 +124,7 @@ def create_worker():
 
     worker = Worker(
         name=name.strip(),
+        ka_last_name=last_name.strip(),
         role_id=role_id,
         school_id=school_id,
         id_number=id_number,
