@@ -122,8 +122,7 @@ def form_schema():
 @students_bp.route("/create", methods=["POST"])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@session_role_required()
-@role_required("superuser", "admin", "head_tutor")
+@role_required("superuser", "admin", "head_tutor", "head_coach")
 def create_student():
     user = User.query.get(get_jwt_identity())
     if not user:
