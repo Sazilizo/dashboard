@@ -5,7 +5,7 @@ from app.models.UserRemoval import UserRemovalReview
 from app.extensions import db
 from utils.decorators import role_required
 from werkzeug.security import generate_password_hash
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask_cors import cross_origin
 from utils.formSchema import generate_schema_from_model
 from utils.maintenance import maintenance_guard
@@ -41,7 +41,6 @@ def form_schema():
 @role_required('superuser', 'hr')
 def create_user():
     data = request.form
-    # file = request.files.get('profile_picture')  # optional file field
 
     if not data:
         return jsonify({"error": "No input data provided"}), 400
@@ -55,9 +54,20 @@ def create_user():
     if missing:
         return jsonify({"error": f"Missing required fields: {missing}"}), 400
 
-    if User.query.filter_by(username=username).first():
-        return jsonify({"error": "Username already exists"}), 400
+    # Check for duplicate user
+    existing_user = User.query.filter_by(username=username).first()
+    if existing_user:
+        return jsonify({
+            "error": "A user with this username already exists.",
+            "existing_user": {
+                "id": existing_user.id,
+                "username": existing_user.username,
+                "role_id": existing_user.role_id,
+                "school_id": existing_user.school_id
+            }
+        }), 409
 
+    # Validate IDs
     try:
         role_id = int(role_id)
         school_id = int(school_id)
@@ -68,11 +78,18 @@ def create_user():
     if not role:
         return jsonify({"error": "Invalid role_id"}), 400
 
+    # Auto-expiry for 'viewer' or 'guest' roles
+    role_name = role.name.lower()
+    expires_at = None
+    if role_name in ['viewer', 'guest']:
+        expires_at = datetime.utcnow() + timedelta(days=30)  # or any duration you want
+
+    # Create new user
     new_user = User(
         username=username.strip(),
         role_id=role_id,
         school_id=school_id,
-        # profile_picture=file.read() if file else None  # if storing as blob
+        expires_at=expires_at
     )
     new_user.set_password(password)
 
@@ -85,10 +102,10 @@ def create_user():
             "id": new_user.id,
             "username": new_user.username,
             "role_id": new_user.role_id,
-            "school_id": new_user.school_id
+            "school_id": new_user.school_id,
+            "expires_at": new_user.expires_at.isoformat() if new_user.expires_at else None
         }
     }), 201
-
 
 @users_bp.route('/update/<int:user_id>', methods=['PUT'])
 # @maintenance_guard()

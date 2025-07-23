@@ -99,7 +99,6 @@ def form_schema():
 # @maintenance_guard()
 @jwt_required()
 @role_required('superuser', 'hr')
-
 def create_worker():
     name = request.form.get('name')
     last_name = request.form.get('last_name')
@@ -121,7 +120,7 @@ def create_worker():
     except ValueError:
         return jsonify({"error": "school_id must be an integer"}), 400
 
-    # Lookup role by name
+    # Lookup role by ID
     role = Role.query.get(role_id)
     if not role:
         return jsonify({"error": "Invalid role_id"}), 400
@@ -139,6 +138,28 @@ def create_worker():
     except (ValueError, PermissionError) as e:
         return jsonify({"error": str(e)}), 403
 
+    # Normalize input
+    name = name.strip()
+    last_name = last_name.strip()
+    id_number = id_number.strip() if id_number else None
+
+    #  Check for duplicate Worker
+    existing_worker = None
+    if id_number:
+        existing_worker = Worker.query.filter_by(id_number=id_number).first()
+    if not existing_worker:
+        existing_worker = Worker.query.filter_by(
+            name=name,
+            last_name=last_name,
+            school_id=school_id
+        ).first()
+
+    if existing_worker:
+        return jsonify({
+            "error": "A worker with these details already exists.",
+            "existing_worker": existing_worker.to_dict()
+        }), 409
+
     # Handle file uploads
     photo = save_file(request.files.get('photo'), prefix=name)
     cv_pdf = save_file(request.files.get('cv_pdf'), prefix=name)
@@ -146,11 +167,11 @@ def create_worker():
     clearance_pdf = save_file(request.files.get('clearance_pdf'), prefix=name)
     child_protection_pdf = save_file(request.files.get('child_protection_pdf'), prefix=name)
 
-    # Create and save the Worker
+    #  Create and save the Worker
     worker = Worker(
-        name=name.strip(),
-        last_name=last_name.strip(),
-        role_id=role.id, 
+        name=name,
+        last_name=last_name,
+        role_id=role.id,
         school_id=school_id,
         id_number=id_number,
         contact_number=contact_number,
@@ -163,7 +184,6 @@ def create_worker():
         child_protection_pdf=child_protection_pdf
     )
 
-
     db.session.add(worker)
     db.session.commit()
 
@@ -171,8 +191,6 @@ def create_worker():
         "message": "Worker created successfully",
         "worker": worker.to_dict()
     }), 201
-
-
 
 @workers_bp.route('/update/<int:worker_id>', methods=['PUT'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)

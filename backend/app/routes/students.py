@@ -130,29 +130,37 @@ def create_student():
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    form = request.form or request.json or {}
+    form = request.form
+    if not form:
+        return jsonify({"error": "No form data provided"}), 400
+
     model_fields = {
         c.name
         for c in Student.__table__.columns
         if c.name not in {"id", "created_at", "updated_at", "deleted", "photo", "birth_cert_pdf", "id_copy_pdf"}
     }
 
-    student_data = {}
+    student_data = {field: form.get(field) for field in model_fields if form.get(field) is not None}
 
-    for field in model_fields:
-        if field in form:
-            student_data[field] = form[field]
-
-    # Type conversions
-    if "school_id" in student_data:
+    # Validate required school_id and convert to int
+    try:
         student_data["school_id"] = int(student_data["school_id"])
+    except (ValueError, KeyError):
+        return jsonify({"error": "school_id must be provided and be an integer"}), 400
 
-    if "start_date" in student_data and student_data["start_date"]:
+    # Parse date_of_birth if present
+    if "date_of_birth" in student_data and student_data["date_of_birth"]:
         try:
-            student_data["start_date"] = datetime.strptime(student_data["start_date"], "%Y-%m-%d").date()
+            student_data["date_of_birth"] = datetime.strptime(student_data["date_of_birth"], "%Y-%m-%d").date()
         except ValueError:
-            return jsonify({"error": "Invalid date format for start_date"}), 400
+            return jsonify({"error": "Invalid date format for date_of_birth. Use YYYY-MM-DD"}), 400
 
+    # Check for duplicate id_number if provided
+    id_number = student_data.get("id_number")
+    if id_number and Student.query.filter_by(id_number=id_number).first():
+        return jsonify({"error": "Student with this id_number already exists"}), 400
+
+    # Check school access permission
     try:
         allowed_site_ids = get_allowed_site_ids(user, [student_data["school_id"]])
     except (ValueError, PermissionError) as e:
@@ -166,6 +174,7 @@ def create_student():
         "message": "Student created successfully",
         "student": student.to_dict()
     }), 201
+
 
 @limiter.limit("10 per minute")
 @students_bp.route('/update/<int:student_id>', methods=['PUT'])

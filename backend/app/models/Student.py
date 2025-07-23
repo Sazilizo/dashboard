@@ -13,7 +13,8 @@ class Student(db.Model, SoftDeleteMixin):
     physical_education = db.Column(db.Boolean, default=False, index=True)
     year = db.Column(db.Integer, nullable=False, index=True, default=lambda: datetime.utcnow().year)
     school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
-
+    id_number = db.Column(db.String(20), unique=True, nullable=True)
+    date_of_birth = db.Column(db.Date, nullable=True)
     photo = db.Column(db.String(255), nullable=True)
     parent_permission_pdf = db.Column(db.String(255), nullable=True)
 
@@ -32,6 +33,8 @@ class Student(db.Model, SoftDeleteMixin):
             "physical_education": self.physical_education,
             "year": self.year,
             "school_id": self.school_id,
+            "id_number": self.id_number,
+            "date_of_birth": self.date_of_birth.isoformat() if self.date_of_birth else None,
             "photo": self.photo,
             "parent_permission_pdf": self.parent_permission_pdf,
         }
