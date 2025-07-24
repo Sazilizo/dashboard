@@ -8,7 +8,6 @@ schools_bp = Blueprint('schools', __name__)
 
 @schools_bp.route('/summary', methods=['GET'])
 @jwt_required()
-@session_role_required()
 @role_required('admin', 'superuser', 'head_tutor', 'head_coach')
 def schools_summary():
     school_ids = request.args.getlist('school_id')
