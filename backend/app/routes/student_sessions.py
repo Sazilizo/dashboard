@@ -50,7 +50,6 @@ def form_schema():
 @student_sessions_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
-@session_role_required()
 def create_session():
     # Required fields
     required_fields = ['student_id', 'session_name', 'date', 'duration_hours']
