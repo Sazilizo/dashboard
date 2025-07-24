@@ -113,6 +113,7 @@ class AcademicSession(db.Model):
     specs = db.Column(JSON)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    category = db.Column(db.Enum(CategoryEnum), nullable=True, index=True)
 
     student = db.relationship("Student", back_populates="academic_sessions")
     user = db.relationship('User', back_populates='logged_academic_sessions')
