@@ -125,21 +125,29 @@ def create_session():
             return jsonify({"error": "Invalid file type"}), 400
 
     # Create session record (either AcademicSession or PESession)
-    session = session_model(
-        student_id=student.id,
-        user_id=user.id,
-        session_name=session_name,
-        date=date_obj,
-        duration_hours=duration_hours,
-        photo=filename,
-        outcomes=outcomes,
-        category=student.category,
-        physical_education=student.physical_education,
-        specs=specs
-    )
+    session_data = {
+    "student_id": student.id,
+    "user_id": user.id,
+    "session_name": session_name,
+    "date": date_obj,
+    "duration_hours": duration_hours,
+    "photo": filename,
+    "outcomes": outcomes,
+    "specs": specs,
+    }
 
+    if session_type == "academic":
+        session_data["category"] = student.category
+        # physical_education not needed or included here
+
+    elif session_type == "pe":
+        session_data["physical_education"] = student.physical_education
+        # category not needed here
+
+    session = session_model(**session_data)
     db.session.add(session)
     db.session.commit()
+
 
     return jsonify({
         "message": f"{session_type.capitalize()} session created successfully",
