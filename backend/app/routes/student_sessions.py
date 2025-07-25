@@ -54,10 +54,18 @@ def form_schema():
 def create_session():
     # Required fields
     required_fields = ['student_id', 'session_name', 'date', 'duration_hours']
-    missing_fields = [f for f in required_fields if f not in request.form]
-    if missing_fields:
-        return jsonify({"error": f"Missing fields: {missing_fields}"}), 400
 
+    # Validate fields are present and not empty/blank
+    missing_fields = []
+    for field in required_fields:
+        val = request.form.get(field)
+        if val is None or val.strip() == "":
+            missing_fields.append(field)
+
+    if missing_fields:
+        return jsonify({"error": f"Missing or empty fields: {missing_fields}"}), 400
+
+    # Parse and validate field types
     try:
         student_id = int(request.form['student_id'])
         session_name = request.form['session_name'].strip()
@@ -66,7 +74,7 @@ def create_session():
     except (ValueError, TypeError) as e:
         return jsonify({"error": "Invalid data types or formats", "details": str(e)}), 400
 
-    # Determine session type by role or optional override
+    # Determine session type
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({"error": "User not found"}), 404
@@ -78,7 +86,7 @@ def create_session():
 
     session_model = PESession if session_type == 'pe' else AcademicSession
 
-    # Optional specs
+    # Optional specs (JSON string in FormData)
     specs = None
     specs_raw = request.form.get('specs')
     if specs_raw:
@@ -92,6 +100,7 @@ def create_session():
     outcomes = request.form.get('outcomes', '').strip()
     photo_file = request.files.get('photo')
 
+    # Student and permission check
     student = Student.query.get(student_id)
     if not student:
         return jsonify({"error": "Student not found"}), 404
@@ -112,7 +121,7 @@ def create_session():
                 "allowed_keys": list(allowed_keys)
             }), 400
 
-    # Handle file upload
+    # File upload (photo)
     filename = None
     if photo_file:
         if allowed_file(photo_file.filename):
@@ -124,45 +133,40 @@ def create_session():
         else:
             return jsonify({"error": "Invalid file type"}), 400
 
-    # Create session record (either AcademicSession or PESession)
+    # Create session instance
     session_data = {
-    "student_id": student.id,
-    "user_id": user.id,
-    "session_name": session_name,
-    "date": date_obj,
-    "duration_hours": duration_hours,
-    "photo": filename,
-    "outcomes": outcomes,
-    "specs": specs,
+        "student_id": student.id,
+        "user_id": user.id,
+        "session_name": session_name,
+        "date": date_obj,
+        "duration_hours": duration_hours,
+        "photo": filename,
+        "outcomes": outcomes,
+        "specs": specs,
     }
 
     if session_type == "academic":
         session_data["category"] = student.category
-        # physical_education not needed or included here
-
     elif session_type == "pe":
         session_data["physical_education"] = student.physical_education
-        # category not needed here
 
     session = session_model(**session_data)
     db.session.add(session)
     db.session.commit()
 
-
+    # Prepare response
     response_data = {
-    "message": f"{session_type.capitalize()} session created successfully",
-    "session_id": session.id,
-    "specs": session.specs
+        "message": f"{session_type.capitalize()} session created successfully",
+        "session_id": session.id,
+        "specs": session.specs
     }
 
     if session_type == "academic":
         response_data["category"] = session.category.value if session.category else None
-
     elif session_type == "pe":
         response_data["physical_education"] = session.physical_education
 
     return jsonify(response_data), 201
-
 
 
 @student_sessions_bp.route('/list', methods=['GET'])
