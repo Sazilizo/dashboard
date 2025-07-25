@@ -149,13 +149,20 @@ def create_session():
     db.session.commit()
 
 
-    return jsonify({
-        "message": f"{session_type.capitalize()} session created successfully",
-        "session_id": session.id,
-        "category": session.category.value if session.category else None,
-        "physical_education": session.physical_education,
-        "specs": session.specs
-    }), 201
+    response_data = {
+    "message": f"{session_type.capitalize()} session created successfully",
+    "session_id": session.id,
+    "specs": session.specs
+    }
+
+    if session_type == "academic":
+        response_data["category"] = session.category.value if session.category else None
+
+    elif session_type == "pe":
+        response_data["physical_education"] = session.physical_education
+
+    return jsonify(response_data), 201
+
 
 
 @student_sessions_bp.route('/list', methods=['GET'])
