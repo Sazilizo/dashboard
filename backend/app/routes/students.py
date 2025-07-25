@@ -16,6 +16,13 @@ students_bp = Blueprint("students", __name__)
 # students_bp.strict_slashes = False
 # CORS(students_bp, origins="http://localhost:3000", supports_credentials=True)
 
+def str_to_bool(val):
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.lower() in ("true", "1", "yes", "on")
+    return bool(val)
+
 @students_bp.route('/list', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
@@ -138,20 +145,30 @@ def create_student():
         if c.name not in {"id", "created_at", "updated_at", "deleted", "photo", "birth_cert_pdf", "id_copy_pdf"}
     }
 
-    student_data = {field: data.get(field) for field in model_fields if data.get(field) is not None}
+    student_data = {}
 
-    # Validate required school_id and convert to int
-    try:
-        student_data["school_id"] = int(student_data["school_id"])
-    except (ValueError, KeyError):
-        return jsonify({"error": "school_id must be provided and be an integer"}), 400
+    for field in model_fields:
+        value = data.get(field)
+        if value is None:
+            continue
 
-    # Parse date_of_birth if present
-    if "date_of_birth" in student_data and student_data["date_of_birth"]:
-        try:
-            student_data["date_of_birth"] = datetime.strptime(student_data["date_of_birth"], "%Y-%m-%d").date()
-        except ValueError:
-            return jsonify({"error": "Invalid date format for date_of_birth. Use YYYY-MM-DD"}), 400
+        if field == "school_id":
+            try:
+                student_data[field] = int(value)
+            except ValueError:
+                return jsonify({"error": "school_id must be an integer"}), 400
+
+        elif field == "date_of_birth":
+            try:
+                student_data[field] = datetime.strptime(value, "%Y-%m-%d").date()
+            except ValueError:
+                return jsonify({"error": "Invalid date format for date_of_birth. Use YYYY-MM-DD"}), 400
+
+        elif field in {"physical_education", "has_disability", "is_orphan"}:  # Add your known boolean fields here
+            student_data[field] = str_to_bool(value)
+
+        else:
+            student_data[field] = value
 
     # Check for duplicate id_number if provided
     id_number = student_data.get("id_number")
