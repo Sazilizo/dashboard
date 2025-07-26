@@ -159,9 +159,19 @@ def generate_schema_from_model(model, model_name, current_user=None):
                 "name": "specs",
                 "label": "Performance Specs",
                 "type": "json_object",
-                "group": [{"key": o["key"], "label": o["label"]} for o in specs_options],
+                "group": [
+                    {
+                        "key": o["key"],
+                        "label": o["label"],
+                        "type": "number",
+                        "min": 0,
+                        "max": 100,
+                        "step": 1,
+                        "required": False
+                    } for o in specs_options
+                ],
                 "required": False,
-                "description": "Enter performance scores out of 100"
+                "description": "Enter performance scores as integers between 0 and 100"
             })
 
     return {
