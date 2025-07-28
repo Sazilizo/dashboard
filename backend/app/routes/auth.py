@@ -91,7 +91,7 @@ def login():
             access_token,
             max_age=60*60,  # 1 hour
             httponly=True,
-            secure=True,
+            secure=False,  # Set to True in production
             samesite="Lax",
             path="/"
         )
@@ -100,7 +100,7 @@ def login():
             refresh_token,
             max_age=60*60*24*7,  # 7 days
             httponly=True,
-            secure=True,
+            secure=False,  # Set to True in production
             samesite="Lax",
             path="/auth/refresh"
         )
