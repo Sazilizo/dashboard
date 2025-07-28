@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app, make_response
 from flask_jwt_extended import (
     create_access_token, create_refresh_token, jwt_required,
     get_jwt_identity, get_jwt
@@ -13,12 +13,13 @@ from flask_cors import cross_origin
 import re
 
 auth_bp = Blueprint('auth', __name__)
+PRIVILEGED_ROLES = {"superuser", "admin", "hr", "guest"}
 
 @auth_bp.route('/register', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @limiter.limit("5 per minute", override_defaults=False)
 def register():
-    data = request.get_json()
+    data = request.get_json() or {}
     username = data.get('username', '').strip()
     password = data.get('password', '')
     role_name = data.get('role', '').strip()
@@ -34,21 +35,15 @@ def register():
     if not role:
         return jsonify({"error": f"Role '{role_name}' not found"}), 400
 
-    privileged_roles = {"superuser", "admin", "hr", "guest"}
-
     school = None
-    if role_name not in privileged_roles:
+    if role_name not in PRIVILEGED_ROLES:
         if not school_name:
             return jsonify({"error": "School is required for this role"}), 400
         school = School.query.filter_by(name=school_name).first()
         if not school:
             return jsonify({"error": f"School '{school_name}' not found"}), 400
 
-    user = User(
-        username=username,
-        role_id=role.id,
-        school_id=school.id if school else None
-    )
+    user = User(username=username, role_id=role.id, school_id=school.id if school else None)
     user.set_password(password)
 
     db.session.add(user)
@@ -65,54 +60,56 @@ def register():
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @limiter.limit("5 per minute", override_defaults=False)
 def login():
-    try:
-        data = request.get_json()
-        if not data:
-            return jsonify({"error": "Missing JSON in request"}), 400
+    data = request.get_json() or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    ip = request.remote_addr
 
-        username = data.get('username', '').strip()
-        password = data.get('password', '')
-        ip = request.remote_addr
+    if not username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
 
-        if not username or not password:
-            return jsonify({"error": "Username and password are required"}), 400
+    if not re.match(r'^[\w.@+-]{3,}$', username):
+        return jsonify({"error": "Invalid username format"}), 400
 
-        if not re.match(r'^[\w.@+-]{3,}$', username):
-            return jsonify({"error": "Invalid username format"}), 400
+    user = User.query.filter_by(username=username).first()
 
-        user = User.query.filter_by(username=username).first()
+    if user and user.check_password(password):
+        access_token = create_access_token(
+            identity=str(user.id),
+            expires_delta=timedelta(hours=1),
+            additional_claims={"role_id": user.role_id, "school_id": user.school_id}
+        )
+        refresh_token = create_refresh_token(
+            identity=str(user.id),
+            expires_delta=timedelta(days=7)
+        )
 
-        if user and user.check_password(password):
-            access_token = create_access_token(
-                identity=str(user.id),
-                expires_delta=timedelta(hours=1),
-                additional_claims={
-                    "role_id": user.role_id,
-                    "school_id": user.school_id
-                }
-            )
-            refresh_token = create_refresh_token(identity=str(user.id))
+        # Prepare response with tokens in HttpOnly Secure cookies
+        response = make_response(jsonify({"message": "Login successful"}))
+        response.set_cookie(
+            "access_token_cookie",
+            access_token,
+            max_age=60*60,  # 1 hour
+            httponly=True,
+            secure=True,
+            samesite="Lax",
+            path="/"
+        )
+        response.set_cookie(
+            "refresh_token_cookie",
+            refresh_token,
+            max_age=60*60*24*7,  # 7 days
+            httponly=True,
+            secure=True,
+            samesite="Lax",
+            path="/auth/refresh"
+        )
 
-            # Set the refresh token as a secure HttpOnly cookie
-            response = jsonify({"access_token": access_token})
-            response.set_cookie(
-                "refresh_token",
-                refresh_token,
-                httponly=True,
-                secure=True,
-                samesite="Lax",
-                max_age=60 * 60 * 24 * 7  # 7 days
-            )
+        log_event("LOGIN_SUCCESS", user_id=user.id, ip=ip, description=f"{username} logged in")
+        return response
 
-            log_event("LOGIN_SUCCESS", user_id=user.id, ip=ip, description=f"{username} logged in")
-            return response, 200
-
-        log_event("LOGIN_FAILED", ip=ip, description=f"Failed login attempt for {username}")
-        return jsonify({"error": "Invalid username or password"}), 401
-
-    except Exception as e:
-        log_event("LOGIN_ERROR", ip=request.remote_addr, description=str(e))
-        return jsonify({"error": "An unexpected error occurred", "details": str(e)}), 500
+    log_event("LOGIN_FAILED", ip=ip, description=f"Failed login attempt for {username}")
+    return jsonify({"error": "Invalid username or password"}), 401
 
 @auth_bp.route('/me', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
@@ -136,46 +133,47 @@ def get_current_user():
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required(refresh=True, locations=["cookies"])
 def refresh_access_token():
-    try:
-        user_id = get_jwt_identity()
-        user = User.query.get(user_id)
-        if not user:
-            return jsonify({"error": "User not found"}), 404
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
 
-        access_token = create_access_token(
-            identity=str(user.id),
-            additional_claims={
-                "role_id": user.role_id,
-                "school_id": user.school_id
-            }
-        )
+    access_token = create_access_token(
+        identity=str(user.id),
+        expires_delta=timedelta(hours=1),
+        additional_claims={"role_id": user.role_id, "school_id": user.school_id}
+    )
 
-        log_event("REFRESH_TOKEN", user_id=user.id, ip=request.remote_addr)
-        return jsonify({"access_token": access_token}), 200
-    
-    except Exception as e:
-        log_event("REFRESH_TOKEN_ERROR", ip=request.remote_addr, description=str(e))
-        return jsonify({"error": "Failed to refresh token", "details": str(e)}), 500
+    response = make_response(jsonify({"message": "Token refreshed"}))
+    response.set_cookie(
+        "access_token_cookie",
+        access_token,
+        max_age=60*60,  # 1 hour
+        httponly=True,
+        secure=True,
+        samesite="Lax",
+        path="/"
+    )
+
+    log_event("REFRESH_TOKEN", user_id=user.id, ip=request.remote_addr)
+    return response
 
 @auth_bp.route("/logout", methods=["POST"])
 @maintenance_guard()
 @jwt_required()
 def logout():
     jti = get_jwt()["jti"]
-    token_type = get_jwt()["type"]
     user_id = get_jwt_identity()
     expires = datetime.fromtimestamp(get_jwt()["exp"])
 
-    block_token = TokenBlocklist(
-        jti=jti,
-        token_type=token_type,
-        user_id=user_id,
-        expires_at=expires
-    )
-    db.session.add(block_token)
+    token_block = TokenBlocklist(jti=jti, user_id=user_id, expires_at=expires)
+    db.session.add(token_block)
     db.session.commit()
 
-    response = jsonify(msg="Successfully logged out")
-    response.delete_cookie("refresh_token")
+    response = make_response(jsonify({"message": "Successfully logged out"}))
+    # Clear both access and refresh cookies
+    response.delete_cookie("access_token_cookie", path="/")
+    response.delete_cookie("refresh_token_cookie", path="/auth/refresh")
 
-    return response, 200
+    log_event("LOGOUT", user_id=user_id, ip=request.remote_addr)
+    return response
