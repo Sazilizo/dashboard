@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from dotenv import load_dotenv
 
 
@@ -13,3 +14,9 @@ class Config:
     UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "static/uploads/")
     FLASK_ENV = os.getenv("FLASK_ENV", "development")
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16 MB upload cap (optional)
+    JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)         # Auto-expire access token after 1 hour
+    JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=1)
+    JWT_TOKEN_LOCATION = ["cookies"]
+    JWT_COOKIE_SECURE = True  # only over HTTPS
+    JWT_COOKIE_SAMESITE = "Lax"
+    JWT_COOKIE_CSRF_PROTECT = False 

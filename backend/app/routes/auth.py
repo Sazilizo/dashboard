@@ -85,6 +85,7 @@ def login():
         if user and user.check_password(password):
             access_token = create_access_token(
                 identity=str(user.id),
+                expires_delta=timedelta(hours=1),
                 additional_claims={
                     "role_id": user.role_id,
                     "school_id": user.school_id
@@ -133,7 +134,7 @@ def get_current_user():
 
 @auth_bp.route('/refresh', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
-@jwt_required(refresh=True)
+@jwt_required(refresh=True, locations=["cookies"])
 def refresh_access_token():
     try:
         user_id = get_jwt_identity()
@@ -150,8 +151,8 @@ def refresh_access_token():
         )
 
         log_event("REFRESH_TOKEN", user_id=user.id, ip=request.remote_addr)
-
         return jsonify({"access_token": access_token}), 200
+    
     except Exception as e:
         log_event("REFRESH_TOKEN_ERROR", ip=request.remote_addr, description=str(e))
         return jsonify({"error": "Failed to refresh token", "details": str(e)}), 500

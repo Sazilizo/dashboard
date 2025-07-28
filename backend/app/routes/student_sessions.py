@@ -46,15 +46,20 @@ def form_schema():
     current_user = User.query.get(get_jwt_identity())
     schema = generate_schema_from_model(model_class, model_name, current_user=current_user)
     return jsonify(schema)
-
 @student_sessions_bp.route('/create', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required("superuser", "admin", "head_tutor", "head_coach")
 def create_session():
     student_ids = request.form.getlist('student_ids')
+
+    # Support single student_id field for one session
+    single_student_id = request.form.get("student_id")
+    if single_student_id:
+        student_ids = [single_student_id]
+
     if not student_ids:
-        return jsonify({"error": "At least one student_id is required"}), 400
+        return jsonify({"error": "At least one student_id or student_ids is required"}), 400
 
     session_name = request.form.get("session_name", "").strip()
     date_str = request.form.get("date", "").strip()
@@ -147,7 +152,6 @@ def create_session():
 
     db.session.commit()
     return jsonify({"message": f"{len(results)} sessions processed", "results": results}), 201
-
 
 @student_sessions_bp.route('/list', methods=['GET'])
 @jwt_required()
