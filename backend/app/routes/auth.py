@@ -177,3 +177,12 @@ def logout():
 
     log_event("LOGOUT", user_id=user_id, ip=request.remote_addr)
     return response
+
+@auth_bp.route('/debug/cookies', methods=['GET', 'OPTIONS'])
+@cross_origin(origins="http://localhost:3000", supports_credentials=True)
+def debug_cookies():
+    from flask import request
+    # Log on the server
+    current_app.logger.debug("Incoming cookies: %s", request.cookies)
+    # Send them back in the JSON so you can inspect in the browser
+    return jsonify({"received_cookies": request.cookies}), 200
