@@ -15,6 +15,7 @@ import re
 auth_bp = Blueprint('auth', __name__)
 PRIVILEGED_ROLES = {"superuser", "admin", "hr", "guest"}
 
+
 @auth_bp.route('/register', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @limiter.limit("5 per minute", override_defaults=False)
@@ -56,6 +57,7 @@ def register():
         "role": role_name
     }), 201
 
+
 @auth_bp.route('/login', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @limiter.limit("5 per minute", override_defaults=False)
@@ -84,24 +86,27 @@ def login():
             expires_delta=timedelta(days=7)
         )
 
-        # Prepare response with tokens in HttpOnly Secure cookies
         response = make_response(jsonify({"message": "Login successful"}))
+        # Pull `secure` and `samesite` from your Config
+        secure_flag = current_app.config["JWT_COOKIE_SECURE"]
+        same_site = current_app.config["JWT_COOKIE_SAMESITE"]
+
         response.set_cookie(
             "access_token_cookie",
             access_token,
-            max_age=60*60,  # 1 hour
+            max_age=60 * 60,  # 1 hour
             httponly=True,
-            secure=False,  # Set to True in production
-            samesite="None",
+            secure=secure_flag,
+            samesite=same_site,
             path="/"
         )
         response.set_cookie(
             "refresh_token_cookie",
             refresh_token,
-            max_age=60*60*24*7,  # 7 days
+            max_age=60 * 60 * 24 * 7,  # 7 days
             httponly=True,
-            secure=False,  # Set to True in production
-            samesite="None",
+            secure=secure_flag,
+            samesite=same_site,
             path="/auth/refresh"
         )
 
@@ -110,6 +115,7 @@ def login():
 
     log_event("LOGIN_FAILED", ip=ip, description=f"Failed login attempt for {username}")
     return jsonify({"error": "Invalid username or password"}), 401
+
 
 @auth_bp.route('/me', methods=['GET'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
@@ -129,6 +135,7 @@ def get_current_user():
         "school_id": user.school_id
     }), 200
 
+
 @auth_bp.route('/refresh', methods=['POST'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required(refresh=True, locations=["cookies"])
@@ -145,18 +152,22 @@ def refresh_access_token():
     )
 
     response = make_response(jsonify({"message": "Token refreshed"}))
+    secure_flag = current_app.config["JWT_COOKIE_SECURE"]
+    same_site = current_app.config["JWT_COOKIE_SAMESITE"]
+
     response.set_cookie(
         "access_token_cookie",
         access_token,
-        max_age=60*60,  # 1 hour
+        max_age=60 * 60,  # 1 hour
         httponly=True,
-        secure=False,  # Set to True in production
-        samesite="None",
+        secure=secure_flag,
+        samesite=same_site,
         path="/"
     )
 
     log_event("REFRESH_TOKEN", user_id=user.id, ip=request.remote_addr)
     return response
+
 
 @auth_bp.route("/logout", methods=["POST"])
 @maintenance_guard()
@@ -171,18 +182,15 @@ def logout():
     db.session.commit()
 
     response = make_response(jsonify({"message": "Successfully logged out"}))
-    # Clear both access and refresh cookies
     response.delete_cookie("access_token_cookie", path="/")
     response.delete_cookie("refresh_token_cookie", path="/auth/refresh")
 
     log_event("LOGOUT", user_id=user_id, ip=request.remote_addr)
     return response
 
+
 @auth_bp.route('/debug/cookies', methods=['GET', 'OPTIONS'])
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 def debug_cookies():
-    from flask import request
-    # Log on the server
-    current_app.logger.debug("Incoming cookies: %s", request.cookies)
-    # Send them back in the JSON so you can inspect in the browser
+    current_app.logger.debug("Incoming cookies: %r", request.cookies)
     return jsonify({"received_cookies": request.cookies}), 200
