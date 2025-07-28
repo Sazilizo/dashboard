@@ -92,7 +92,7 @@ def login():
             max_age=60*60,  # 1 hour
             httponly=True,
             secure=False,  # Set to True in production
-            samesite="Lax",
+            samesite="None",
             path="/"
         )
         response.set_cookie(
@@ -101,7 +101,7 @@ def login():
             max_age=60*60*24*7,  # 7 days
             httponly=True,
             secure=False,  # Set to True in production
-            samesite="Lax",
+            samesite="None",
             path="/auth/refresh"
         )
 
@@ -150,8 +150,8 @@ def refresh_access_token():
         access_token,
         max_age=60*60,  # 1 hour
         httponly=True,
-        secure=True,
-        samesite="Lax",
+        secure=False,  # Set to True in production
+        samesite="None",
         path="/"
     )
 

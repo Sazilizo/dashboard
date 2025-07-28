@@ -18,7 +18,7 @@ class Config:
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=1)
     JWT_TOKEN_LOCATION = ["cookies"]
     JWT_COOKIE_SECURE = False  # only over HTTPS //set it to True in production
-    JWT_COOKIE_SAMESITE = "Lax"
+    JWT_COOKIE_SAMESITE = "None"  # Set to "Lax" or "Strict" in production
     JWT_COOKIE_CSRF_PROTECT = False 
     JWT_ACCESS_COOKIE_NAME = "access_token_cookie"
     JWT_REFRESH_COOKIE_NAME = "refresh_token_cookie"
