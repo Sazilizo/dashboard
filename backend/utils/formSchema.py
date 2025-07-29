@@ -52,19 +52,21 @@ def generate_schema_from_model(model, model_name, current_user=None):
                     for role in Role.query.order_by(Role.name).all()
                 ]
 
-            elif name == "student_id":
+            elif name in ("student_id", "student_ids"):
                 students = Student.query.order_by(Student.full_name).all()
                 field_schema["type"] = "select"
-                field_schema["multiple"] = True  # Allow multiple students
+                field_schema["multiple"] = True
                 field_schema["options"] = [
                     {
                         "label": student.full_name,
                         "value": student.id,
                         "school_id": student.school_id,
+                        "category": student.category.name if student.category else None,
                     }
                     for student in students
                 ]
                 field_schema["depends_on"] = "school_id"
+                field_schema["label"] = "Students"
 
             elif name == "meal_id":
                 field_schema["type"] = "select"
@@ -80,6 +82,15 @@ def generate_schema_from_model(model, model_name, current_user=None):
                     field_schema["readonly"] = True
                 else:
                     field_schema["type"] = "text"
+
+            elif name == "user_id":
+                if current_user:
+                    field_schema["type"] = "hidden"
+                    field_schema["default"] = current_user.id
+                    field_schema["readonly"] = True
+                else:
+                    field_schema["type"] = "number"
+
             else:
                 field_schema["type"] = "number"
 
@@ -121,29 +132,24 @@ def generate_schema_from_model(model, model_name, current_user=None):
 
         schema.append(field_schema)
 
-    # Add dynamic "specs" field based on model + user role
+    # Add dynamic "specs" field based on model + user role (no mixing allowed)
     if model_name in ("AcademicSession", "PESession", "Assessment") and current_user:
         role = current_user.role.name.lower()
         specs_options = []
 
-        if role in ("admin", "superuser"):
-            # Combine all unique specs
-            all_specs = []
-            for spec_list in SPEC_OPTIONS.values():
-                all_specs.extend(spec_list)
-            seen = set()
-            unique_specs = []
-            for spec in all_specs:
-                if spec['key'] not in seen:
-                    seen.add(spec['key'])
-                    unique_specs.append(spec)
-            specs_options = unique_specs
+        if model_name == "PESession":
+            if role in ("admin", "superuser", "head_coach"):
+                specs_options = SPEC_OPTIONS.get("physical_education", [])
 
-        elif role == "head_coach":
-            specs_options = SPEC_OPTIONS.get("physical_education", [])
+        elif model_name == "AcademicSession":
+            if role in ("admin", "superuser", "head_tutor"):
+                specs_options = SPEC_OPTIONS.get("reading", [])
 
-        elif role == "head_tutor":
-            specs_options = SPEC_OPTIONS.get("reading", [])
+        elif model_name == "Assessment":
+            if role == "head_tutor":
+                specs_options = SPEC_OPTIONS.get("reading", [])
+            elif role == "head_coach":
+                specs_options = SPEC_OPTIONS.get("physical_education", [])
 
         if specs_options:
             schema.append({
