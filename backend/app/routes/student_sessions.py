@@ -186,6 +186,11 @@ def list_sessions():
     if category := request.args.getlist('category'):
         query = query.filter(SessionModel.category.in_(category))
 
+    grades = request.args.getlist("grade")
+    if grades:
+        normalized_grades = [g if g.startswith("Grade") else f"Grade {g}" for g in grades]
+        query = query.filter(Student.grade.in_(normalized_grades))
+
     # Date range filtering
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
