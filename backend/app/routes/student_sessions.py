@@ -167,8 +167,13 @@ def list_sessions():
     
     SessionModel = PESession if session_type == 'pe' else AcademicSession
 
-    # Filter by site
-    allowed_site_ids = get_allowed_site_ids(user)
+    # Filter by school
+    raw_site_ids = request.args.getlist("school_id", type=int)
+    try:
+        allowed_site_ids = get_allowed_site_ids(user, raw_site_ids if raw_site_ids else None)
+    except (ValueError, PermissionError) as e:
+        return jsonify({"error": str(e)}), 403
+
     query = SessionModel.query.join(Student).filter(Student.school_id.in_(allowed_site_ids))
 
     # Optional filters
@@ -178,10 +183,24 @@ def list_sessions():
     if term := request.args.get('term'):
         query = query.filter(SessionModel.specs['term'].astext == term)
 
-    sessions = query.order_by(SessionModel.date.desc()).all()
+    if category := request.args.getlist('category'):
+        query = query.filter(SessionModel.category.in_(category))
+
+    # Date range filtering
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    if start_date:
+        query = query.filter(SessionModel.date >= start_date)
+    if end_date:
+        query = query.filter(SessionModel.date <= end_date)
+
+    # Pagination
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 20, type=int)
+    paginated = query.order_by(SessionModel.date.desc()).paginate(page=page, per_page=per_page, error_out=False)
 
     session_list = []
-    for s in sessions:
+    for s in paginated.items:
         session_list.append({
             "id": s.id,
             "student_id": s.student_id,
@@ -196,7 +215,13 @@ def list_sessions():
             "photo": s.photo,
         })
 
-    return jsonify(session_list), 200
+    return jsonify({
+        "sessions": session_list,
+        "total": paginated.total,
+        "page": paginated.page,
+        "pages": paginated.pages
+    }), 200
+
 
 @student_sessions_bp.route('/students/<int:student_id>/stats', methods=['GET'])
 @jwt_required()
