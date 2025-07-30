@@ -52,10 +52,9 @@ def generate_schema_from_model(model, model_name, current_user=None):
                     for role in Role.query.order_by(Role.name).all()
                 ]
 
-            elif name in ("student_id", "student_ids"):
+            elif name == "student_id":
                 students = Student.query.order_by(Student.full_name).all()
                 field_schema["type"] = "select"
-                field_schema["multiple"] = True
                 field_schema["options"] = [
                     {
                         "label": student.full_name,
@@ -66,7 +65,13 @@ def generate_schema_from_model(model, model_name, current_user=None):
                     for student in students
                 ]
                 field_schema["depends_on"] = "school_id"
+                field_schema["label"] = "Student"
+
+            elif name == "student_ids":
+                # 👇 CUSTOM TYPE expected by frontend
+                field_schema["type"] = "student_dropdown"
                 field_schema["label"] = "Students"
+                field_schema["multiple"] = True
 
             elif name == "meal_id":
                 field_schema["type"] = "select"
