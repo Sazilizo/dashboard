@@ -52,13 +52,15 @@ def form_schema():
 @role_required("superuser", "admin", "head_tutor", "head_coach")
 def create_session():
     student_ids = request.form.getlist('student_ids')
-    single_student_id = request.form.get("student_id")
+    student_ids = [str(sid).strip() for sid in student_ids if str(sid).strip()]
 
-    if single_student_id and single_student_id.strip():
+    single_student_id = request.form.get("student_id", "").strip()
+    if single_student_id:
         student_ids = [single_student_id]
 
-    if not student_ids or all(not sid.strip() for sid in student_ids):
+    if not student_ids:
         return jsonify({"error": "At least one student_id or student_ids is required"}), 400
+
 
     session_name = request.form.get("session_name", "").strip()
     date_str = request.form.get("date", "").strip()
