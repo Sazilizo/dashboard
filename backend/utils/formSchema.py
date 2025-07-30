@@ -69,7 +69,7 @@ def generate_schema_from_model(model, model_name, current_user=None):
 
             elif name == "student_ids":
                 # 👇 CUSTOM TYPE expected by frontend
-                field_schema["type"] = "student_dropdown"
+                field_schema["type"] = "select"
                 field_schema["label"] = "Students"
                 field_schema["multiple"] = True
 
