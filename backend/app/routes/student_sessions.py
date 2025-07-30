@@ -54,7 +54,7 @@ def create_session():
     student_ids = request.form.getlist('student_ids')
     single_student_id = request.form.get("student_id")
 
-    if single_student_id:
+    if single_student_id and single_student_id.strip():
         student_ids = [single_student_id]
 
     if not student_ids or all(not sid.strip() for sid in student_ids):
