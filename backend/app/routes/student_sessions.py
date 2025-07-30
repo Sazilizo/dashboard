@@ -59,6 +59,7 @@ def create_session():
         student_ids = [single_student_id]
 
     if not student_ids:
+        print(student_ids)
         return jsonify({"error": "At least one student_id or student_ids is required"}), 400
 
 
