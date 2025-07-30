@@ -50,23 +50,132 @@ def form_schema():
 @cross_origin(origins="http://localhost:3000", supports_credentials=True)
 @jwt_required()
 @role_required("superuser", "admin", "head_tutor", "head_coach")
-def create_session():
-    # Get student_ids from form and normalize
-    print("Received form data:", request.form.get("student_ids"))
-    print("All form keys:", list(request.form.keys()))
-    print("student_ids (getlist):", request.form.getlist("student_id"))
+# def create_session():
+#     # Get student_ids from form and normalize
+#     print("Received form data:", request.form.get("student_ids"))
+#     print("All form keys:", list(request.form.keys()))
+#     print("student_ids (getlist):", request.form.getlist("student_id"))
 
-    student_id = request.form.getlist("student_id")
-    student_id = [str(sid).strip() for sid in student_id if str(sid).strip()]
+#     student_id = request.form.getlist("student_id")
+#     student_id = [str(sid).strip() for sid in student_id if str(sid).strip()]
 
-    if not student_id:
+#     if not student_id:
+#         return jsonify({"error": "At least one student_id is required"}), 400
+
+#     # Get other required fields
+#     session_name = request.form.get("session_name", "").strip()
+#     date_str = request.form.get("date", "").strip()
+#     duration_str = request.form.get("duration_hours", "").strip()
+#     session_type = request.form.get("session_type", "").strip()
+
+#     if not session_name or not date_str or not duration_str or not session_type:
+#         return jsonify({"error": "Missing required fields"}), 400
+
+#     try:
+#         date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+#         duration_hours = float(duration_str)
+#     except Exception as e:
+#         return jsonify({"error": "Invalid date or duration", "details": str(e)}), 400
+
+#     # Parse optional specs JSON
+#     specs_raw = request.form.get("specs")
+#     specs = None
+#     if specs_raw:
+#         try:
+#             specs = json.loads(specs_raw)
+#         except Exception as e:
+#             return jsonify({"error": "Invalid specs JSON", "details": str(e)}), 400
+
+#     outcomes = request.form.get("outcomes", "").strip()
+#     photo_file = request.files.get("photo")
+#     filename = None
+
+#     # Handle photo upload
+#     if photo_file and allowed_file(photo_file.filename):
+#         filename = secure_filename(photo_file.filename)
+#         upload_folder = os.path.join(current_app.config["UPLOAD_FOLDER"], "session_photos")
+#         os.makedirs(upload_folder, exist_ok=True)
+#         photo_path = os.path.join(upload_folder, filename)
+#         photo_file.save(photo_path)
+
+#     user = User.query.get(get_jwt_identity())
+#     allowed_site_ids = get_allowed_site_ids(user)
+
+#     # Enforce role-based session restrictions
+#     if user.role == "head_tutor" and session_type != "academic":
+#         return jsonify({"error": "head_tutor can only create academic sessions"}), 403
+#     if user.role == "head_coach" and session_type != "pe":
+#         return jsonify({"error": "head_coach can only create physical education sessions"}), 403
+
+#     session_model = AcademicSession if session_type == "academic" else PESession
+#     results = []
+
+#     for sid in student_id:
+#         student = Student.query.get(sid)
+#         if not student:
+#             results.append({"student_id": sid, "error": "Student not found"})
+#             continue
+
+#         if student.school_id not in allowed_site_ids:
+#             results.append({"student_id": sid, "error": "Forbidden"})
+#             continue
+
+#         # Validate specs based on student category
+#         if specs:
+#             category_key = student.category.value if student.category else None
+#             allowed_keys = {item["key"] for item in SPEC_OPTIONS.get(category_key, [])}
+#             invalid_keys = set(specs.keys()) - allowed_keys
+#             if invalid_keys:
+#                 results.append({
+#                     "student_id": sid,
+#                     "error": "Invalid spec keys",
+#                     "invalid_keys": list(invalid_keys),
+#                     "allowed_keys": list(allowed_keys)
+#                 })
+#                 continue
+
+#         session_data = {
+#             "student_id": student.id,
+#             "user_id": user.id,
+#             "session_name": session_name,
+#             "date": date_obj,
+#             "duration_hours": duration_hours,
+#             "photo": filename,
+#             "outcomes": outcomes,
+#             "specs": specs
+#         }
+
+#         if session_type == "academic":
+#             session_data["category"] = student.category
+#         elif session_type == "pe":
+#             session_data["physical_education"] = student.physical_education
+
+#         session = session_model(**session_data)
+#         db.session.add(session)
+#         results.append({"student_id": sid, "status": "created"})
+
+#     db.session.commit()
+#     return jsonify({"message": f"{len(results)} sessions processed", "results": results}), 201
+def create_session_json():
+    try:
+        data = request.get_json(force=True)
+    except Exception as e:
+        return jsonify({"error": "Invalid JSON", "details": str(e)}), 400
+
+    print("Received JSON:", data)
+
+    student_ids = data.get("student_ids") or []
+    if not isinstance(student_ids, list) or not student_ids:
         return jsonify({"error": "At least one student_id is required"}), 400
 
-    # Get other required fields
-    session_name = request.form.get("session_name", "").strip()
-    date_str = request.form.get("date", "").strip()
-    duration_str = request.form.get("duration_hours", "").strip()
-    session_type = request.form.get("session_type", "").strip()
+    student_ids = [str(sid).strip() for sid in student_ids if str(sid).strip()]
+
+    session_name = (data.get("session_name") or "").strip()
+    date_str = (data.get("date") or "").strip()
+    duration_str = str(data.get("duration_hours", "")).strip()
+    session_type = (data.get("session_type") or "").strip()
+    specs = data.get("specs")
+    outcomes = (data.get("outcomes") or "").strip()
 
     if not session_name or not date_str or not duration_str or not session_type:
         return jsonify({"error": "Missing required fields"}), 400
@@ -77,31 +186,10 @@ def create_session():
     except Exception as e:
         return jsonify({"error": "Invalid date or duration", "details": str(e)}), 400
 
-    # Parse optional specs JSON
-    specs_raw = request.form.get("specs")
-    specs = None
-    if specs_raw:
-        try:
-            specs = json.loads(specs_raw)
-        except Exception as e:
-            return jsonify({"error": "Invalid specs JSON", "details": str(e)}), 400
-
-    outcomes = request.form.get("outcomes", "").strip()
-    photo_file = request.files.get("photo")
-    filename = None
-
-    # Handle photo upload
-    if photo_file and allowed_file(photo_file.filename):
-        filename = secure_filename(photo_file.filename)
-        upload_folder = os.path.join(current_app.config["UPLOAD_FOLDER"], "session_photos")
-        os.makedirs(upload_folder, exist_ok=True)
-        photo_path = os.path.join(upload_folder, filename)
-        photo_file.save(photo_path)
-
     user = User.query.get(get_jwt_identity())
     allowed_site_ids = get_allowed_site_ids(user)
 
-    # Enforce role-based session restrictions
+    # Role-based validation
     if user.role == "head_tutor" and session_type != "academic":
         return jsonify({"error": "head_tutor can only create academic sessions"}), 403
     if user.role == "head_coach" and session_type != "pe":
@@ -110,7 +198,7 @@ def create_session():
     session_model = AcademicSession if session_type == "academic" else PESession
     results = []
 
-    for sid in student_id:
+    for sid in student_ids:
         student = Student.query.get(sid)
         if not student:
             results.append({"student_id": sid, "error": "Student not found"})
@@ -120,7 +208,7 @@ def create_session():
             results.append({"student_id": sid, "error": "Forbidden"})
             continue
 
-        # Validate specs based on student category
+        # Validate specs keys if applicable
         if specs:
             category_key = student.category.value if student.category else None
             allowed_keys = {item["key"] for item in SPEC_OPTIONS.get(category_key, [])}
@@ -140,9 +228,8 @@ def create_session():
             "session_name": session_name,
             "date": date_obj,
             "duration_hours": duration_hours,
-            "photo": filename,
             "outcomes": outcomes,
-            "specs": specs
+            "specs": specs,
         }
 
         if session_type == "academic":
