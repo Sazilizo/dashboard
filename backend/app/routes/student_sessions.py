@@ -53,12 +53,12 @@ def form_schema():
 def create_session():
     # Get student_ids from form and normalize
     print("All form keys:", list(request.form.keys()))
-    print("student_ids (getlist):", request.form.getlist("student_ids"))
+    print("student_ids (getlist):", request.form.getlist("student_id"))
 
-    student_ids = request.form.getlist("student_ids")
-    student_ids = [str(sid).strip() for sid in student_ids if str(sid).strip()]
+    student_id = request.form.getlist("student_id")
+    student_id = [str(sid).strip() for sid in student_id if str(sid).strip()]
 
-    if not student_ids:
+    if not student_id:
         return jsonify({"error": "At least one student_id is required"}), 400
 
     # Get other required fields
@@ -109,7 +109,7 @@ def create_session():
     session_model = AcademicSession if session_type == "academic" else PESession
     results = []
 
-    for sid in student_ids:
+    for sid in student_id:
         student = Student.query.get(sid)
         if not student:
             results.append({"student_id": sid, "error": "Student not found"})
