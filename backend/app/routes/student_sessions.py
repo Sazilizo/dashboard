@@ -240,11 +240,11 @@ def create_session_json():
         session = session_model(**session_data)
         db.session.add(session)
         results.append({"student_id": sid, "status": "created"})
-        
-    print("Sessions to be committed:", len(db.session.new))
 
+        print("Sessions to be committed:", len(db.session.new))
+
+        print("session data", session)
     db.session.commit()
-    print("session data", session)
     return jsonify({"message": f"{len(results)} sessions processed", "results": results}), 201
 
 @student_sessions_bp.route('/list', methods=['GET'])
