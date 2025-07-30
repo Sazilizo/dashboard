@@ -52,7 +52,7 @@ def generate_schema_from_model(model, model_name, current_user=None):
                     for role in Role.query.order_by(Role.name).all()
                 ]
 
-            elif name == "student_id":
+            elif name == "student_ids":
                 students = Student.query.order_by(Student.full_name).all()
                 field_schema["type"] = "select"
                 field_schema["options"] = [
@@ -60,6 +60,7 @@ def generate_schema_from_model(model, model_name, current_user=None):
                         "label": student.full_name,
                         "value": student.id,
                         "school_id": student.school_id,
+                        "school_name": student.school.name if student.school else None,
                         "category": student.category.name if student.category else None,
                     }
                     for student in students
