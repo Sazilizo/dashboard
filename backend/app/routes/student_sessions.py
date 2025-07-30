@@ -52,6 +52,9 @@ def form_schema():
 @role_required("superuser", "admin", "head_tutor", "head_coach")
 def create_session():
     # Get student_ids from form and normalize
+    print("All form keys:", list(request.form.keys()))
+    print("student_ids (getlist):", request.form.getlist("student_ids"))
+
     student_ids = request.form.getlist("student_ids")
     student_ids = [str(sid).strip() for sid in student_ids if str(sid).strip()]
 
