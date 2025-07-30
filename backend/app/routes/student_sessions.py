@@ -58,7 +58,7 @@ def create_session():
     if single_student_id:
         student_ids = [single_student_id]
 
-    if not student_ids or single_student_id:
+    if not student_ids:
         return jsonify({"error": "At least one student_id or student_ids is required"}), 400
 
     session_name = request.form.get("session_name", "").strip()
