@@ -51,18 +51,14 @@ def form_schema():
 @jwt_required()
 @role_required("superuser", "admin", "head_tutor", "head_coach")
 def create_session():
-    student_ids = request.form.getlist('student_ids')
+    # Get student_ids from form and normalize
+    student_ids = request.form.getlist("student_ids")
     student_ids = [str(sid).strip() for sid in student_ids if str(sid).strip()]
 
-    single_student_id = request.form.get("student_id", "").strip()
-    if single_student_id:
-        student_ids = [single_student_id]
-
     if not student_ids:
-        print(student_ids)
-        return jsonify({"error": "At least one student_id or student_ids is required"}), 400
+        return jsonify({"error": "At least one student_id is required"}), 400
 
-
+    # Get other required fields
     session_name = request.form.get("session_name", "").strip()
     date_str = request.form.get("date", "").strip()
     duration_str = request.form.get("duration_hours", "").strip()
@@ -72,11 +68,12 @@ def create_session():
         return jsonify({"error": "Missing required fields"}), 400
 
     try:
-        date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
         duration_hours = float(duration_str)
     except Exception as e:
         return jsonify({"error": "Invalid date or duration", "details": str(e)}), 400
 
+    # Parse optional specs JSON
     specs_raw = request.form.get("specs")
     specs = None
     if specs_raw:
@@ -89,9 +86,10 @@ def create_session():
     photo_file = request.files.get("photo")
     filename = None
 
+    # Handle photo upload
     if photo_file and allowed_file(photo_file.filename):
         filename = secure_filename(photo_file.filename)
-        upload_folder = os.path.join(current_app.config['UPLOAD_FOLDER'], 'session_photos')
+        upload_folder = os.path.join(current_app.config["UPLOAD_FOLDER"], "session_photos")
         os.makedirs(upload_folder, exist_ok=True)
         photo_path = os.path.join(upload_folder, filename)
         photo_file.save(photo_path)
@@ -99,13 +97,13 @@ def create_session():
     user = User.query.get(get_jwt_identity())
     allowed_site_ids = get_allowed_site_ids(user)
 
-    # Enforce role-based session type
+    # Enforce role-based session restrictions
     if user.role == "head_tutor" and session_type != "academic":
         return jsonify({"error": "head_tutor can only create academic sessions"}), 403
     if user.role == "head_coach" and session_type != "pe":
         return jsonify({"error": "head_coach can only create physical education sessions"}), 403
 
-    session_model = AcademicSession if session_type == 'academic' else PESession
+    session_model = AcademicSession if session_type == "academic" else PESession
     results = []
 
     for sid in student_ids:
@@ -121,7 +119,7 @@ def create_session():
         # Validate specs based on student category
         if specs:
             category_key = student.category.value if student.category else None
-            allowed_keys = {item['key'] for item in SPEC_OPTIONS.get(category_key, [])}
+            allowed_keys = {item["key"] for item in SPEC_OPTIONS.get(category_key, [])}
             invalid_keys = set(specs.keys()) - allowed_keys
             if invalid_keys:
                 results.append({

@@ -45,14 +45,14 @@ def generate_schema_from_model(model, model_name, current_user=None):
                     for school in School.query.order_by(School.name).all()
                 ]
 
-            # elif name == "role_id":
-            #     field_schema["type"] = "select"
-            #     field_schema["options"] = [
-            #         {"label": role.name, "value": role.id}
-            #         for role in Role.query.order_by(Role.name).all()
-            #     ]
+            elif name == "role_id":
+                field_schema["type"] = "select"
+                field_schema["options"] = [
+                    {"label": role.name, "value": role.id}
+                    for role in Role.query.order_by(Role.name).all()
+                ]
 
-            elif name == "student_id":
+            elif name == "student_ids":
                 students = Student.query.order_by(Student.full_name).all()
                 field_schema["type"] = "select"
                 field_schema["options"] = [
