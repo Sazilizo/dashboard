@@ -177,8 +177,7 @@ def create_session_json():
     specs = data.get("specs")
     outcomes = (data.get("outcomes") or "").strip()
 
-    if not session_name or not date_str or not duration_str or not session_type:
-    # if not session_name or not date_str or not duration_str:
+    if not session_name or not date_str or not duration_str:
         return jsonify({"error": "Missing required fields"}), 400
 
     try:
