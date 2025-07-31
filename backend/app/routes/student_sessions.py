@@ -176,6 +176,7 @@ def create_session_json():
     specs = data.get("specs")
     outcomes = (data.get("outcomes") or "").strip()
 
+    print("data",data)
     print("Request args:", request.args)
 
     session_type = request.args.get("session")
@@ -215,15 +216,15 @@ def create_session_json():
 
         if specs:
             allowed_keys = {item["key"] for item in SPEC_OPTIONS.get(session_type, [])}
-            invalid_keys = set(specs.keys()) - allowed_keys
-            if invalid_keys:
-                results.append({
-                    "student_id": sid,
-                    "error": "Invalid spec keys",
-                    "invalid_keys": list(invalid_keys),
-                    "allowed_keys": list(allowed_keys)
-                })
-                continue
+            # invalid_keys = set(specs.keys()) - allowed_keys
+            # if invalid_keys:
+            #     results.append({
+            #         "student_id": sid,
+            #         "error": "Invalid spec keys",
+            #         "invalid_keys": list(invalid_keys),
+            #         "allowed_keys": list(allowed_keys)
+            #     })
+            #     continue
 
         session_data = {
             "student_id": student.id,
