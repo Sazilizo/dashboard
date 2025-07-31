@@ -173,11 +173,13 @@ def create_session_json():
     session_name = (data.get("session_name") or "").strip()
     date_str = (data.get("date") or "").strip()
     duration_str = str(data.get("duration_hours", "")).strip()
-    session_type = (data.get("session") or "").strip()
     specs = data.get("specs")
     outcomes = (data.get("outcomes") or "").strip()
 
-    print("session_type", session_type)
+    session_type = request.args.get("session")
+    if session_type:
+        session_type = session_type.lower()
+    print("session type", session_type)
 
     if not session_name or not date_str or not duration_str:
         return jsonify({"error": "Missing required fields"}), 400
@@ -210,7 +212,6 @@ def create_session_json():
             continue
 
         if specs:
-            # session_specs =
             allowed_keys = {item["key"] for item in SPEC_OPTIONS.get(session_type, [])}
             invalid_keys = set(specs.keys()) - allowed_keys
             if invalid_keys:
