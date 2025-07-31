@@ -189,7 +189,6 @@ def create_session_json():
     user = User.query.get(get_jwt_identity())
     allowed_site_ids = get_allowed_site_ids(user)
 
-    # Role-based validation
     if user.role == "head_tutor" and session_type != "academic":
         return jsonify({"error": "head_tutor can only create academic sessions"}), 403
     if user.role == "head_coach" and session_type != "pe":
@@ -208,10 +207,8 @@ def create_session_json():
             results.append({"student_id": sid, "error": "Forbidden"})
             continue
 
-        # Validate specs keys if applicable
         if specs:
-            category_key = student.category.value if student.category else None
-            allowed_keys = {item["key"] for item in SPEC_OPTIONS.get(category_key, [])}
+            allowed_keys = {item["key"] for item in SPEC_OPTIONS.get(session_type, [])}
             invalid_keys = set(specs.keys()) - allowed_keys
             if invalid_keys:
                 results.append({
@@ -241,9 +238,6 @@ def create_session_json():
         db.session.add(session)
         results.append({"student_id": sid, "status": "created"})
 
-        print("Sessions to be committed:", len(db.session.new))
-
-        print("session data", session)
     db.session.commit()
     return jsonify({"message": f"{len(results)} sessions processed", "results": results}), 201
 
