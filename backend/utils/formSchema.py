@@ -144,17 +144,17 @@ def generate_schema_from_model(model, model_name, current_user=None):
 
         if model_name == "PESession":
             if role in ("admin", "superuser", "head_coach"):
-                specs_options = SPEC_OPTIONS.get("physical_education", [])
+                specs_options = SPEC_OPTIONS.get("pe", [])
 
         elif model_name == "AcademicSession":
             if role in ("admin", "superuser", "head_tutor"):
-                specs_options = SPEC_OPTIONS.get("reading", [])
+                specs_options = SPEC_OPTIONS.get("academics", [])
 
         elif model_name == "Assessment":
             if role == "head_tutor":
-                specs_options = SPEC_OPTIONS.get("reading", [])
+                specs_options = SPEC_OPTIONS.get("academics", [])
             elif role == "head_coach":
-                specs_options = SPEC_OPTIONS.get("physical_education", [])
+                specs_options = SPEC_OPTIONS.get("pe", [])
 
         if specs_options:
             schema.append({

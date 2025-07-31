@@ -195,12 +195,12 @@ def create_session_json():
     user = User.query.get(get_jwt_identity())
     allowed_site_ids = get_allowed_site_ids(user)
 
-    if user.role == "head_tutor" and session_type != "academic":
+    if user.role == "head_tutor" and session_type != "academics":
         return jsonify({"error": "head_tutor can only create academic sessions"}), 403
     if user.role == "head_coach" and session_type != "pe":
         return jsonify({"error": "head_coach can only create physical education sessions"}), 403
 
-    session_model = AcademicSession if session_type == "academic" else PESession
+    session_model = AcademicSession if session_type == "academics" else PESession
     results = []
 
     for sid in student_ids:
@@ -235,7 +235,7 @@ def create_session_json():
             "specs": specs,
         }
 
-        if session_type == "academic":
+        if session_type == "academics":
             session_data["category"] = student.category
         elif session_type == "pe":
             session_data["physical_education"] = student.physical_education
@@ -257,7 +257,7 @@ def list_sessions():
 
     session_type = request.args.get('session_type')
     if not session_type:
-        session_type = 'pe' if user.role == 'head_coach' else 'academic'
+        session_type = 'pe' if user.role == 'head_coach' else 'academics'
     
     SessionModel = PESession if session_type == 'pe' else AcademicSession
 
@@ -322,7 +322,7 @@ def list_sessions():
     }), 200
 
 
-@student_sessions_bp.route('/students/<int:student_id>/stats', methods=['GET'])
+@student_sessions_bp.route('/students/stats/<int:student_id>', methods=['GET'])
 @jwt_required()
 @school_access_required()
 def get_student_stats(student_id):
