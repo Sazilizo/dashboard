@@ -176,6 +176,8 @@ def create_session_json():
     specs = data.get("specs")
     outcomes = (data.get("outcomes") or "").strip()
 
+    print("Request args:", request.args)
+
     session_type = request.args.get("session")
     if session_type:
         session_type = session_type.lower()
