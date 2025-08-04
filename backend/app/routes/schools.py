@@ -53,7 +53,7 @@ def schools_summary():
             school_data["workers"] = [
                 {
                     "id": w.id,
-                    "full_name": w.full_name,
+                    "full_name": w.name + " " + w.last_name,
                     "role": w.role.name if w.role else None
                 } for w in workers
             ]
