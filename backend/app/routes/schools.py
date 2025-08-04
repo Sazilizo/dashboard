@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required
 from utils.decorators import role_required, session_role_required
-from app.models import School, Student, Worker, MealDistribution, User
+from app.models import School, Student, Worker, MealDistribution, User, AcademicSession, PESession
 from app.extensions import db
 
 schools_bp = Blueprint('schools', __name__)
@@ -39,9 +39,32 @@ def schools_summary():
             }
         }
         if include_details:
-            school_data["students"] = [s.id for s in students]
-            school_data["workers"] = [w.id for w in workers]
+            school_data["students"] = [
+                {
+                    "id": s.id,
+                    "full_name": s.full_name,
+                    "grade": s.grade,
+                    "category": s.category.value if s.category else None,
+                    "academic_session_count": AcademicSession.query.filter_by(student_id=s.id).count(),
+                    "physical_session_count": PESession.query.filter_by(student_id=s.id).count() if PESession else None
+                } for s in students
+            ]
+
+            school_data["workers"] = [
+                {
+                    "id": w.id,
+                    "full_name": w.full_name,
+                    "role": w.role.name if w.role else None
+                } for w in workers
+            ]
+
+            school_data["users"] = [
+                {
+                    "id": u.id,
+                    "username": u.username,
+                    "role": u.role.name if u.role else None
+                } for u in users
+            ]
             school_data["meals"] = [m.id for m in meals]
-            school_data["users"] = [u.id for u in users]
         result.append(school_data)
     return jsonify(result)
