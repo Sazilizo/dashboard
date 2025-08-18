@@ -76,7 +76,9 @@ module.exports = {
         removeComments: true,
       },
     }),
-    new webpack.DefinePlugin(envKeys),
+    new webpack.DefinePlugin({
+      "process.env": JSON.stringify(process.env)
+    }),
     new MiniCssExtractPlugin({
       filename: isProd ? 'css/[name].[contenthash].css' : '[name].css',
     }),
