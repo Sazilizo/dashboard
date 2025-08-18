@@ -1,0 +1,134 @@
+/* dynamicForm.css */
+
+/* Container and form spacing */
+form {
+  max-width: 600px;
+  margin: 1.5rem auto;
+  padding: 2rem;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 6px 12px rgba(0,0,0,0.1);
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: #333;
+  box-sizing: border-box;
+}
+
+/* Vertical spacing between form fields */
+form > div {
+  margin-bottom: 1.5rem;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Label styling */
+label {
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+  color: #222;
+  user-select: none;
+}
+
+/* Required asterisk */
+label > span.text-red-500 {
+  margin-left: 0.25rem;
+  color: #e53e3e; /* red-600 */
+  font-weight: 700;
+}
+
+/* Inputs, selects, file inputs, checkboxes */
+input[type="text"],
+input[type="email"],
+input[type="number"],
+input[type="date"],
+select,
+input[type="file"] {
+  font-size: 1rem;
+  padding: 0.45rem 0.75rem;
+  border: 1.5px solid #cbd5e0; /* gray-300 */
+  border-radius: 5px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  outline-offset: 2px;
+  outline-color: transparent;
+  color: #2d3748; /* gray-700 */
+  box-sizing: border-box;
+}
+
+/* On focus */
+input[type="text"]:focus,
+input[type="email"]:focus,
+input[type="number"]:focus,
+input[type="date"]:focus,
+select:focus,
+input[type="file"]:focus {
+  border-color: #3182ce; /* blue-600 */
+  box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.4); /* blue shadow */
+  outline-color: #3182ce;
+}
+
+/* Checkbox container for better alignment */
+input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  margin-top: 0.3rem;
+  accent-color: #3182ce; /* modern blue accent for checkbox */
+}
+
+/* Disabled inputs */
+input:disabled,
+select:disabled {
+  background-color: #edf2f7; /* gray-100 */
+  cursor: not-allowed;
+  color: #a0aec0; /* gray-400 */
+  border-color: #e2e8f0;
+}
+
+/* Error message styling */
+p.text-red-600 {
+  color: #e53e3e; /* red-600 */
+  font-weight: 600;
+  margin: 1rem 0;
+  text-align: center;
+}
+
+/* Submit button styling */
+button[type="submit"] {
+  background-color: #3182ce; /* blue-600 */
+  color: white;
+  font-weight: 700;
+  font-size: 1.1rem;
+  padding: 0.65rem 1.5rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.25s ease;
+  align-self: flex-start;
+  box-shadow: 0 3px 6px rgba(49, 130, 206, 0.5);
+  user-select: none;
+}
+
+button[type="submit"]:hover {
+  background-color: #2b6cb0; /* blue-700 */
+  box-shadow: 0 5px 10px rgba(43, 108, 176, 0.7);
+}
+
+button[type="submit"]:disabled {
+  background-color: #a0aec0;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* Responsive adjustments */
+@media (max-width: 480px) {
+  form {
+    padding: 1.2rem;
+    margin: 1rem 0.5rem;
+  }
+}
+
+/* Add smooth transitions for all inputs and button */
+input,
+select,
+button {
+  transition: all 0.25s ease-in-out;
+}

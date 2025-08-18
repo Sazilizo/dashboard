@@ -1,18 +1,28 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
+const webpack = require("webpack");
+const dotenv = require("dotenv");
+
+const env = dotenv.config().parsed;
+
+const envKeys = Object.keys(env).reduce((prev, next) => {
+  prev[`process.env.${next}`] = JSON.stringify(env[next]);
+  return prev;
+}, {});
 
 const isProd = process.env.NODE_ENV === 'production';
 
 module.exports = {
+  mode: isProd ? 'production' : 'development',
   entry: './src/index.js',
   output: {
     path: path.resolve(__dirname, 'dist'),
-    filename: isProd ? 'js/[name].[contenthash].js' : 'bundle.js',
+    filename: 'js/[name].[contenthash].js',
     assetModuleFilename: 'images/[hash][ext][query]',
+    publicPath: '/',
     clean: true,
   },
-  mode: isProd ? 'production' : 'development',
   resolve: {
     extensions: ['.js', '.jsx'],
     alias: {
@@ -33,8 +43,9 @@ module.exports = {
       {
         test: /\.css$/,
         use: [
-          isProd ? MiniCssExtractPlugin.loader : 'style-loader',
-          'css-loader',
+          'style-loader',          
+          'css-loader',            
+          'postcss-loader'        
         ],
       },
       // Image assets (png, jpg, svg, gif)
@@ -65,6 +76,7 @@ module.exports = {
         removeComments: true,
       },
     }),
+    new webpack.DefinePlugin(envKeys),
     new MiniCssExtractPlugin({
       filename: isProd ? 'css/[name].[contenthash].css' : '[name].css',
     }),
@@ -72,10 +84,12 @@ module.exports = {
   devServer: {
     static: {
       directory: path.resolve(__dirname, 'dist'),
+      publicPath: '/',
     },
     port: 3000,
     historyApiFallback: true,
     hot: true,
+    open: true,
   },
   devtool: isProd ? 'source-map' : 'eval-source-map',
   performance: {
