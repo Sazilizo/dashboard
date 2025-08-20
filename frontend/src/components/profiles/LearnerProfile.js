@@ -5,10 +5,13 @@ import Photos from "./Photos";
 import FilesDownloader from "./FilesDownloader";
 import SpecsRadarChart from "../charts/SpecsRadarGraph"; // Import the radar chart component
 import LearnerAttendance from "./LearnerAttendance"; // Import the attendance component 
+import { useAuth } from "../../context/AuthProvider";
+import AttendanceBarChart from "../charts/AttendanceBarChart";
 
 const  LearnerProfile=()=> {
   const { id } = useParams();
   const [student, setStudent] = useState(null);
+  const { user } = useAuth();
   const [error, setError] = useState(null);
   const [sessionCount, setSessionCount] = useState(0)
   const [expandedSessionIndex, setExpandedSessionIndex] = useState(null);
@@ -28,7 +31,7 @@ const  LearnerProfile=()=> {
             academic_sessions:academic_sessions(*),
             pe_sessions:pe_sessions(*),
             assessments(*),
-            attendance:attendance_records(*),
+            attendance_records(*),
             school:schools(*)
           `)
           .eq("id", id)
@@ -49,7 +52,7 @@ const  LearnerProfile=()=> {
 
 
   useEffect(()=>{
-    console.log("student: ",student)
+    console.log("student attendance: ",student && student?.attendance_records)
   },[student]);
   if (loading) return <p>Loading student data...</p>;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
@@ -121,7 +124,11 @@ const  LearnerProfile=()=> {
             </div>
             <div className="profile-stats">
               <h2 className="text-xl font-bold mb-2">Performance Overview</h2>
-              <SpecsRadarChart sessions={student.academic_sessions} />
+              <SpecsRadarChart student={student} user={user} />
+            </div>
+            <div className="profile-stats">
+              <h2 className="text-xl font-bold mb-2">Performance Overview</h2>
+              <AttendanceBarChart student={student} />
             </div>
         {/* ... */}
         </div>

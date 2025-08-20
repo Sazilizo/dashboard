@@ -1,6 +1,12 @@
 import React, { useState, useMemo, useEffect } from "react";
 import {
-  Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Tooltip, Legend
+  Radar,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Tooltip,
+  Legend,
 } from "recharts";
 
 // Utility to extract year/month
@@ -9,11 +15,40 @@ const formatDateParts = (dateStr) => {
   if (isNaN(d)) return {};
   return {
     year: d.getFullYear(),
-    month: d.toLocaleString("default", { month: "long" }), // e.g. "August"
+    month: d.toLocaleString("default", { month: "long" }),
   };
 };
 
-const SpecsRadarChart = ({ sessions }) => {
+const SpecsRadarChart = ({ student, user }) => {
+  const role = user?.profile?.roles?.name;
+
+  // Merge sessions and tag with session_type
+  const allSessions = useMemo(() => {
+    if (!student) return [];
+
+    const academic = (student.academic_sessions || []).map((s) => ({
+      ...s,
+      session_type: "academic",
+    }));
+    const pe = (student.pe_sessions || []).map((s) => ({
+      ...s,
+      session_type: "pe",
+    }));
+
+    if (role === "admin" || role === "superuser") return [...academic, ...pe];
+    if (role === "head tutor") return academic;
+    if (role === "head coach") return pe;
+    return [];
+  }, [student, role]);
+
+  // Session type filter for admins/superusers
+  const [selectedSessionType, setSelectedSessionType] = useState("all");
+
+  const sessions = useMemo(() => {
+    if (selectedSessionType === "all") return allSessions;
+    return allSessions.filter((s) => s.session_type === selectedSessionType);
+  }, [allSessions, selectedSessionType]);
+
   const [selectedYear, setSelectedYear] = useState("");
   const [selectedMonths, setSelectedMonths] = useState([]);
   const [selectedTerms, setSelectedTerms] = useState([]);
@@ -44,18 +79,22 @@ const SpecsRadarChart = ({ sessions }) => {
 
     return {
       years: [...years].sort(),
-      months: Object.fromEntries(Object.entries(monthsByYear).map(([y, set]) => [y, [...set]])),
-      terms: Object.fromEntries(Object.entries(termsByYear).map(([y, set]) => [y, [...set]])),
+      months: Object.fromEntries(
+        Object.entries(monthsByYear).map(([y, set]) => [y, [...set]])
+      ),
+      terms: Object.fromEntries(
+        Object.entries(termsByYear).map(([y, set]) => [y, [...set]])
+      ),
     };
   }, [sessions]);
 
-  // Initialize defaults (first available year + all terms for that year)
+  // Initialize defaults
   useEffect(() => {
     if (filterOptions.years.length > 0 && !selectedYear) {
       const firstYear = filterOptions.years[0];
       setSelectedYear(firstYear);
       setSelectedTerms(filterOptions.terms[firstYear] || []);
-      setSelectedMonths([]); // default no months checked
+      setSelectedMonths([]);
     }
   }, [filterOptions, selectedYear]);
 
@@ -66,13 +105,10 @@ const SpecsRadarChart = ({ sessions }) => {
     const filtered = sessions.filter((s) => {
       const { year, month } = formatDateParts(s.date);
       if (year !== parseInt(selectedYear)) return false;
-
-      // filter by terms (if any selected)
-      if (selectedTerms.length > 0 && !selectedTerms.includes(s.term)) return false;
-
-      // filter by months (if any selected)
-      if (selectedMonths.length > 0 && (!month || !selectedMonths.includes(month))) return false;
-
+      if (selectedTerms.length > 0 && !selectedTerms.includes(s.term))
+        return false;
+      if (selectedMonths.length > 0 && (!month || !selectedMonths.includes(month)))
+        return false;
       return true;
     });
 
@@ -82,9 +118,7 @@ const SpecsRadarChart = ({ sessions }) => {
     filtered.forEach((session) => {
       if (!session.specs) return;
       Object.entries(session.specs).forEach(([key, value]) => {
-        // 🚨 skip invalid/undefined fields
         if (!key || key === "undefined") return;
-
         if (value !== undefined && value !== null) {
           totals[key] = (totals[key] || 0) + value;
           counts[key] = (counts[key] || 0) + 1;
@@ -92,15 +126,13 @@ const SpecsRadarChart = ({ sessions }) => {
       });
     });
 
-    const result = Object.keys(totals).map((key) => ({
+    return Object.keys(totals).map((key) => ({
       subject: key,
       A: Math.round(totals[key] / counts[key]),
     }));
-
-    return result;
   }, [sessions, selectedYear, selectedMonths, selectedTerms]);
 
-  // Reset if no valid specs found
+  // Reset if no valid specs
   useEffect(() => {
     if (aggregatedData.length === 0 && filterOptions.years.length > 0) {
       const fallbackYear = filterOptions.years[0];
@@ -112,6 +144,22 @@ const SpecsRadarChart = ({ sessions }) => {
 
   return (
     <div className="p-4 bg-white rounded-2xl shadow-md">
+      {/* Admin session type selector */}
+      {(role === "admin" || role === "superuser") && (
+        <div className="mb-4">
+          <label className="mr-2 font-semibold">Session Type:</label>
+          <select
+            value={selectedSessionType}
+            onChange={(e) => setSelectedSessionType(e.target.value)}
+            className="border px-2 py-1 rounded"
+          >
+            <option value="all">All</option>
+            <option value="academic">Academic</option>
+            <option value="pe">PE</option>
+          </select>
+        </div>
+      )}
+
       {/* Year selector */}
       <div className="mb-4">
         <label className="mr-2 font-semibold">Year:</label>
@@ -127,7 +175,9 @@ const SpecsRadarChart = ({ sessions }) => {
         >
           <option value="">-- Select Year --</option>
           {filterOptions.years.map((y) => (
-            <option key={y} value={y}>{y}</option>
+            <option key={y} value={y}>
+              {y}
+            </option>
           ))}
         </select>
       </div>
