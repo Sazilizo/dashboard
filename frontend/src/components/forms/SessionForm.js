@@ -8,7 +8,8 @@ import { useAuth } from "../../context/AuthProvider";
 import { useSchools } from "../../context/SchoolsContext";
 import UploadFile from "../profiles/UploadHelper";
 import { useSupabaseStudents } from "../../hooks/useSupabaseStudents";
-
+import FiltersPanel from "../filters/FiltersPanel";
+import { useFilters } from "../../context/FiltersContext";
 
 const gradeOptions = [
   "R1", "R2", "R3",
@@ -21,29 +22,52 @@ const gradeOptions = [
 const groupByOptions = ["ww", "pr", "un"];
 
 export default function SessionForm() {
-  const { id } = useParams(); // single worker mode if present
+  const { id } = useParams(); // single student mode if present
   const { user } = useAuth();
   const {schools} = useSchools()
   const [selectedStudents, setSelectedStudents] = useState([]);
+  const {filters, setFilters} = useFilters();
 
-  // Fetch all workers for bulk mode
+  // Fetch all students for bulk mode
   const { students, loading, error } = useSupabaseStudents({
       school_id: ["superuser", "admin", "hr", "viewer"].includes(user && user?.profile?.roles.name)
         ? schools.map(s => s.id) // all schools
         : [user?.profile?.school_id],       // only user's school
     });
 
+  const sessionTypeOptions = user?.profile?.roles.name === "head tutor"
+    ? ["Academics"]
+    : user?.profile?.roles.name === "head coach"
+      ? ["PE"]
+      : ["PE", "Academics"];
+
   // Preset fields for DynamicBulkForm
   const presetFields = {
     logged_by: user?.id || "",
-    // single mode: preset worker_id to [id]
-    ...(id ? { worker_id: [id] } : { worker_id: selectedStudents }),
+    school_id: user?.profile?.school_id,
+    ...(id ? { student_id: [id] } : { student_id: selectedStudents }),
   };
+
+  const student = students.find(s => s.id === Number(id)) || students;
+  
 
   return (
     <div className="p-6">
+      <div className="page-filters">
+        <FiltersPanel
+          user={user}
+          schools={schools}
+          filters={{ ...filters, session_type: sessionTypeOptions }}
+          setFilters={setFilters}
+          resource="students"
+          gradeOptions={gradeOptions}
+          sessionTypeOptions={sessionTypeOptions}
+          groupByOptions={groupByOptions}
+          showDeletedOption={["admin", "hr", "superviser"].includes(user?.profile?.roles.name)}
+        />
+      </div>
       <h1 className="text-2xl font-bold mb-6">
-        {id ? `Log session for ${students.full_name}` : "Create Students Sessions (Bulk)"}
+        {id ? `Log session for ${student.full_name}` : "Create Students Sessions (Bulk)"}
       </h1>
 
       {/* Bulk mode: show MultiSelect */}

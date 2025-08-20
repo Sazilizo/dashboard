@@ -3,16 +3,15 @@ import { useParams } from "react-router-dom";
 import api from "../../api/client";
 import RoleSelect from "../../hooks/RoleSelect";
 import EntityMultiSelect from "../../hooks/EntityMultiSelect";
-import UploadFile from "../profiles/UploadFile"; // ✅ UI file input
+import UploadFile from "../profiles/UploadFile"; 
 
-export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubmit } ) {
+export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubmit }) {
   const { id } = useParams(); // single mode if present
   const [schema, setSchema] = useState([]);
   const [formData, setFormData] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // 🔹 fetch schema + defaults
   useEffect(() => {
     if (!schema_name) return;
 
@@ -36,16 +35,19 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
       fields.forEach((f) => {
         if (f.type === "json_object") {
           const groupDefaults = {};
-          f.group.forEach((g) => (groupDefaults[g.key] = 0));
-          defaults[f.name] = groupDefaults;
+          f.group.forEach((g) => {
+            groupDefaults[g.key] = g.default ?? 0; 
+          });
+          defaults[f.name] = { ...groupDefaults };
         } else if (f.type === "checkbox" || f.type === "boolean") {
-          defaults[f.name] = false; // always boolean
+          defaults[f.name] = false;
         } else if (f.type === "select" && f.multiple) {
           defaults[f.name] = id ? [id] : [];
-        } else defaults[f.name] = "";
+        } else {
+          defaults[f.name] = "";
+        }
       });
 
-      // Inject preset fields and student info
       Object.assign(defaults, presetFields);
       if (id) defaults.student_id = id;
       if (presetFields.category) defaults.category = presetFields.category;
@@ -57,12 +59,12 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
   }, [schema_name, presetFields, id]);
 
 
-
   const handleChange = (name, value) => {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
+
   const handleJsonObjectChange = (fieldName, key, value) => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       [fieldName]: { ...prev[fieldName], [key]: Number(value) }
     }));
@@ -73,20 +75,38 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
     setLoading(true);
     setError(null);
     try {
-      // Normalize booleans before sending
       const payload = { ...formData };
+
       schema.forEach((f) => {
         if (f.type === "checkbox" || f.type === "boolean") {
           payload[f.name] = !!payload[f.name];
         }
       });
 
-      // Always include student_id & category silently
       payload.student_id = id || presetFields.student_id;
       payload.category = presetFields.category || formData.category;
+      payload.school_id = presetFields.school_id || formData.school_id;
 
       await onSubmit(payload, id);
-      setFormData({});
+
+      // reset form to defaults instead of empty object
+      const resetData = {};
+      schema.forEach((f) => {
+        if (f.type === "json_object") {
+          const groupDefaults = {};
+          f.group.forEach((g) => groupDefaults[g.key] = g.default ?? 0);
+          resetData[f.name] = { ...groupDefaults };
+        } else if (f.type === "checkbox" || f.type === "boolean") {
+          resetData[f.name] = false;
+        } else if (f.type === "select" && f.multiple) {
+          resetData[f.name] = [];
+        } else {
+          resetData[f.name] = "";
+        }
+      });
+      Object.assign(resetData, presetFields);
+      setFormData(resetData);
+
     } catch (err) {
       console.error(err);
       setError(err.message || "Failed to submit");
@@ -96,8 +116,7 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
   };
 
   const renderField = (field) => {
-    // Hide student_id & category (always injected)
-    if (field.name === "student_id" || field.name === "category") return null;
+    if (field.name === "student_id") return null;
 
     if (field.readOnly) {
       return (
@@ -151,26 +170,27 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
         );
 
       case "json_object":
+        const jsonValues = formData[field.name] || {};
         return (
           <div key={field.name}>
             <label>{field.label}</label>
-              {field.group.map(g => (
-                <div key={g.name}>
-                   <label>{g.label}</label>
-                  <input
-                    type="number"
-                    min={g.min ?? 0}
-                    max={g.max ?? 100}
-                    value={formData[field.name][g.name]}
-                    onChange={e =>
-                      handleJsonObjectChange(field.name, g.name, e.target.value)
-                    }
-                    required
-                  />
-                </div>
-              ))}
-            </div>
-      );
+            {field.group.map((g) => (
+              <div key={g.name}>
+                <label>{g.label}</label>
+                <input
+                  type="number"
+                  min={g.min ?? 0}
+                  max={g.max ?? 100}
+                  value={jsonValues[g.name]}
+                  onChange={(e) =>
+                    handleJsonObjectChange(field.name, g.name, e.target.value)
+                  }
+                  required
+                />
+              </div>
+            ))}
+          </div>
+        );
 
       case "file":
         return (
@@ -184,32 +204,6 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
             accept="image/*,.pdf"
           />
         );
-
-      // case "json_object":
-      //   return (
-      //     <div key={field.name} className="mb-4">
-      //       <label className="block font-medium">{field.label}</label>
-      //       <div className="grid grid-cols-2 gap-2">
-      //         {field.group.map((g) => (
-      //           <input
-      //             key={g.key}
-      //             type="number"
-      //             min="0"
-      //             max="100"
-      //             placeholder={g.label}
-      //             value={formData[field.name]?.[g.key] || ""}
-      //             onChange={(e) =>
-      //               handleChange(field.name, {
-      //                 ...formData[field.name],
-      //                 [g.key]: e.target.value,
-      //               })
-      //             }
-      //             className="p-2 border rounded"
-      //           />
-      //         ))}
-      //       </div>
-      //     </div>
-      //   );
 
       case "select":
         return (
@@ -231,7 +225,7 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
               <option value="">Select...</option>
               {field.options?.map((opt) => (
                 <option key={opt.value} value={opt.value}>
-                  {opt.label}
+                  {opt.label || opt}
                 </option>
               ))}
             </select>

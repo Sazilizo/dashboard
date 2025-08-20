@@ -3,6 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import api from "../../api/client";
 import Photos from "./Photos";
 import FilesDownloader from "./FilesDownloader";
+import SpecsRadarChart from "../charts/SpecsRadarGraph"; // Import the radar chart component
+import LearnerAttendance from "./LearnerAttendance"; // Import the attendance component 
 
 const  LearnerProfile=()=> {
   const { id } = useParams();
@@ -46,6 +48,9 @@ const  LearnerProfile=()=> {
   }, [id]);
 
 
+  useEffect(()=>{
+    console.log("student: ",student)
+  },[student]);
   if (loading) return <p>Loading student data...</p>;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
   if (!student) return <p>No student found</p>;
@@ -110,6 +115,13 @@ const  LearnerProfile=()=> {
                     ))}
                 </div>
 
+            </div>
+            <div className="profile-stats mt-6">
+              <LearnerAttendance id={id} school_id={student.school_id}/>
+            </div>
+            <div className="profile-stats">
+              <h2 className="text-xl font-bold mb-2">Performance Overview</h2>
+              <SpecsRadarChart sessions={student.academic_sessions} />
             </div>
         {/* ... */}
         </div>

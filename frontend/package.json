@@ -29,7 +29,11 @@
     "webpack-dev-server": "^5.2.2"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.53.0",
+    "@fullcalendar/daygrid": "^6.1.19",
+    "@fullcalendar/interaction": "^6.1.19",
+    "@fullcalendar/react": "^6.1.19",
+    "@fullcalendar/timegrid": "^6.1.19",
+    "@supabase/supabase-js": "^2.55.0",
     "axios": "^1.10.0",
     "dotenv": "^17.2.1",
     "file-saver": "^2.0.5",
