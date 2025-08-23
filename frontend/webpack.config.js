@@ -1,70 +1,83 @@
-const path = require('path');
-const HtmlWebpackPlugin = require('html-webpack-plugin');
-const MiniCssExtractPlugin = require('mini-css-extract-plugin');
+const path = require("path");
+const HtmlWebpackPlugin = require("html-webpack-plugin");
+const MiniCssExtractPlugin = require("mini-css-extract-plugin");
 const webpack = require("webpack");
 const dotenv = require("dotenv");
 
+// Load .env file
 const env = dotenv.config().parsed || {};
 
-// Prepare env variables for DefinePlugin
+// Inject only REACT_APP_ variables for frontend usage
 const envKeys = Object.keys(env).reduce((prev, next) => {
-  prev[`process.env.${next}`] = JSON.stringify(env[next]);
+  if (next.startsWith("REACT_APP_")) {
+    prev[`process.env.${next}`] = JSON.stringify(env[next]);
+  }
   return prev;
 }, {});
 
-// Add NODE_ENV
-envKeys['process.env.NODE_ENV'] = JSON.stringify(process.env.NODE_ENV || 'development');
+// Always inject NODE_ENV
+envKeys["process.env.NODE_ENV"] = JSON.stringify(
+  process.env.NODE_ENV || "development"
+);
 
-const isProd = process.env.NODE_ENV === 'production';
+const isProd = process.env.NODE_ENV === "production";
 
 module.exports = {
-  mode: isProd ? 'production' : 'development',
-  entry: './src/index.js',
+  mode: isProd ? "production" : "development",
+  entry: "./src/index.js",
   output: {
-    path: path.resolve(__dirname, 'dist'),
-    filename: 'js/[name].[contenthash].js',
-    assetModuleFilename: 'images/[hash][ext][query]',
-    publicPath: '/',
+    path: path.resolve(__dirname, "dist"),
+    filename: "js/[name].[contenthash].js",
+    assetModuleFilename: "images/[hash][ext][query]",
+    publicPath: "/",
     clean: true,
   },
   resolve: {
-    extensions: ['.js', '.jsx'],
+    extensions: [".js", ".jsx"],
     alias: {
-      '@components': path.resolve(__dirname, 'src/components'),
-      '@assets': path.resolve(__dirname, 'src/assets'),
-      '@styles': path.resolve(__dirname, 'src/styles'),
+      "@components": path.resolve(__dirname, "src/components"),
+      "@assets": path.resolve(__dirname, "src/assets"),
+      "@styles": path.resolve(__dirname, "src/styles"),
     },
     fallback: {
-      fs: false,
+      fs: false, // no fs in browser
       crypto: require.resolve("crypto-browserify"),
       util: require.resolve("util/"),
     },
   },
   module: {
     rules: [
-      { test: /\.(js|jsx)$/, exclude: /node_modules/, use: 'babel-loader' },
-      { test: /\.css$/, use: ['style-loader', 'css-loader', 'postcss-loader'] },
-      { test: /\.(png|jpe?g|gif|svg)$/i, type: 'asset', parser: { dataUrlCondition: { maxSize: 10 * 1024 } } },
-      { test: /\.(woff2?|eot|ttf|otf)$/i, type: 'asset/resource', generator: { filename: 'fonts/[hash][ext]' } },
+      { test: /\.(js|jsx)$/, exclude: /node_modules/, use: "babel-loader" },
+      { test: /\.css$/, use: ["style-loader", "css-loader", "postcss-loader"] },
+      {
+        test: /\.(png|jpe?g|gif|svg)$/i,
+        type: "asset",
+        parser: { dataUrlCondition: { maxSize: 10 * 1024 } },
+      },
+      {
+        test: /\.(woff2?|eot|ttf|otf)$/i,
+        type: "asset/resource",
+        generator: { filename: "fonts/[hash][ext]" },
+      },
     ],
   },
   plugins: [
     new HtmlWebpackPlugin({
-      template: './src/index.html',
+      template: "./src/index.html",
       minify: isProd && { collapseWhitespace: true, removeComments: true },
     }),
-    new webpack.DefinePlugin(envKeys), // injects process.env
+    new webpack.DefinePlugin(envKeys), // <-- inject process.env
     new MiniCssExtractPlugin({
-      filename: isProd ? 'css/[name].[contenthash].css' : '[name].css',
+      filename: isProd ? "css/[name].[contenthash].css" : "[name].css",
     }),
   ],
   devServer: {
-    static: { directory: path.resolve(__dirname, 'dist'), publicPath: '/' },
+    static: { directory: path.resolve(__dirname, "dist"), publicPath: "/" },
     port: 3000,
     historyApiFallback: true,
     hot: true,
     open: true,
   },
-  devtool: isProd ? 'source-map' : 'eval-source-map',
-  performance: { hints: isProd ? 'warning' : false },
+  devtool: isProd ? "source-map" : "eval-source-map",
+  performance: { hints: isProd ? "warning" : false },
 };
