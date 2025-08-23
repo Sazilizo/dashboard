@@ -6,10 +6,14 @@ const dotenv = require("dotenv");
 
 const env = dotenv.config().parsed || {};
 
+// Prepare env variables for DefinePlugin
 const envKeys = Object.keys(env).reduce((prev, next) => {
   prev[`process.env.${next}`] = JSON.stringify(env[next]);
   return prev;
 }, {});
+
+// Add NODE_ENV
+envKeys['process.env.NODE_ENV'] = JSON.stringify(process.env.NODE_ENV || 'development');
 
 const isProd = process.env.NODE_ENV === 'production';
 
@@ -31,36 +35,17 @@ module.exports = {
       '@styles': path.resolve(__dirname, 'src/styles'),
     },
     fallback: {
-      fs: false, // no fs in browser
+      fs: false,
       crypto: require.resolve("crypto-browserify"),
       util: require.resolve("util/"),
     },
   },
   module: {
     rules: [
-      {
-        test: /\.(js|jsx)$/,
-        exclude: /node_modules/,
-        use: 'babel-loader',
-      },
-      {
-        test: /\.css$/,
-        use: [
-          'style-loader',
-          'css-loader',
-          'postcss-loader',
-        ],
-      },
-      {
-        test: /\.(png|jpe?g|gif|svg)$/i,
-        type: 'asset',
-        parser: { dataUrlCondition: { maxSize: 10 * 1024 } },
-      },
-      {
-        test: /\.(woff2?|eot|ttf|otf)$/i,
-        type: 'asset/resource',
-        generator: { filename: 'fonts/[hash][ext]' },
-      },
+      { test: /\.(js|jsx)$/, exclude: /node_modules/, use: 'babel-loader' },
+      { test: /\.css$/, use: ['style-loader', 'css-loader', 'postcss-loader'] },
+      { test: /\.(png|jpe?g|gif|svg)$/i, type: 'asset', parser: { dataUrlCondition: { maxSize: 10 * 1024 } } },
+      { test: /\.(woff2?|eot|ttf|otf)$/i, type: 'asset/resource', generator: { filename: 'fonts/[hash][ext]' } },
     ],
   },
   plugins: [
@@ -68,7 +53,7 @@ module.exports = {
       template: './src/index.html',
       minify: isProd && { collapseWhitespace: true, removeComments: true },
     }),
-    new webpack.DefinePlugin(envKeys),
+    new webpack.DefinePlugin(envKeys), // injects process.env
     new MiniCssExtractPlugin({
       filename: isProd ? 'css/[name].[contenthash].css' : '[name].css',
     }),
