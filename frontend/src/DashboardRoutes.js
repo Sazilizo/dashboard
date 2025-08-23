@@ -26,6 +26,8 @@ import StudentForm from "./components/forms/StudentForm"
 import DynamicBulkForm from "./components/forms/DynamicBulkForm";
 import {DynamicFormForStudents} from "./utils/dynamicForm"
 import UpdateLearnerProfile from "./components/updates/UpdateLearnerProfile";
+// import StudentAttendace from "./components/profiles/StudentAttendance";
+import LearnerAttendanceCalendar from "./components/profiles/LearnerAttendance";
 export default function DashboardRoutes() {
   console.log("DashboardRoutes rendered");
   return (
@@ -37,6 +39,7 @@ export default function DashboardRoutes() {
         <Route path="students" element={<StudentList />} />
         <Route path="students/create" element={<StudentForm />} />
         <Route path="students/:id" element={<LearnerProfile />} />
+        <Route path="students/attandance/:id" element={<LearnerAttendanceCalendar/>} />
         <Route path="students/update/:id" element={<UpdateLearnerProfile/>} />
         <Route path="students/deleted" element={<StudentList deleted />} />
         <Route path="workers" element={<WorkerList />} />

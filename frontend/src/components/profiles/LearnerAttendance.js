@@ -124,13 +124,16 @@
 
 // export default LearnerAttendance;
 import React, { useState, useEffect } from "react";
+import { useParams } from "react-router-dom";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import api from "../../api/client";
 import "../../styles/LearnerAttendance.css";
 
-export default function LearnerAttendanceCalendar({ id, school_id }) {
+
+export default function LearnerAttendanceCalendar() {
+  const { id } = useParams(); 
   const [attendance, setAttendance] = useState([]);
   const [selectedDate, setSelectedDate] = useState(null);
   const [status, setStatus] = useState("present");
@@ -186,6 +189,7 @@ export default function LearnerAttendanceCalendar({ id, school_id }) {
     fetchAttendanceAndSessions();
   }, [id]);
 
+  const school_id = attendance.length > 0 ? attendance[0].school_id : null;
   const handleSaveAttendance = async () => {
     if (!selectedDate) return;
 
@@ -266,76 +270,82 @@ export default function LearnerAttendanceCalendar({ id, school_id }) {
   };
 
   useEffect(()=>{
-    console.log("data",selectedDate, note, status, school_id)
-  },[selectedDate, note, status, school_id]);
+    console.log("data", )
+  },[]);
 
 
   return (
-    <div className="attendance-calendar-container">
-      <FullCalendar
-        plugins={[dayGridPlugin, interactionPlugin]}
-        initialView="dayGridMonth"
-        selectable={true}
-        events={generateEvents()}
-        eventContent={(arg) => (
-          <div title={arg.event.extendedProps.tooltip}>{arg.event.title}</div>
-        )}
-        dateClick={(info) => {
-          setSelectedDate(info.dateStr);
-          const existing = attendance.find((a) => a.date === info.dateStr);
-          setStatus(existing?.status || "present");
-          setNote(existing?.note || "");
-        }}
-      />
+    <>
+      <div className="profile-learner-print">
+          <button className="btn btn-primary" onClick={() => window.history.back()}>Back to Student</button>
+          <button className="btn btn-secondary" onClick={() => window.print()}>Print Profile</button>
+      </div>
+      <div className="attendance-calendar-container">
+        <FullCalendar
+          plugins={[dayGridPlugin, interactionPlugin]}
+          initialView="dayGridMonth"
+          selectable={true}
+          events={generateEvents()}
+          eventContent={(arg) => (
+            <div title={arg.event.extendedProps.tooltip}>{arg.event.title}</div>
+          )}
+          dateClick={(info) => {
+            setSelectedDate(info.dateStr);
+            const existing = attendance.find((a) => a.date === info.dateStr);
+            setStatus(existing?.status || "present");
+            setNote(existing?.note || "");
+          }}
+        />
 
-      {selectedDate && (
-        <div className="attendance-modal-overlay">
-          <div className="attendance-modal">
-            <div className="attendance-modal-header">
-              <h2>Mark Attendance - {selectedDate}</h2>
-              {/* <button className="close-btn" onClick={handleCloseModal}>
-                &times;
-              </button> */}
-            </div>
-
-            <div className="attendance-modal-body">
-              <div className="mb-2">
-                <label>
-                  <input
-                    type="radio"
-                    checked={status === "present"}
-                    onChange={() => setStatus("present")}
-                  />{" "}
-                  Present
-                </label>
-                <label className="ml-4">
-                  <input
-                    type="radio"
-                    checked={status === "absent"}
-                    onChange={() => setStatus("absent")}
-                  />{" "}
-                  Absent
-                </label>
+        {selectedDate && (
+          <div className="attendance-modal-overlay">
+            <div className="attendance-modal">
+              <div className="attendance-modal-header">
+                <h2>Mark Attendance - {selectedDate}</h2>
+                {/* <button className="close-btn" onClick={handleCloseModal}>
+                  &times;
+                </button> */}
               </div>
-              <textarea
-                placeholder="Add a note or session name"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                className="w-full border rounded p-2"
-              />
-            </div>
 
-            <div className="attendance-modal-footer">
-              <button className="cancel-btn" onClick={handleCloseModal}>
-                Cancel
-              </button>
-              <button className="save-btn" onClick={handleSaveAttendance}>
-                Save
-              </button>
+              <div className="attendance-modal-body">
+                <div className="mb-2">
+                  <label>
+                    <input
+                      type="radio"
+                      checked={status === "present"}
+                      onChange={() => setStatus("present")}
+                    />{" "}
+                    Present
+                  </label>
+                  <label className="ml-4">
+                    <input
+                      type="radio"
+                      checked={status === "absent"}
+                      onChange={() => setStatus("absent")}
+                    />{" "}
+                    Absent
+                  </label>
+                </div>
+                <textarea
+                  placeholder="Add a note or session name"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  className="w-full border rounded p-2"
+                />
+              </div>
+
+              <div className="attendance-modal-footer">
+                <button className="cancel-btn" onClick={handleCloseModal}>
+                  Cancel
+                </button>
+                <button className="save-btn" onClick={handleSaveAttendance}>
+                  Save
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </>
   );
 }

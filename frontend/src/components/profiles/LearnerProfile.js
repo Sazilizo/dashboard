@@ -3,25 +3,27 @@ import { Link, useParams } from "react-router-dom";
 import api from "../../api/client";
 import Photos from "./Photos";
 import FilesDownloader from "./FilesDownloader";
-import SpecsRadarChart from "../charts/SpecsRadarGraph"; // Import the radar chart component
-import LearnerAttendance from "./LearnerAttendance"; // Import the attendance component 
-import { useAuth } from "../../context/AuthProvider";
+import SpecsRadarChart from "../charts/SpecsRadarGraph";
+import LearnerAttendance from "./LearnerAttendance";
 import AttendanceBarChart from "../charts/AttendanceBarChart";
+import { useAuth } from "../../context/AuthProvider";
+import BiometricsSignIn from "../forms/BiometricsSignIn";
 
-const  LearnerProfile=()=> {
+const LearnerProfile = () => {
   const { id } = useParams();
-  const [student, setStudent] = useState(null);
   const { user } = useAuth();
+  const [student, setStudent] = useState(null);
   const [error, setError] = useState(null);
-  const [sessionCount, setSessionCount] = useState(0)
-  const [expandedSessionIndex, setExpandedSessionIndex] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [expandedSessionIndex, setExpandedSessionIndex] = useState(null);
+
+  // Toggle between calendar and biometrics
+  const [attendanceMode, setAttendanceMode] = useState("calendar"); // "calendar" | "biometrics"
 
   useEffect(() => {
-    async function fetchStudentAndRelations() {
+    const fetchStudent = async () => {
       setLoading(true);
       setError(null);
-
       try {
         const { data, error } = await api
           .from("students")
@@ -40,101 +42,98 @@ const  LearnerProfile=()=> {
         if (error) throw error;
         setStudent(data);
       } catch (err) {
-        console.error(err);
         setError(err.message);
       } finally {
         setLoading(false);
       }
-    }
+    };
 
-    fetchStudentAndRelations();
+    fetchStudent();
   }, [id]);
 
-
-  useEffect(()=>{
-    console.log("student attendance: ",student && student?.attendance_records)
-  },[student]);
   if (loading) return <p>Loading student data...</p>;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
   if (!student) return <p>No student found</p>;
 
-
   return (
     <>
-        <div className="profile-learner-print">
-            <button className="btn btn-primary" onClick={() => window.history.back()}>Back to Students</button>
-            <button className="btn btn-secondary" onClick={() => window.print()}>Print Profile</button>
-        </div>
-        <div className="student-edit-section">
-                <>
-                <Link to={`/dashboard/sessions/record/${id}`} className="btn btn-primary">
-                    Record Session
-                </Link>
-                <Link to={`/dashboard/students/${id}/distribute-meal`} className="btn btn-secondary">
-                    Distribute Meal
-                </Link>
-                <Link to={`/dashboard/students/update/${id}`} className="btn btn-secondary">
-                    Edit Student Profile
-                </Link>
-                </>
+      <div className="profile-learner-print">
+        <button className="btn btn-primary" onClick={() => window.history.back()}>
+          Back to Students
+        </button>
+        <button className="btn btn-secondary" onClick={() => window.print()}>
+          Print Profile
+        </button>
+      </div>
 
-        </div>
-        <div className="profile-container">
-            <div className="profile-wrapper">
-                <div className="profile-header">
-                    <h1>{student.full_name}</h1>
-                    <p>School: {student?.school.name}</p>
-                    <Photos bucketName="student-uploads" folderName="students" id={id} />
-                </div>
-                <div className="profile-details">
-                    <p>Grade: {student.grade}</p>
-                    <p>Category: {student.category}</p>
-                    <p>Date Of Birth: {student.date_of_birth}</p>
-                    <p>Does Physical Education?: {student.physical_education ? "Yes" : "No"}</p>
-                </div>
-                <div className="documents">
-                    <FilesDownloader bucketName="student-uploads" folderName="students" id={id} />
-                </div>
-            </div>
-            <div className="profile-stats">
-                <p>Number of Academic Sessions completed: {sessionCount && sessionCount}</p>
-                <p>Number of Meals received: {student?.meals_distributed || 0}</p>
-                <div className="lessions">
-                    {student.academic_sessions &&
-                        student.academic_sessions.map((session, index) => (
-                        <React.Fragment key={session.created_at || index}>
-                            <button onClick={() => setExpandedSessionIndex(index === expandedSessionIndex ? null : index)}>
-                            {session.session_name}
-                            </button>
-                            {expandedSessionIndex === index && (
-                            <div className="session_information">
-                                {/* Display session details here */}
-                                <p><strong>Name:</strong> {session.session_name}</p>
-                                <p><strong>Created:</strong> {session.created_at}</p>
-                                <p><strong>Details:</strong> {JSON.stringify(session.specs)}</p>
-                            </div>
-                            )}
-                        </React.Fragment>
-                    ))}
-                </div>
+      <div className="student-edit-section">
+        <Link to={`/dashboard/sessions/record/${id}`} className="btn btn-primary">
+          Record Session
+        </Link>
+        <Link to={`/dashboard/students/${id}/distribute-meal`} className="btn btn-secondary">
+          Distribute Meal
+        </Link>
+        <Link to={`/dashboard/students/update/${id}`} className="btn btn-secondary">
+          Edit Student Profile
+        </Link>
+        <Link to={`/dashboard/students/attandance/${id}`} className="btn btn-secondary">
+          View Attendance
+        </Link>
+        <button
+          className="btn btn-success"
+          onClick={() =>
+            setAttendanceMode(attendanceMode === "calendar" ? "biometrics" : "calendar")
+          }
+        >
+          {attendanceMode === "calendar" ? "Biometric Attendance" : "Calendar Attendance"}
+        </button>
+      </div>
 
-            </div>
-            <div className="profile-stats mt-6">
-              <LearnerAttendance id={id} school_id={student.school_id}/>
-            </div>
-            <div className="profile-stats">
-              <h2 className="text-xl font-bold mb-2">Performance Overview</h2>
-              <SpecsRadarChart student={student} user={user} />
-            </div>
-            <div className="profile-stats">
-              <h2 className="text-xl font-bold mb-2">Performance Overview</h2>
-              <AttendanceBarChart student={student} />
-            </div>
-        {/* ... */}
+      <div className="profile-container">
+        <div className="profile-wrapper">
+          <div className="profile-header">
+            <h1>{student.full_name}</h1>
+            <p>School: {student?.school.name}</p>
+            <Photos bucketName="student-uploads" folderName="students" id={id} />
+          </div>
+
+          <div className="profile-details">
+            <p>Grade: {student.grade}</p>
+            <p>Category: {student.category}</p>
+            <p>Date Of Birth: {student.date_of_birth}</p>
+            <p>Does Physical Education?: {student.physical_education ? "Yes" : "No"}</p>
+          </div>
+
+          <div className="documents">
+            <FilesDownloader bucketName="student-uploads" folderName="students" id={id} />
+          </div>
         </div>
+
+        <div className="profile-stats mt-6">
+          {attendanceMode === "calendar" ? (
+            <LearnerAttendance id={id} school_id={student.school_id} />
+          ) : (
+            <BiometricsSignIn
+              studentId={id}
+              schoolId={student.school_id}
+              bucketName="student-uploads"
+              folderName="students"
+            />
+          )}
+        </div>
+
+        <div className="profile-stats mt-6">
+          <h2 className="text-xl font-bold mb-2">Performance Overview</h2>
+          <SpecsRadarChart student={student} user={user} />
+        </div>
+
+        <div className="profile-stats mt-6">
+          <h2 className="text-xl font-bold mb-2">Attendance Overview</h2>
+          <AttendanceBarChart student={student} />
+        </div>
+      </div>
     </>
   );
-}
-
+};
 
 export default LearnerProfile;
