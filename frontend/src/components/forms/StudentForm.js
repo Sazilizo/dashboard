@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useSchools } from "../../context/SchoolsContext";
 import api from "../../api/client";
-import uploadFile from "../profiles/UploadHelper";
+import UploadFileHelper from "../profiles/UploadHelper";
 
 const CATEGORY_OPTIONS = [
   { value: "pr", label: "pr" },
@@ -71,7 +71,7 @@ export default function StudentForm() {
         school_id: Number(formData.school_id),
         // id_number: formData.id_number || null,
         // date_of_birth: formData.date_of_birth || null,
-        // photo: null,
+        photo: null,
         // parent_permission_pdf: null,
       };
 
@@ -86,9 +86,15 @@ export default function StudentForm() {
       const studentId = insertedStudent.id;
 
       // Step 2: Upload files with folder named by studentId
-      if (!formData.photo && !formData.parent_permission_pdf){
-        const photoUrl = await uploadFile(formData.photo, "students", studentId);
-        const permissionPdfUrl = await uploadFile(
+      let photoUrl = null;
+      let permissionPdfUrl = null;
+
+      if (formData.photo) {
+        photoUrl = await UploadFileHelper(formData.photo, "students", studentId);
+      }
+
+      if (formData.parent_permission_pdf) {
+        permissionPdfUrl = await UploadFileHelper(
           formData.parent_permission_pdf,
           "students",
           studentId
@@ -102,6 +108,7 @@ export default function StudentForm() {
         .eq("id", studentId);
 
       if (updateError) throw updateError;
+
 
       alert("Student created successfully!");
 

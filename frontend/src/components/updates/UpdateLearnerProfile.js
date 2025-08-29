@@ -31,6 +31,9 @@ export default function UpdateLearnerProfile() {
     if (id) fetchStudent();
   }, [id]);
 
+  useEffect(()=>{
+    console.log("student to update:", student)
+  },[student])
   if (loading) return <p>Loading student data...</p>;
 
   return (
