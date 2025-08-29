@@ -7,18 +7,16 @@ const dotenv = require("dotenv");
 // Load .env file
 const env = dotenv.config().parsed || {};
 
-// Inject only REACT_APP_ variables for frontend usage
-const envKeys = Object.keys(env).reduce((prev, next) => {
+// Build a clean object with only REACT_APP_ vars
+const envVars = Object.keys(env).reduce((prev, next) => {
   if (next.startsWith("REACT_APP_")) {
-    prev[`process.env.${next}`] = JSON.stringify(env[next]);
+    prev[next] = env[next];
   }
   return prev;
 }, {});
 
-// Always inject NODE_ENV
-envKeys["process.env.NODE_ENV"] = JSON.stringify(
-  process.env.NODE_ENV || "development"
-);
+// Always include NODE_ENV
+envVars["NODE_ENV"] = process.env.NODE_ENV || "development";
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -66,7 +64,10 @@ module.exports = {
       template: "./src/index.html",
       minify: isProd && { collapseWhitespace: true, removeComments: true },
     }),
-    new webpack.DefinePlugin(envKeys), // <-- inject process.env
+    // ✅ Define a safe process.env object for browser
+    new webpack.DefinePlugin({
+      "process.env": JSON.stringify(envVars),
+    }),
     new MiniCssExtractPlugin({
       filename: isProd ? "css/[name].[contenthash].css" : "[name].css",
     }),

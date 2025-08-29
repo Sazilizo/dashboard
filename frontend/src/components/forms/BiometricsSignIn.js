@@ -1,222 +1,262 @@
-import React, { useState, useRef, useEffect } from "react";
-import api from "../../api/client";
-import * as faceapi from "face-api.js";
+import React, { useState, useRef, useEffect } from "react"
+import api from "../../api/client"
+import * as faceapi from "face-api.js"
+import "../../styles/BiometricsSignIn.css"
 
-const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName }) => {
-  const [loadingModels, setLoadingModels] = useState(true);
-  const [message, setMessage] = useState("");
-  const [action, setAction] = useState("sign-in");
-  const [retryCount, setRetryCount] = useState(0);
-  const [referenceImageUrl, setReferenceImageUrl] = useState(null);
+const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, sessionType }) => {
+  const [loadingModels, setLoadingModels] = useState(true)
+  const [message, setMessage] = useState("")
+  const [faceMatcher, setFaceMatcher] = useState(null)
+  const [uploadedFile, setUploadedFile] = useState(null)
+  const [pendingSignIns, setPendingSignIns] = useState({})
+  const [captureDone, setCaptureDone] = useState(false)
+  const [referencesReady, setReferencesReady] = useState(false)
 
-  const webcamRef = useRef();
-  const canvasRef = useRef();
-  const [uploadedFile, setUploadedFile] = useState(null);
-  const [faceMatcher, setFaceMatcher] = useState(null);
+  const webcamRef = useRef()
+  const canvasRef = useRef()
+  const threshold = 0.6
 
-  const threshold = 0.6;
+  // Load persisted pending sign-ins
+  useEffect(() => {
+    const stored = localStorage.getItem("pendingSignIns")
+    if (stored) setPendingSignIns(JSON.parse(stored))
+  }, [])
 
-  // Load face-api models
+  // Persist sign-ins whenever they change
+  useEffect(() => {
+    localStorage.setItem("pendingSignIns", JSON.stringify(pendingSignIns))
+  }, [pendingSignIns])
+
+  // Load models
   useEffect(() => {
     const loadModels = async () => {
-      const MODEL_URL = "/models";
+      const MODEL_URL = "/models"
       await Promise.all([
         faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
         faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
         faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-      ]);
-      setLoadingModels(false);
-    };
-    loadModels();
-  }, []);
+      ])
+      setLoadingModels(false)
+    }
+    loadModels()
+  }, [])
 
-  // Fetch student reference photo from Supabase
+  // Setup webcam
   useEffect(() => {
-    if (!studentId) return;
-
-    const fetchReferencePhoto = async () => {
+    if (captureDone) return
+    const startWebcam = async () => {
       try {
-        const { data: files } = await api.storage
-          .from(bucketName)
-          .list(`${folderName}/${studentId}`);
-
-        if (!files || files.length === 0) {
-          setMessage("No reference photo found for this student.");
-          return;
-        }
-
-        const file = files[0]; // pick first file
-        const { data: signedUrl } = await api.storage
-          .from(bucketName)
-          .createSignedUrl(`${folderName}/${studentId}/${file.name}`, 60);
-
-        setReferenceImageUrl(signedUrl.signedUrl);
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+        if (webcamRef.current) webcamRef.current.srcObject = stream
       } catch (err) {
-        console.error(err);
-        setMessage("Failed to load student reference photo.");
+        console.error(err)
+        setMessage("Could not access webcam.")
       }
-    };
+    }
+    startWebcam()
+    return () => {
+      if (webcamRef.current?.srcObject) {
+        webcamRef.current.srcObject.getTracks().forEach(track => track.stop())
+      }
+    }
+  }, [captureDone])
 
-    fetchReferencePhoto();
-  }, [studentId, bucketName, folderName]);
-
-  // Create face matcher once reference photo is loaded
+  // Load reference images
   useEffect(() => {
-    if (!referenceImageUrl) return;
+    if (!studentId || !bucketName || !folderName) return
+    const ids = Array.isArray(studentId) ? studentId : [studentId]
 
-    const loadReferenceFace = async () => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = referenceImageUrl;
-      img.onload = async () => {
-        const detection = await faceapi
-          .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
-          .withFaceLandmarks()
-          .withFaceDescriptor();
+    const loadReferences = async () => {
+      const labeledDescriptors = []
+      for (const id of ids) {
+        try {
+          const { data: files } = await api.storage.from(bucketName).list(`${folderName}/${id}`)
+          if (!files || files.length === 0) continue
 
-        if (!detection) {
-          setMessage("Reference photo invalid or no face detected.");
-          return;
+          const file = files[0]
+          const { data: signedUrl } = await api.storage.from(bucketName).createSignedUrl(
+            `${folderName}/${id}/${file.name}`,
+            60 * 60
+          )
+
+          if (signedUrl?.signedUrl) {
+            const img = await faceapi.fetchImage(signedUrl.signedUrl)
+            const detection = await faceapi
+              .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+              .withFaceLandmarks()
+              .withFaceDescriptor()
+
+            if (detection) {
+              labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(id.toString(), [detection.descriptor]))
+            }
+          }
+        } catch (err) {
+          console.error("Error loading reference for", id, err)
         }
+      }
 
-        setFaceMatcher(new faceapi.FaceMatcher(detection.descriptor, threshold));
-        console.log("Reference face loaded:", detection);
-      };
-    };
-
-    loadReferenceFace();
-  }, [referenceImageUrl]);
-
-  const handleCapture = async () => {
-    if (!faceMatcher) {
-      setMessage("Reference face not ready yet. Please wait.");
-      return;
+      if (labeledDescriptors.length > 0) {
+        setFaceMatcher(new faceapi.FaceMatcher(labeledDescriptors, threshold))
+        setReferencesReady(true)
+        console.log("✅ FaceMatcher ready with", labeledDescriptors.length, "labels")
+      } else {
+        console.warn("⚠ No reference descriptors found for", ids)
+      }
     }
 
-    setMessage("Detecting face...");
-    let img;
+    loadReferences()
+  }, [studentId, bucketName, folderName])
 
-    // Handle uploaded file
+  const handleCapture = async (action) => {
+    if (!referencesReady || !faceMatcher) {
+      setMessage("Reference faces not ready yet.")
+      return
+    }
+
+    setMessage("Detecting face(s)...")
+    let img
+
     if (uploadedFile) {
       img = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
+        const reader = new FileReader()
         reader.onload = () => {
-          const image = new Image();
-          image.src = reader.result;
-          image.onload = () => resolve(image);
-          image.onerror = reject;
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(uploadedFile);
-      });
+          const image = new Image()
+          image.src = reader.result
+          image.onload = () => resolve(image)
+          image.onerror = reject
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(uploadedFile)
+      })
     } else {
-      // Capture from webcam
-      const video = webcamRef.current;
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      img = await faceapi.fetchImage(canvas.toDataURL("image/jpeg"));
+      const video = webcamRef.current
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext("2d")
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      img = await faceapi.fetchImage(canvas.toDataURL("image/jpeg"))
     }
 
-    // Detect face
-    const detection = await faceapi
-      .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+    const detections = await faceapi.detectAllFaces(img, new faceapi.TinyFaceDetectorOptions())
       .withFaceLandmarks()
-      .withFaceDescriptor();
+      .withFaceDescriptors()
 
-    console.log("Captured detection:", detection);
-
-    if (!detection) {
-      setMessage("No face detected. Please try again.");
-      setRetryCount((c) => c + 1);
-      return;
+    if (detections.length === 0) {
+      setMessage("No faces detected. Try again.")
+      return
     }
 
-    // Draw detection on canvas
-    const canvas = canvasRef.current;
-    canvas.style.display = "block";
-    canvas.width = img.width;
-    canvas.height = img.height;
-    faceapi.matchDimensions(canvas, { width: canvas.width, height: canvas.height });
-    const resized = faceapi.resizeResults(detection, { width: canvas.width, height: canvas.height });
-    faceapi.draw.drawDetections(canvas, resized);
-    faceapi.draw.drawFaceLandmarks(canvas, resized);
+    const results = detections.map(d => faceMatcher.findBestMatch(d.descriptor))
+    const date = new Date().toISOString().split("T")[0]
 
-    const bestMatch = faceMatcher.findBestMatch(detection.descriptor);
-
-    if (bestMatch.label === "unknown") {
-      setMessage("Face does not match. Please try again.");
-      setUploadedFile(null);
-      setRetryCount((c) => c + 1);
-      return;
-    }
-
-    // Record attendance
     try {
-      const date = new Date().toISOString().split("T")[0];
-      const { data, error } = await api
-        .from("attendance_records")
-        .insert([
-          {
-            student_id: studentId,
-            school_id: schoolId,
-            date,
-            status: action === "sign-in" ? "present" : "signed-out",
-            note: action,
-          },
-        ]);
+      for (const match of results) {
+        if (match.label === "unknown") continue
 
-      if (error) throw error;
-      setMessage(`Successfully ${action === "sign-in" ? "signed in" : "signed out"}!`);
-      setUploadedFile(null);
+        if (action === "sign-in") {
+          setPendingSignIns(prev => ({ ...prev, [match.label]: new Date().toISOString() }))
+          setMessage(m => `${m}\n${match.label} signed in.`)
+        }
+
+        if (action === "sign-out") {
+          const signInTime = pendingSignIns[match.label]
+          if (!signInTime) {
+            setMessage(m => `${m}\n⚠ No sign-in record for ${match.label}.`)
+            continue
+          }
+
+          const signOutTime = new Date().toISOString()
+          const durationMs = new Date(signOutTime) - new Date(signInTime)
+          const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(2)
+
+          // Save attendance record
+          const { error } = await api.from("attendance_records").upsert([
+            {
+              student_id: match.label,
+              school_id: schoolId,
+              status: "present",
+              note: "biometric sign in",
+              date,
+              sign_in_time: signInTime,
+              sign_out_time: signOutTime
+            }
+          ])
+          if (error) throw error
+
+          // Update session duration
+          if (sessionType === "academic") {
+            await api.from("academic_sessions").upsert([
+              { student_id: match.label, duration_hours: durationHours, date }
+            ])
+          } else if (sessionType === "pe") {
+            await api.from("pe_sessions").upsert([
+              { student_id: match.label, duration_hours: durationHours, date }
+            ])
+          }
+
+          setPendingSignIns(prev => {
+            const copy = { ...prev }
+            delete copy[match.label]
+            return copy
+          })
+          setMessage(m => `${m}\n${match.label} signed out. Duration: ${durationHours} hrs`)
+        }
+      }
+
+      setUploadedFile(null)
+      setCaptureDone(true)
     } catch (err) {
-      console.error(err);
-      setMessage("Failed to record attendance.");
+      console.error(err)
+      setMessage("Failed to record attendance.")
     }
-  };
+
+    // Draw detections
+    const canvas = canvasRef.current
+    canvas.style.display = "block"
+    canvas.width = img.width
+    canvas.height = img.height
+    faceapi.matchDimensions(canvas, { width: img.width, height: img.height })
+    const resized = faceapi.resizeResults(detections, { width: img.width, height: img.height })
+    faceapi.draw.drawDetections(canvas, resized)
+    faceapi.draw.drawFaceLandmarks(canvas, resized)
+  }
 
   return (
     <div className="student-signin-container">
-      <h2>Biometric {action === "sign-in" ? "Sign In" : "Sign Out"}</h2>
-
-      <div className="action-switch">
-        <button onClick={() => setAction("sign-in")}>Sign In</button>
-        <button onClick={() => setAction("sign-out")}>Sign Out</button>
-      </div>
+      <h2>Biometric Sign In / Out</h2>
 
       {loadingModels && <p>Loading face detection models...</p>}
 
       {!loadingModels && (
         <>
           <div className="capture-options">
-            <div>
-              <video ref={webcamRef} autoPlay width="320" height="240" />
-              <canvas ref={canvasRef} width="320" height="240" style={{ display: "none" }} />
+            <div className="video-container">
+              {!captureDone && <video ref={webcamRef} autoPlay width="320" height="240" />}
+              <canvas ref={canvasRef} width="320" height="240" />
             </div>
-            <div>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={(e) => setUploadedFile(e.target.files[0])}
-              />
+            <div className="upload-container">
+              {!captureDone && <input type="file" accept="image/*" onChange={e => setUploadedFile(e.target.files[0])} />}
             </div>
           </div>
 
-          <button onClick={handleCapture}>Submit</button>
-
-          {message && <p className="message">{message}</p>}
-          {retryCount > 0 && <p>Retries: {retryCount}</p>}
-
-          {referenceImageUrl && (
-            <div>
-              <p>Reference Image:</p>
-              <img src={referenceImageUrl} alt="reference" style={{ maxWidth: "150px" }} />
-            </div>
+          {!captureDone && (
+            <>
+              {Object.keys(pendingSignIns).length === 0 ? (
+                <button className="submit-btn" onClick={() => handleCapture("sign-in")} disabled={!referencesReady}>
+                  Sign In Snapshot
+                </button>
+              ) : (
+                <button className="submit-btn" onClick={() => handleCapture("sign-out")} disabled={!referencesReady}>
+                  Sign Out Snapshot
+                </button>
+              )}
+            </>
           )}
+
+          {message && <pre className="message">{message}</pre>}
         </>
       )}
     </div>
-  );
-};
+  )
+}
 
-export default BiometricsSignIn;
+export default BiometricsSignIn
