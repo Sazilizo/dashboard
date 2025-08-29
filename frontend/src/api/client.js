@@ -9,6 +9,8 @@ const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
 //     "Supabase environment variables are missing! Check your .env file."
 //   );
 // }
+console.log("Supabase URL:", process.env.REACT_APP_SUPABASE_URL);
+console.log("Supabase Key:", process.env.REACT_APP_SUPABASE_ANON_KEY);
 
 const api = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
