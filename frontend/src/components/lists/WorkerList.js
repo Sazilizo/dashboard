@@ -3,62 +3,65 @@ import { useAuth } from "../../context/AuthProvider";
 import { useSchools } from "../../context/SchoolsContext";
 import FiltersPanel from "../filters/FiltersPanel";
 import { useSupabaseWorkers } from "../../hooks/useSupabaseWorkers";
-import { Link } from "react-router-dom";
 import { useFilters } from "../../context/FiltersContext";
 import StudentStats from "./StudentStats";
 import "../../styles/main.css"
 import Photos from "../profiles/Photos";
+import { Link } from "react-router-dom";
+import WorkerStats from "./WorkerStats";
+
 const groupByOptions =["cleaners", "tutors","coaches", "head coaches", "head tutors"]
 
-export default function StudentList() {
+export default function WorkerList() {
   const { user } = useAuth();
   const { schools } = useSchools();
-  const {filters, setFilters} = useFilters()
+  const { filters, setFilters } = useFilters();
+  const [showList, setShowList] = React.useState(true);
 
   const isAllSchoolRole = ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles.name);
   const { workers, loading, error } = useSupabaseWorkers({
-    school_id: isAllSchoolRole
-      ? schools.map(s => s.id) // all schools
-      : [user?.profile?.school_id],       // only user's school
+    school_id: isAllSchoolRole ? schools.map((s) => s.id) : [user?.profile?.school_id],
   });
 
   return (
     <div className="items-container">
-        <div>
-          <div className="page-header">
-            <h2>Workers List</h2>
-            <div className="page-filters">
-              <FiltersPanel
-                user={user}
-                schools={schools}
-                filters={filters}
-                setFilters={setFilters}
-                resource="workers"
-                // gradeOptions={gradeOptions}
-                groupByOptions={groupByOptions}
-                showDeletedOption={isAllSchoolRole}
-              />
-            </div>
+      <div>
+        <div className="page-header">
+          <h2>Workers List</h2>
+          <div className="page-filters">
+            <FiltersPanel
+              user={user}
+              schools={schools}
+              filters={filters}
+              setFilters={setFilters}
+              resource="workers"
+              groupByOptions={groupByOptions}
+              showDeletedOption={isAllSchoolRole}
+            />
           </div>
-      <div className="items-list">
-          <div className="list">
-            {isAllSchoolRole && <Link to="/dashboard/workers/create">Creeate workers</Link>}
+        </div>
+
+        <div className={`split-container ${showList ? "expanded" : "collapsed"}`}>
+          {/* LEFT = List */}
+          <div className={`list-panel ${showList ? "show" : "hide"}`}>
+            {isAllSchoolRole && (
+              <Link to="/dashboard/workers/create" className="btn btn-primary">Create worker</Link>
+            )}
             {loading && <div>Loading...</div>}
             {error && <div style={{ color: "red" }}>{error}</div>}
             {!loading && !error && (
               <ul className="mapped-list">
-                {workers.map(s => (
-                  <li>
-                    <Link key={s.id} to={`/dashboard/workers/${s.id}`}>
+                {workers.map((s) => (
+                  <li key={s.id}>
+                    <Link to={`/dashboard/workers/${s.id}`}>
                       <div className="profile-photo">
-                          <Photos bucketName="worker-uploads" folderName="workers" id={s.id} />
+                        <Photos bucketName="worker-uploads" folderName="workers" id={s.id} />
                       </div>
                       <div className="item-details">
                         <p>
                           <strong>{`${s.name} ${s.last_name}`}</strong>
                         </p>
                         <p>role:{s.roles.name}</p>
-
                       </div>
                     </Link>
                   </li>
@@ -66,11 +69,22 @@ export default function StudentList() {
               </ul>
             )}
           </div>
-           <div className="stats-presentation">
-             {workers && workers.length > 0 && (
-                <div className="stats-item">
-                  {/* <StudentStats students={workers}/> */}
-                </div>
+
+          {/* MIDDLE = Toggle Button */}
+          <button
+            className="toggle-btn"
+            onClick={() => setShowList((prev) => !prev)}
+          >
+            {showList ? "<" : ">"}
+          </button>
+
+          {/* RIGHT = Stats */}
+          <div className="stats-presentation">
+            {workers && workers.length > 0 && (
+              <div className="stats-item">
+                <WorkerStats workers={workers} loading={loading} />
+                {/* You can add a WorkerStats component here if available */}
+              </div>
             )}
           </div>
         </div>

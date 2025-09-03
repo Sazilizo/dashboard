@@ -1,14 +1,22 @@
 import React, { useState } from "react";
 import UploadFileHelper from "./UploadHelper";
 
-const UploadFile = ({ label, value, onChange, folder = "students", id = "temp" }) => {
+const UploadFile = ({ label, value, onChange, folder = "students", id}) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const handleFileChange = async (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
 
+    if (!file instanceof File) {
+      try {
+        file = new File([file], file.name || "upload.dat", {type: file.type  || "application/octet-stream" }); // convert Blob to File
+      }catch(err){
+        setError("Invalid file, please re-upload.");
+        return;
+      }
+    }
     setLoading(true);
     setError("");
 
