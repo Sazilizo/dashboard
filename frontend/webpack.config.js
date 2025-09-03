@@ -4,18 +4,26 @@ const MiniCssExtractPlugin = require("mini-css-extract-plugin");
 const webpack = require("webpack");
 require('dotenv').config();
 
+<<<<<<< HEAD
 // Read environment variables from Node process (Vercel / local)
 const envKeys = Object.keys(process.env).reduce((prev, next) => {
   if (next.startsWith("REACT_APP_")) {
     prev[`process.env.${next}`] = JSON.stringify(process.env[next]);
+=======
+// Load .env file
+const env = dotenv.config().parsed || {};
+
+// Build a clean object with only REACT_APP_ vars
+const envVars = Object.keys(env).reduce((prev, next) => {
+  if (next.startsWith("REACT_APP_")) {
+    prev[next] = env[next];
+>>>>>>> 43cdb619dc77f7f8c8a70f934e46b662a0f47308
   }
   return prev;
 }, {});
 
-// Always inject NODE_ENV
-envKeys["process.env.NODE_ENV"] = JSON.stringify(
-  process.env.NODE_ENV || "development"
-);
+// Always include NODE_ENV
+envVars["NODE_ENV"] = process.env.NODE_ENV || "development";
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -66,10 +74,17 @@ module.exports = {
       template: "./src/index.html",
       minify: isProd && { collapseWhitespace: true, removeComments: true },
     }),
+<<<<<<< HEAD
     // Inject all REACT_APP_* env variables automatically
     console.log("envKeys passed to DefinePlugin:", envKeys),
 
     new webpack.DefinePlugin(envKeys),
+=======
+    // ✅ Define a safe process.env object for browser
+    new webpack.DefinePlugin({
+      "process.env": JSON.stringify(envVars),
+    }),
+>>>>>>> 43cdb619dc77f7f8c8a70f934e46b662a0f47308
     new MiniCssExtractPlugin({
       filename: isProd ? "css/[name].[contenthash].css" : "[name].css",
     }),

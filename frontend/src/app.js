@@ -13,6 +13,8 @@ function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
+      <p>Supabase env test</p>
+      <p>URL:{process.env.REACT_APP_SUPABASE_URL}</p>
       <FilterProvider>
         <SchoolsProvider>
             <Routes>
