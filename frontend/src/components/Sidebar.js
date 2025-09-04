@@ -11,6 +11,7 @@ const navItems = [
   { to: "/dashboard/sessions", label: "Student Sessions" },
   { to: "/dashboard/workers", label: "Workers" },
   { to: "/dashboard/trainings/create", label: "Worker Trainings" },
+  { to: "/dashboard/meals/create", label: "Create Meals"}
   // { to: "/dashboard/settings", label: "Settings" },
 ];
 

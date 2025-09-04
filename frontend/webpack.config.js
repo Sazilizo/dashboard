@@ -64,7 +64,6 @@ module.exports = {
       template: "./src/index.html",
       minify: isProd && { collapseWhitespace: true, removeComments: true },
     }),
-    // ✅ Define a safe process.env object for browser
     new webpack.DefinePlugin({
       "process.env": JSON.stringify(envVars),
     }),
@@ -73,7 +72,7 @@ module.exports = {
     }),
   ],
   devServer: {
-    static: { directory: path.resolve(__dirname, "dist"), publicPath: "/" },
+    static: { directory: path.resolve(__dirname, "public"), publicPath: "/" },
     port: 3000,
     historyApiFallback: true,
     hot: true,

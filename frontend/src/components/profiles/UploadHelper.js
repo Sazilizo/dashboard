@@ -1,4 +1,5 @@
 import api from "../../api/client";
+import imageCompression from "browser-image-compression";
 
 export const UploadFileHelper = async (file, folder, id) => {
   try {
@@ -7,6 +8,26 @@ export const UploadFileHelper = async (file, folder, id) => {
     // only accept image or pdf
     if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
       throw new Error("Only images and PDF files are allowed.");
+    }
+
+    let uploadFile = file;
+
+    // compress images before upload
+    if (file.type.startsWith("image/")) {
+      try {
+        const options = {
+          maxSizeMB: 0.05, // ~50KB target
+          maxWidthOrHeight: 800,
+          useWebWorker: true,
+        };
+        uploadFile = await imageCompression(file, options);
+
+        console.log(
+          `Original: ${(file.size / 1024).toFixed(1)} KB → Compressed: ${(uploadFile.size / 1024).toFixed(1)} KB`
+        );
+      } catch (err) {
+        console.warn("Image compression failed, using original file", err);
+      }
     }
 
     const ext = file.name.split(".").pop();
@@ -20,10 +41,11 @@ export const UploadFileHelper = async (file, folder, id) => {
     else if (folder === "workers") bucketName = "worker-uploads";
     else if (folder === "sessions") bucketName = "session-uploads";
     else bucketName = "student-uploads"; // fallback
+
     // upload file
     const { data: uploadData, error: uploadError } = await api.storage
       .from(bucketName)
-      .upload(fileName, file);
+      .upload(fileName, uploadFile);
 
     if (uploadError) {
       console.error("Upload error:", uploadError.message);
@@ -47,7 +69,4 @@ export const UploadFileHelper = async (file, folder, id) => {
   }
 };
 
-
 export default UploadFileHelper;
-
-  

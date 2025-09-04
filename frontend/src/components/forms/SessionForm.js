@@ -53,7 +53,7 @@ export default function SessionForm() {
 
   return (
     <div className="p-6">
-      <div className="page-filters">
+      {!id && <div className="page-filters">
         <FiltersPanel
           user={user}
           schools={schools}
@@ -65,7 +65,7 @@ export default function SessionForm() {
           groupByOptions={groupByOptions}
           showDeletedOption={["admin", "hr", "superviser"].includes(user?.profile?.roles.name)}
         />
-      </div>
+      </div>}
       <h1 className="text-2xl font-bold mb-6">
         {id ? `Log session for ${student.full_name}` : "Create Students Sessions (Bulk)"}
       </h1>
