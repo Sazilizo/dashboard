@@ -19,9 +19,11 @@ export const UploadFileHelper = async (file, folder, id) => {
     if (folder === "students") bucketName = "student-uploads";
     else if (folder === "workers") bucketName = "worker-uploads";
     else if (folder === "sessions") bucketName = "session-uploads";
+    else if (folder === "meals") bucketName = "meal-uploads";
     else bucketName = "student-uploads"; // fallback
+
     // upload file
-    const { data: uploadData, error: uploadError } = await api.storage
+    const { error: uploadError } = await api.storage
       .from(bucketName)
       .upload(fileName, file);
 
@@ -47,7 +49,4 @@ export const UploadFileHelper = async (file, folder, id) => {
   }
 };
 
-
 export default UploadFileHelper;
-
-  

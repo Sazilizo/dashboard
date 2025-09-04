@@ -3,14 +3,36 @@ import { useParams } from "react-router-dom";
 import api from "../../api/client";
 import RoleSelect from "../../hooks/RoleSelect";
 import EntityMultiSelect from "../../hooks/EntityMultiSelect";
-import UploadFile from "../profiles/UploadFile"; 
+import UploadFile from "../profiles/UploadFile";
+import { useSchools } from "../../context/SchoolsContext";
 
-export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubmit }) {
-  const { id } = useParams(); // single mode if present
+export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubmit, studentId }) {
+  const { id } = useParams();
+  const { schools } = useSchools();
   const [schema, setSchema] = useState([]);
   const [formData, setFormData] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  const calculateAge = (dobStr) => {
+    if (!dobStr) return "";
+    const today = new Date();
+    const dob = new Date(dobStr);
+    let age = today.getFullYear() - dob.getFullYear();
+    const m = today.getMonth() - dob.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+    return age;
+  };
+
+  const parseIdNumberToDob = (idNumber) => {
+    if (!idNumber || idNumber.length < 6) return "";
+    const year = parseInt(idNumber.substring(0, 2), 10);
+    const month = parseInt(idNumber.substring(2, 4), 10) - 1;
+    const day = parseInt(idNumber.substring(4, 6), 10);
+    const currentYear = new Date().getFullYear() % 100;
+    const fullYear = year > currentYear ? 1900 + year : 2000 + year;
+    return new Date(fullYear, month, day).toISOString().split("T")[0];
+  };
 
   useEffect(() => {
     if (!schema_name) return;
@@ -30,13 +52,12 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
       const fields = schemaData.schema?.fields || [];
       setSchema(fields);
 
-      // build defaults
       const defaults = {};
       fields.forEach((f) => {
         if (f.type === "json_object") {
           const groupDefaults = {};
           f.group.forEach((g) => {
-            groupDefaults[g.key] = g.default ?? 0; 
+            groupDefaults[g.key] = g.default ?? 0;
           });
           defaults[f.name] = { ...groupDefaults };
         } else if (f.type === "checkbox" || f.type === "boolean") {
@@ -58,9 +79,36 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
     fetchSchema();
   }, [schema_name, presetFields, id]);
 
-
   const handleChange = (name, value) => {
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    let updated = { ...formData, [name]: value };
+
+    // handle is_fruit logic
+    if (name === "is_fruit" && !value) {
+      updated.fruit_type = "";
+      updated.fruit_other_description = "";
+    }
+
+    if (name === "id_number" && value.length >= 6 && schema_name === "Worker") {
+      const dob = parseIdNumberToDob(value);
+      if (dob) {
+        const age = calculateAge(dob);
+        if (age < 18 || age > 60) {
+          setError("Worker must be between 18 and 60 years old.");
+        } else {
+          updated.date_of_birth = dob;
+          updated.age = age;
+          setError(null);
+        }
+      }
+    }
+
+    if (name === "date_of_birth" && schema_name === "Student") {
+      updated.age = calculateAge(value);
+      if (updated.age < 2) setError("Student must be at least 2 years old.");
+      else setError(null);
+    }
+
+    setFormData(updated);
   };
 
   const handleJsonObjectChange = (fieldName, key, value) => {
@@ -89,7 +137,7 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
 
       await onSubmit(payload, id);
 
-      // reset form to defaults instead of empty object
+      // reset form
       const resetData = {};
       schema.forEach((f) => {
         if (f.type === "json_object") {
@@ -118,6 +166,9 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
   const renderField = (field) => {
     if (field.name === "student_id") return null;
 
+    // hide school dropdown if presetFields.student_id exists (single student)
+    if (field.name === "school_id" && presetFields.student_id) return null;
+
     if (field.readOnly) {
       return (
         <div key={field.name} className="mb-4">
@@ -132,32 +183,71 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
       );
     }
 
-    if (field.name === "accredited") {
+    if (field.name === "age") {
       return (
         <div key={field.name} className="mb-4">
-          <label className="block font-medium">{field.label}</label>
+          <label className="block text-sm font-medium">{field.label}</label>
+          <input
+            type="number"
+            value={formData[field.name] || ""}
+            readOnly
+            className="w-full p-2 border rounded bg-gray-100"
+          />
+        </div>
+      );
+    }
+
+    if (field.name === "date_of_birth") {
+      const today = new Date();
+      let minDate = "";
+      let maxDate = "";
+
+      if (schema_name === "Student") {
+        minDate = new Date(today.getFullYear() - 60, 0, 1).toISOString().split("T")[0];
+        maxDate = new Date(today.getFullYear() - 2, 11, 31).toISOString().split("T")[0];
+      } else if (schema_name === "Worker") {
+        minDate = new Date(today.getFullYear() - 60, 0, 1).toISOString().split("T")[0];
+        maxDate = new Date(today.getFullYear() - 18, 11, 31).toISOString().split("T")[0];
+      }
+
+      return (
+        <div key={field.name} className="mb-4">
+          <label className="block text-sm font-medium">{field.label}</label>
+          <input
+            type="date"
+            value={formData[field.name] || ""}
+            onChange={(e) => handleChange(field.name, e.target.value)}
+            min={minDate}
+            max={maxDate}
+            className="w-full p-2 border rounded"
+          />
+        </div>
+      );
+    }
+
+    // Fruit logic
+    if (field.name === "is_fruit") {
+      return (
+        <div key={field.name} className="mb-4">
+          <label className="block font-medium mb-2">{field.label}</label>
           <select
-            value={formData[field.name] ?? "false"}
+            value={formData[field.name] || false}
             onChange={(e) => handleChange(field.name, e.target.value === "true")}
             className="w-full p-2 border rounded"
           >
-            <option value="true">True</option>
             <option value="false">False</option>
+            <option value="true">True</option>
           </select>
         </div>
       );
     }
 
-    switch (field.type) {
-      case "role_select":
-        return (
-          <RoleSelect
-            key={field.name}
-            value={formData[field.name]}
-            onChange={(val) => handleChange(field.name, val)}
-          />
-        );
+    if ((field.name === "fruit_type" || field.name === "fruit_other_description") && !formData.is_fruit) {
+      return null;
+    }
 
+    // rest of field rendering (select, json_object, file, checkbox, default)
+    switch (field.type) {
       case "multi_select":
         return (
           <EntityMultiSelect
@@ -168,7 +258,6 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
             onChange={(val) => handleChange(field.name, val)}
           />
         );
-
       case "json_object":
         const jsonValues = formData[field.name] || {};
         return (
@@ -182,16 +271,13 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
                   min={g.min ?? 0}
                   max={g.max ?? 100}
                   value={jsonValues[g.name]}
-                  onChange={(e) =>
-                    handleJsonObjectChange(field.name, g.name, e.target.value)
-                  }
+                  onChange={(e) => handleJsonObjectChange(field.name, g.name, e.target.value)}
                   required
                 />
               </div>
             ))}
           </div>
         );
-
       case "file":
         return (
           <UploadFile
@@ -200,11 +286,10 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
             value={formData[field.name]}
             onChange={(val) => handleChange(field.name, val)}
             folder="students"
-            id={id || "temp"}
+            id={studentId || id}
             accept="image/*,.pdf"
           />
         );
-
       case "select":
         return (
           <div key={field.name} className="mb-4">
@@ -231,7 +316,6 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
             </select>
           </div>
         );
-
       case "checkbox":
         return (
           <div key={field.name} className="mb-4 flex items-center">
@@ -244,7 +328,6 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
             <label>{field.label}</label>
           </div>
         );
-
       default:
         return (
           <div key={field.name} className="mb-4">

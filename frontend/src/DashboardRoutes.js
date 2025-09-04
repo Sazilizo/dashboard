@@ -22,6 +22,7 @@ import SchoolsDashboard from "./pages/SchoolsDashboard";
 import LearnerProfile from "./components/profiles/LearnerProfile";
 import SchoolProfile from "./components/profiles/schoolProfile";
 import StudentForm from "./components/forms/StudentForm"
+
 // import DynamicFormForStudents from "./utils/DynamicFormForStudents";
 import DynamicBulkForm from "./components/forms/DynamicBulkForm";
 import {DynamicFormForStudents} from "./utils/dynamicForm"
@@ -55,8 +56,8 @@ export default function DashboardRoutes() {
         <Route path="trainings/create" element={<TrainingForm />} />
         <Route path="trainings/:id/edit" element={<DynamicForm  mode="edit" id={":trainingId"} />} />
         <Route path="meals" element={<MealList />} />
-        <Route path="meals/create" element={<DynamicForm />} />
-        <Route path="meals/distribute" element={<DistributeMealForm />} />
+        <Route path="meals/create" element={<MealForm />} />
+        <Route path="meals/distribute/:id" element={<DistributeMealForm />} />
         {/* ...other routes... */}
         <Route path="*" element={<Navigate to="/dashboard" />} />
       </Route>

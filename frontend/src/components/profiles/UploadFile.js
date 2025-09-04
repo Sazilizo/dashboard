@@ -1,33 +1,59 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import UploadFileHelper from "./UploadHelper";
 
-const UploadFile = ({ label, value, onChange, folder = "students", id}) => {
+const UploadFile = ({ label, value, onChange, folder = "students", id }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [pendingFile, setPendingFile] = useState(null); // store file if id isn't ready yet
+
+  const tryUpload = async (file, currentId) => {
+    if (!file || !currentId) return;
+
+    setLoading(true);
+    setError("");
+
+    const url = await UploadFileHelper(file, folder, currentId);
+
+    if (url) {
+      onChange(url);
+      setPendingFile(null); // clear once uploaded
+    } else {
+      setError("Upload failed. Try again.");
+    }
+
+    setLoading(false);
+  };
 
   const handleFileChange = async (e) => {
-    const file = e.target.files?.[0];
+    let file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file instanceof File) {
+    if (!(file instanceof File)) {
       try {
-        file = new File([file], file.name || "upload.dat", {type: file.type  || "application/octet-stream" }); // convert Blob to File
-      }catch(err){
+        file = new File([file], file.name || "upload.dat", {
+          type: file.type || "application/octet-stream",
+        });
+      } catch (err) {
         setError("Invalid file, please re-upload.");
         return;
       }
     }
-    setLoading(true);
-    setError("");
 
-    const url = await UploadFileHelper(file, folder, id);
-    if (url) {
-      onChange(url); // pass URL back to form
+    if (!id) {
+      // no id yet → stash file until id is available
+      setPendingFile(file);
+      setError("Waiting for record ID before uploading...");
     } else {
-      setError("Upload failed. Try again.");
+      await tryUpload(file, id);
     }
-    setLoading(false);
   };
+
+  // 🔄 Retry upload automatically once id becomes available
+  useEffect(() => {
+    if (pendingFile && id) {
+      tryUpload(pendingFile, id);
+    }
+  }, [id, pendingFile]);
 
   return (
     <div className="mb-3">

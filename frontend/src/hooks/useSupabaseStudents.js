@@ -27,6 +27,7 @@ export function useSupabaseStudents() {
           full_name,
           grade,
           category,
+          school_id,
           school:schools(name)   -- example join to get school name (optional)
         `);
 

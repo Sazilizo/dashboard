@@ -70,7 +70,7 @@ const LearnerProfile = () => {
         <Link to={`/dashboard/sessions/record/${id}`} className="btn btn-primary">
           Record Session
         </Link>
-        <Link to={`/dashboard/students/${id}/distribute-meal`} className="btn btn-secondary">
+        <Link to={`/dashboard/meals/distribute/${id}`} className="btn btn-secondary">
           Distribute Meal
         </Link>
         <Link to={`/dashboard/students/update/${id}`} className="btn btn-secondary">
@@ -94,7 +94,7 @@ const LearnerProfile = () => {
           <div className="profile-header">
             <h1>{student.full_name}</h1>
             <p>School: {student?.school.name}</p>
-            <Photos bucketName="student-uploads" folderName="students" id={id} />
+            <Photos bucketName="student-uploads" folderName="students" id={id} photoCount={1} />
           </div>
 
           <div className="profile-details">

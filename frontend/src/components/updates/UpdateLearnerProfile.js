@@ -64,7 +64,7 @@ export default function UpdateLearnerProfile() {
                 record.photo = uploadedUrl;
               }
 
-              const { error } = await api
+              const  {error } = await api
                 .from("students")
                 .update(record)
                 .eq("id", id);
