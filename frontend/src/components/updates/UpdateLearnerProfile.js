@@ -31,6 +31,9 @@ export default function UpdateLearnerProfile() {
     if (id) fetchStudent();
   }, [id]);
 
+  useEffect(()=>{
+    console.log("student to update:", student)
+  },[student])
   if (loading) return <p>Loading student data...</p>;
 
   return (
@@ -61,7 +64,7 @@ export default function UpdateLearnerProfile() {
                 record.photo = uploadedUrl;
               }
 
-              const { error } = await api
+              const  {error } = await api
                 .from("students")
                 .update(record)
                 .eq("id", id);

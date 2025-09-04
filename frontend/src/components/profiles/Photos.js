@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import api from "../../api/client"; // your supabase client
 
-function Photos({ id, bucketName, folderName }) {
+function Photos({ id, bucketName, folderName ,photoCount}) {
   const [files, setFiles] = useState([]);
   const [signedUrls, setSignedUrls] = useState({});
   const [error, setError] = useState(null);
