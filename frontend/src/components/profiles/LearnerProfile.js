@@ -108,28 +108,29 @@ const LearnerProfile = () => {
             <FilesDownloader bucketName="student-uploads" folderName="students" id={id} />
           </div>
         </div>
+        <div className="profile-chart-stats">
+          <div className="sign-in-container">
+            {attendanceMode === "calendar" ? (
+              <LearnerAttendance id={id} school_id={student.school_id} />
+            ) : (
+              <BiometricsSignIn
+                studentId={id}
+                schoolId={student.school_id}
+                bucketName="student-uploads"
+                folderName="students"
+              />
+            )}
+          </div>
+          <div className="profile-charts">
+            <div className="profile-stats mt-6">
+              <h2 className="text-xl font-bold mb-2">Performance Overview</h2>
+              <SpecsRadarChart student={student} user={user} />
+            </div>
 
-        <div className="profile-stats mt-6">
-          {attendanceMode === "calendar" ? (
-            <LearnerAttendance id={id} school_id={student.school_id} />
-          ) : (
-            <BiometricsSignIn
-              studentId={id}
-              schoolId={student.school_id}
-              bucketName="student-uploads"
-              folderName="students"
-            />
-          )}
-        </div>
-
-        <div className="profile-stats mt-6">
-          <h2 className="text-xl font-bold mb-2">Performance Overview</h2>
-          <SpecsRadarChart student={student} user={user} />
-        </div>
-
-        <div className="profile-stats mt-6">
-          <h2 className="text-xl font-bold mb-2">Attendance Overview</h2>
-          <AttendanceBarChart student={student} />
+            <div className="attendance-chart">
+              <AttendanceBarChart student={student} />
+            </div>
+          </div>
         </div>
       </div>
     </>
