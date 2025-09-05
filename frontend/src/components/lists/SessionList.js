@@ -35,47 +35,44 @@ export default function SessionList({deleted}) {
   });
 
   return (
-    <div>
-      <div className="page-header">
-              <h2>Student List {deleted ? "(Deleted)" : ""}</h2>
-              <div className="page-filters">
-                <FiltersPanel
-                  user={user}
-                  schools={schools}
-                  filters={{ ...filters, session_type: sessionTypeOptions }}
-                  setFilters={setFilters}
-                  resource="students"
-                  gradeOptions={gradeOptions}
-                  sessionTypeOptions={sessionTypeOptions}
-                  groupByOptions={groupByOptions}
-                  showDeletedOption={["admin", "hr", "superviser"].includes(user?.profile?.roles.name)}
-                />
-              </div>
-          </div>
-      <Link to="/dashboard/sessions/create">Create Session</Link>
+    <div className="app-list-container">
+      <div className="app-list-header">
+        <h2>Session List {deleted ? "(Deleted)" : ""}</h2>
+        <div className="app-list-filters">
+          <FiltersPanel
+            user={user}
+            schools={schools}
+            filters={{ ...filters, session_type: sessionTypeOptions }}
+            setFilters={setFilters}
+            resource="students"
+            gradeOptions={gradeOptions}
+            sessionTypeOptions={sessionTypeOptions}
+            groupByOptions={groupByOptions}
+            showDeletedOption={["admin", "hr", "superviser"].includes(user?.profile?.roles.name)}
+          />
+        </div>
+      </div>
+      <Link to="/dashboard/sessions/create" className="app-btn app-btn-primary">Create Session</Link>
       {loading && <div>Loading...</div>}
       {error && <div style={{ color: "red" }}>{error}</div>}
       {!loading && !error && (
-        <ul>
+        <ul className="app-list">
           {sessions && sessions.map(s => {
             return (
               <li key={s.id}>
                 <Link to={`/dashboard/dashboard/session/${s.id}`}>
-                  <div className="student-item">
+                  <div className="app-list-item-details">
                     {s?.photo && <img src={s.photo} alt={`${s.session_name} ${s.full_name}`} style={{ width: "50px", height: "50px", borderRadius: "50%" }} />}
                     <span style={{marginRight:"1rem"}}>{s.full_name}</span>
                     <span>{s.category}</span>
                     <span>{s.session_name}</span>
                     <span>{s.session_date}</span>
-                    {/* {user?.profile?.roles.name === "head coach" ?"head coach": "probably tutor"} */}
-                    </div>
+                  </div>
                 </Link>
               </li>
             );
-          }
-          )}
-        </ul>  
-
+          })}
+        </ul>
       )}
       <Outlet/>
     </div>

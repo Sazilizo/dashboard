@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react"
+import { useNavigate } from "react-router-dom"
 import api from "../../api/client"
 import * as faceapi from "face-api.js"
 import "../../styles/BiometricsSignIn.css"
@@ -11,10 +12,12 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
   const [pendingSignIns, setPendingSignIns] = useState({})
   const [captureDone, setCaptureDone] = useState(false)
   const [referencesReady, setReferencesReady] = useState(false)
+  const [studentNames, setStudentNames] = useState({})
 
   const webcamRef = useRef()
   const canvasRef = useRef()
   const threshold = 0.6
+  const navigate = useNavigate()
 
   // Load persisted pending sign-ins
   useEffect(() => {
@@ -40,6 +43,24 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
     }
     loadModels()
   }, [])
+
+  // Fetch student names for display
+  useEffect(() => {
+    const ids = Array.isArray(studentId) ? studentId : [studentId]
+    if (ids.length === 0) return
+    const fetchNames = async () => {
+      const { data, error } = await api
+        .from("students")
+        .select("id, first_name, last_name")
+        .in("id", ids)
+      if (!error && data) {
+        const map = {}
+        data.forEach(s => { map[s.id] = `${s.first_name} ${s.last_name}` })
+        setStudentNames(map)
+      }
+    }
+    fetchNames()
+  }, [studentId])
 
   // Setup webcam
   useEffect(() => {
@@ -98,9 +119,6 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
       if (labeledDescriptors.length > 0) {
         setFaceMatcher(new faceapi.FaceMatcher(labeledDescriptors, threshold))
         setReferencesReady(true)
-        console.log("✅ FaceMatcher ready with", labeledDescriptors.length, "labels")
-      } else {
-        console.warn("⚠ No reference descriptors found for", ids)
       }
     }
 
@@ -151,16 +169,17 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
     try {
       for (const match of results) {
         if (match.label === "unknown") continue
+        const displayName = studentNames[match.label] || `ID ${match.label}`
 
         if (action === "sign-in") {
           setPendingSignIns(prev => ({ ...prev, [match.label]: new Date().toISOString() }))
-          setMessage(m => `${m}\n${match.label} signed in.`)
+          setMessage(m => `${m}\n${displayName} signed in.`)
         }
 
         if (action === "sign-out") {
           const signInTime = pendingSignIns[match.label]
           if (!signInTime) {
-            setMessage(m => `${m}\n⚠ No sign-in record for ${match.label}.`)
+            setMessage(m => `${m}\n⚠ No sign-in record for ${displayName}.`)
             continue
           }
 
@@ -168,29 +187,20 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
           const durationMs = new Date(signOutTime) - new Date(signInTime)
           const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(2)
 
-          // Save attendance record
-          const { error } = await api.from("attendance_records").upsert([
-            {
-              student_id: match.label,
-              school_id: schoolId,
-              status: "present",
-              note: "biometric sign in",
-              date,
-              sign_in_time: signInTime,
-              sign_out_time: signOutTime
-            }
-          ])
-          if (error) throw error
+          await api.from("attendance_records").upsert([{
+            student_id: match.label,
+            school_id: schoolId,
+            status: "present",
+            note: "biometric sign in",
+            date,
+            sign_in_time: signInTime,
+            sign_out_time: signOutTime
+          }])
 
-          // Update session duration
           if (sessionType === "academic") {
-            await api.from("academic_sessions").upsert([
-              { student_id: match.label, duration_hours: durationHours, date }
-            ])
+            await api.from("academic_sessions").upsert([{ student_id: match.label, duration_hours: durationHours, date }])
           } else if (sessionType === "pe") {
-            await api.from("pe_sessions").upsert([
-              { student_id: match.label, duration_hours: durationHours, date }
-            ])
+            await api.from("pe_sessions").upsert([{ student_id: match.label, duration_hours: durationHours, date }])
           }
 
           setPendingSignIns(prev => {
@@ -198,26 +208,25 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
             delete copy[match.label]
             return copy
           })
-          setMessage(m => `${m}\n${match.label} signed out. Duration: ${durationHours} hrs`)
+          setMessage(m => `${m}\n${displayName} signed out. Duration: ${durationHours} hrs`)
         }
       }
 
       setUploadedFile(null)
       setCaptureDone(true)
+
+      setTimeout(() => navigate(-1), 2000)
     } catch (err) {
       console.error(err)
       setMessage("Failed to record attendance.")
     }
 
-    // Draw detections
     const canvas = canvasRef.current
     canvas.style.display = "block"
     canvas.width = img.width
     canvas.height = img.height
-    faceapi.matchDimensions(canvas, { width: img.width, height: img.height })
-    const resized = faceapi.resizeResults(detections, { width: img.width, height: img.height })
-    faceapi.draw.drawDetections(canvas, resized)
-    faceapi.draw.drawFaceLandmarks(canvas, resized)
+    const ctx = canvas.getContext("2d")
+    ctx.drawImage(img, 0, 0, img.width, img.height)
   }
 
   return (

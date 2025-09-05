@@ -39,11 +39,11 @@ export default function StudentList() {
   });
 
   return (
-    <div className="items-container">
+  <div className="app-list-container">
       <div>
-        <div className="page-header">
+  <div className="app-list-header">
           <h2>Student List</h2>
-          <div className="page-filters">
+          <div className="app-list-filters">
             <FiltersPanel
               user={user}
               schools={schools}
@@ -60,23 +60,23 @@ export default function StudentList() {
 
         <div className={`split-container ${showList ? "expanded" : "collapsed"}`}>
           {/* LEFT = List */}
-          <div className={`list-panel ${showList ? "show" : "hide"}`}>
-            <Link to="/dashboard/students/create" className="btn btn-primary">Create student</Link>
+          <div className={`app-list-panel ${showList ? "show" : "hide"}`}>
+            <Link to="/dashboard/students/create" className="app-btn app-btn-primary">Create student</Link>
             {loading && <div>Loading...</div>}
             {error && <div style={{ color: "red" }}>{error}</div>}
             {!loading && !error && (
-              <ul className="mapped-list">
+              <ul className="app-list">
                 {students.map((s) => (
                   <li key={s.id}>
                     <Link to={`/dashboard/students/${s.id}`}>
-                      <div className="profile-photo">
+                      <div className="app-profile-photo">
                         <Photos
                           bucketName="student-uploads"
                           folderName="students"
                           id={s.id}
                         />
                       </div>
-                      <div className="item-details">
+                      <div className="app-list-item-details">
                         <p>
                           <strong>{s.full_name}</strong>
                         </p>
@@ -91,16 +91,16 @@ export default function StudentList() {
 
           {/* MIDDLE = Toggle Button */}
           <button
-            className="toggle-btn"
+            className="app-list-toggle-btn"
             onClick={() => setShowList((prev) => !prev)}
           >
             {showList ? "<" : ">"}
           </button>
 
           {/* RIGHT = Stats */}
-          <div className="stats-presentation">
+          <div className="app-list-stats">
             {students && students.length > 0 && (
-              <div className="stats-item">
+              <div className="app-list-stats-item">
                 <StudentStats students={students} loading={loading}/>
               </div>
             )}

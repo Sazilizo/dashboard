@@ -24,11 +24,11 @@ export default function WorkerList() {
   });
 
   return (
-    <div className="items-container">
+  <div className="app-list-container">
       <div>
-        <div className="page-header">
+  <div className="app-list-header">
           <h2>Workers List</h2>
-          <div className="page-filters">
+          <div className="app-list-filters">
             <FiltersPanel
               user={user}
               schools={schools}
@@ -43,21 +43,21 @@ export default function WorkerList() {
 
         <div className={`split-container ${showList ? "expanded" : "collapsed"}`}>
           {/* LEFT = List */}
-          <div className={`list-panel ${showList ? "show" : "hide"}`}>
+          <div className={`app-list-panel ${showList ? "show" : "hide"}`}>
             {isAllSchoolRole && (
-              <Link to="/dashboard/workers/create" className="btn btn-primary">Create worker</Link>
+              <Link to="/dashboard/workers/create" className="app-btn app-btn-primary">Create worker</Link>
             )}
             {loading && <div>Loading...</div>}
             {error && <div style={{ color: "red" }}>{error}</div>}
             {!loading && !error && (
-              <ul className="mapped-list">
+              <ul className="app-list">
                 {workers.map((s) => (
                   <li key={s.id}>
                     <Link to={`/dashboard/workers/${s.id}`}>
-                      <div className="profile-photo">
+                      <div className="app-profile-photo">
                         <Photos bucketName="worker-uploads" folderName="workers" id={s.id} />
                       </div>
-                      <div className="item-details">
+                      <div className="app-list-item-details">
                         <p>
                           <strong>{`${s.name} ${s.last_name}`}</strong>
                         </p>
@@ -72,18 +72,17 @@ export default function WorkerList() {
 
           {/* MIDDLE = Toggle Button */}
           <button
-            className="toggle-btn"
+            className="app-list-toggle-btn"
             onClick={() => setShowList((prev) => !prev)}
           >
             {showList ? "<" : ">"}
           </button>
 
           {/* RIGHT = Stats */}
-          <div className="stats-presentation">
+          <div className="app-list-stats">
             {workers && workers.length > 0 && (
-              <div className="stats-item">
+              <div className="app-list-stats-item">
                 <WorkerStats workers={workers} loading={loading} />
-                {/* You can add a WorkerStats component here if available */}
               </div>
             )}
           </div>

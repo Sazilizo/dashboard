@@ -152,11 +152,11 @@ li {
   border-radius: 5px;
   box-shadow: 5px 5px 10px 2px #202020;
 }
-.mapped-list li {
+ .app-list li {
   margin:1rem 0.02rem;
   
 }
-.mapped-list li a{
+ .app-list li a{
   color:black;
   display: flex;
   width:100%;
@@ -165,7 +165,7 @@ li {
   place-self: center;
   text-decoration: none;
 }
-.mapped-list li a .profile-photo{
+ .app-list li a .app-profile-photo{
   width: 10rem;
 }
 img{
@@ -173,22 +173,22 @@ img{
   height:100%;
   object-fit: contain;
 }
-.mapped-list li a .item-details{
+ .app-list li a .app-list-item-details{
   width:100%;
   padding-left: .5rem;
   flex-wrap: wrap;
 }
-.mapped-list li a:hover{
+ .app-list li a:hover{
   transform: scale(1.03);
   transition: ease 300ms;
 }
-.page-stats{
+ .app-stats-container{
   width:100%;
   background-color: #ecedee;
   border-radius: 5px;
   /* box-shadow: 5px 5px 10px 5px #202020; */
 }
-.bar-charts{
+ .app-bar-charts{
   width:100%;
   display: flex;
   /* box-shadow: 5px 5px 5px 5px #202020; */
@@ -225,7 +225,7 @@ img{
 }
 
 /* RIGHT = stats panel */
-.stats-presentation {
+ .app-list-stats {
   flex: 1; /* always fill remaining space */
   background: #fff;
   padding: 1rem;
@@ -235,7 +235,7 @@ img{
 }
 
 /* Toggle button */
-.toggle-btn {
+ .app-list-toggle-btn {
   position: absolute;
   top: 50%;
   left: 24%; /* at edge of list-panel when expanded */
@@ -252,11 +252,11 @@ img{
   font-weight: 700;
   font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
 }
-.toggle-btn:hover {
+ .app-list-toggle-btn:hover {
   background: #2d3748; /* darken on hover */
   color: white;
 }
-.split-container.collapsed .toggle-btn {
+ .split-container.collapsed .app-list-toggle-btn {
   left: 0; /* at screen edge when collapsed */
 }
 .rounded-chart{
@@ -287,7 +287,12 @@ img{
   animation: shimmer 1.5s ease-in-out infinite;
   border-radius: 8px;
 }
-
+.profile-edit-section{
+  border:1px solid rgba(112, 110, 110, 0.05);
+  box-shadow: 4px 4px 4px 4px rgba(112, 110, 110, 0.05);
+  padding:.5rem;
+  border-radius: 10px;
+}
 @keyframes shimmer {
   0% {
     background-position: 200% 0;
