@@ -2,7 +2,7 @@ const path = require("path");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const MiniCssExtractPlugin = require("mini-css-extract-plugin");
 const webpack = require("webpack");
-require('dotenv').config();
+require("dotenv").config();
 
 // Read environment variables from Node process (Vercel / local)
 const envKeys = Object.keys(process.env).reduce((prev, next) => {
@@ -32,7 +32,7 @@ module.exports = {
       "@styles": path.resolve(__dirname, "src/styles"),
     },
     fallback: {
-      fs: false, // no fs in browser
+      fs: false,
       crypto: require.resolve("crypto-browserify"),
       util: require.resolve("util/"),
     },
@@ -75,4 +75,24 @@ module.exports = {
   },
   devtool: isProd ? "source-map" : "eval-source-map",
   performance: { hints: isProd ? "warning" : false },
+
+  // 🔹 NEW: Optimization for Font Awesome chunk
+  optimization: {
+    splitChunks: {
+      cacheGroups: {
+        faIcons: {
+          test: /[\\/]node_modules[\\/]@fortawesome[\\/]/,
+          name: "fa-icons",
+          chunks: "all",
+          priority: 20,
+        },
+        vendors: {
+          test: /[\\/]node_modules[\\/]/,
+          name: "vendors",
+          chunks: "all",
+          priority: 10,
+        },
+      },
+    },
+  },
 };

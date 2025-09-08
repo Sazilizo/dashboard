@@ -1,6 +1,6 @@
 // components/filters/FiltersPanelSkeleton.js
 import React from "react";
-import Skeleton from "../Skeleton";
+import Skeleton from "../widgets/Skeleton";
 
 export default function FiltersPanelSkeleton() {
   return (

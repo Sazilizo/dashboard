@@ -7,7 +7,7 @@ import { useAuth } from "../context/AuthProvider";
 export default function DashboardLayout() {
   const { user } = useAuth();
   return (
-    <div style={{ display: "flex", height: "100vh", margin: 0 }}>
+    <div className="dashboard-layout">
       <Sidebar />
       <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
         <Topbar />

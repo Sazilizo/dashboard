@@ -70,7 +70,7 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
       });
 
       Object.assign(defaults, presetFields);
-      if (id) defaults.student_id = id;
+      if (id) defaults.school_id = id
       if (presetFields.category) defaults.category = presetFields.category;
 
       setFormData(defaults);
@@ -130,8 +130,12 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
           payload[f.name] = !!payload[f.name];
         }
       });
+      if (schema_name == "Student") {
+        payload.id = id;
+      }else{
+        payload.student_id = id || presetFields.student_id;
+      }
 
-      payload.student_id = id || presetFields.student_id;
       payload.category = presetFields.category || formData.category;
       payload.school_id = presetFields.school_id || formData.school_id;
 
@@ -166,8 +170,26 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
   const renderField = (field) => {
     if (field.name === "student_id") return null;
 
-    // hide school dropdown if presetFields.student_id exists (single student)
-    if (field.name === "school_id" && presetFields.student_id) return null;
+    if (field.name === "school_id") {
+      return (
+        <div key={field.name} className="mb-4">
+          <label className="block font-medium">{field.label || "School"}</label>
+          <select
+            value={formData[field.name] || ""}
+            onChange={(e) => handleChange(field.name, e.target.value)}
+            className="w-full p-2 border rounded"
+          >
+            <option value="">Select School...</option>
+            {schools.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+
 
     if (field.readOnly) {
       return (

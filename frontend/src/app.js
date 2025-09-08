@@ -1,38 +1,22 @@
+// src/App.js
 import React from "react";
-import { ErrorBoundary } from "./components/ErrorBoundary";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import DashboardRoutes from "./DashboardRoutes";
-import Login from "./pages/Login";
+import { RouterProvider } from "react-router-dom";
+import router from "./router"; 
 import { AuthProvider } from "./context/AuthProvider";
-import LandingPage from "./pages/LandingPage";
 import { SchoolsProvider } from "./context/SchoolsContext";
-import "./styles/main.css"; // Import your main CSS file
 import { FilterProvider } from "./context/FiltersContext";
+import "./styles/main.css";
 
 function App() {
   return (
-    <ErrorBoundary>
-      <BrowserRouter>
+    <AuthProvider>
       <FilterProvider>
         <SchoolsProvider>
-            <Routes>
-              <Route
-                path="/dashboard/*"
-                element={
-                  <AuthProvider>
-                      <DashboardRoutes />
-                  </AuthProvider>
-                }
-              />
-              <Route path="/" element={<LandingPage />} />
-              <Route path="/login" element={<Login />} />
-              {/* Removed duplicate /login route */}
-            </Routes>
+          <RouterProvider router={router} />
         </SchoolsProvider>
       </FilterProvider>
-      </BrowserRouter>
-    </ErrorBoundary>
-  );
+    </AuthProvider>
+ )
 }
 
 export default App;

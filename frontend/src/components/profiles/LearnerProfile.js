@@ -9,51 +9,55 @@ import AttendanceBarChart from "../charts/AttendanceBarChart";
 import { useAuth } from "../../context/AuthProvider";
 import BiometricsSignIn from "../forms/BiometricsSignIn";
 import "../../styles/LearnerAttendance.css";
+import "../../styles/Profile.css";
+import RenderIcons from "../../icons/RenderIcons";
+import { useOfflineSupabase } from "../../hooks/useOfflineSupabase";
 
 const LearnerProfile = () => {
   const { id } = useParams();
   const { user } = useAuth();
   const [student, setStudent] = useState(null);
-  const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
-
+  const [error, setError] = useState(null);
   // Overlay state: null | "calendar" | "biometrics"
   const [attendanceMode, setAttendanceMode] = useState(null);
 
   useEffect(() => {
     const fetchStudent = async () => {
-      setLoading(true);
-      setError(null);
       try {
         const { data, error } = await api
           .from("students")
           .select(`
             *,
-            meals:meal_distributions(*),
-            academic_sessions:academic_sessions(*),
-            pe_sessions:pe_sessions(*),
-            assessments(*),
-            attendance_records(*),
-            school:schools(name, address)
+            school:school_id(*),
+            academic_sessions:academic_sessions(student_id, *),
+            attendance_records:attendance_records(student_id, *),
+            assessments:assessments(student_id, *),
+            pe_sessions:pe_sessions(student_id, *),
+            meal_distributions:meal_distributions(
+              student_id,
+              *,
+              meal:meal_id(name, type, ingredients)
+            )
           `)
           .eq("id", id)
           .single();
 
         if (error) throw error;
         setStudent(data);
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
-      }
+        } catch (err) {
+          setError(err.message || err);
+          console.error("Failed to fetch student:", err.message);
+        } finally {
+          setLoading(false);
+        }
     };
 
-    fetchStudent();
+    if (id) fetchStudent();
   }, [id]);
 
-  useEffect(()=>{
-    console.log("Student:", student)
-  },[student])
+  useEffect(() => { console.log("student data:", student); }, [student]);
+
 
   if (loading) return <p>Loading student data...</p>;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
@@ -61,7 +65,6 @@ const LearnerProfile = () => {
 
   return (
     <>
-      {/* Print + Back */}
       <div className="profile-learner-print">
         <button className="btn btn-primary" onClick={() => window.history.back()}>
           Back to Students
@@ -70,9 +73,7 @@ const LearnerProfile = () => {
           Print Profile
         </button>
       </div>
-
-      {/* Action buttons */}
-      <div className="profile-edit-section">
+      <div className="student-edit-section">
         <Link to={`/dashboard/sessions/record/${id}`} className="btn btn-primary">
           Record Session
         </Link>
@@ -82,7 +83,9 @@ const LearnerProfile = () => {
         <Link to={`/dashboard/students/update/${id}`} className="btn btn-secondary">
           Edit Profile
         </Link>
-        {/* Attendance toggle buttons */}
+        <Link to={`/dashboard/students/attandance/${id}`} className="btn btn-secondary">
+          View Attendance
+        </Link>
         <button className="btn btn-success mb-2" onClick={() => setAttendanceMode("calendar")}>
           Calendar Attendance
         </button>
@@ -92,20 +95,22 @@ const LearnerProfile = () => {
       </div>
 
       <div className="profile-container">
-        {/* Header */}
         <div className="profile-wrapper">
-          <div className="profile-header">
-            <Photos bucketName="student-uploads" folderName="students" id={id} photoCount={1} />
-          </div>
-          <div className="profile-school-details">
-            <h1>{student.full_name}</h1>
-            <p>{student?.school.name}</p>
+          <div className="profile-details-card">
+            <div className="profile-image">
+              <Photos bucketName="student-uploads" folderName="students" id={id} photoCount={1} />
+            </div>
             <div className="profile-details">
+              <div className="school-info">
+                <h4>{student.full_name}</h4>
+                <h5>{student?.school?.name}</h5>
+              </div>
               <p>Grade: {student.grade} ({student.category})</p>
-              <p>Age: {student.age}</p>
-              <p>Contact: {student?.contact}</p>
-              <p>Date Of Birth: {student.date_of_birth}</p>
-              <p>PE {student.physical_education ? "Yes" : "No"}</p>
+              <p>Age: {student?.age}</p>
+              <p>contact:{student?.contact}</p>
+              {/* <p><RenderIcons name="pe"/>:{student?.contact}</p> */}
+              <p>DOB: {student.date_of_birth}</p>
+              <p>pe: {student.physical_education ? "Yes" : "No"}</p>
             </div>
           </div>
 
@@ -114,7 +119,6 @@ const LearnerProfile = () => {
           </div>
         </div>
 
-        {/* Attendance Overlay */}
         {attendanceMode && (
           <div className="overlay">
             <div className="overlay-content">
@@ -135,14 +139,10 @@ const LearnerProfile = () => {
             </div>
           </div>
         )}
-
-        {/* Performance Section */}
         <div className="profile-stats mt-6">
           <h2 className="text-xl font-bold mb-2">Performance Overview</h2>
           <SpecsRadarChart student={student} user={user} />
         </div>
-
-        {/* Attendance Section */}
         <div className="profile-stats mt-6">
           <h2 className="text-xl font-bold mb-2">Attendance Overview</h2>
           <AttendanceBarChart student={student} />

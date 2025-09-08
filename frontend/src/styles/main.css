@@ -7,7 +7,19 @@
     padding: 0;
     box-sizing: border-box;
 }
-
+.dashboard-layout{
+  display: flex;
+  height: 100vh;
+  margin: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+.topbar, .user-info{
+  display: flex;
+  justify-content: space-between;
+  place-items: center;
+  margin:0 .5rem;
+  
+}
 .sidebar{
     width:20vw;
     height:100vh;
@@ -194,6 +206,48 @@ img{
   /* box-shadow: 5px 5px 5px 5px #202020; */
   /* border:1px solid teal; */
 }
+.split-container {
+  display: flex;
+  width: 100%;
+  transition: all 0.3s ease;
+}
+
+.app-list-panel {
+  width: 300px; /* default width of sidebar */
+  transition: width 0.3s ease, opacity 0.3s ease;
+  overflow: hidden;
+}
+
+.app-list-panel.show {
+  width: 300px;
+  opacity: 1;
+}
+
+.app-list-panel.hide {
+  width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.app-list-toggle-btn {
+  background: #202020;
+  color: white;
+  border: none;
+  cursor: pointer;
+  padding: 0.5rem 1rem;
+  margin: 0;
+  transition: background 0.2s;
+}
+
+.app-list-toggle-btn:hover {
+  background: #444;
+}
+
+.app-list-stats {
+  flex: 1; /* takes remaining space */
+  transition: all 0.3s ease;
+}
+
 .bar-chart-stats{
   width: 70%
 }
@@ -293,11 +347,77 @@ img{
   padding:.5rem;
   border-radius: 10px;
 }
+.pagination-controls {
+  margin: 1rem 0;
+  text-align: center;
+}
+.pagination-controls button {
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+}
+.app-list-filters{
+  font-size: 1.4vw;
+}
 @keyframes shimmer {
   0% {
     background-position: 200% 0;
   }
   100% {
     background-position: -200% 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard-layout{
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .sidebar {
+    font-size: 1rem;
+    position:fixed;
+    height:fit-content;
+    width:100%;
+    z-index: 1000;
+    bottom:0;
+    left:0;
+  }
+  .sidebar nav ul{
+    display: flex;
+    justify-content: space-around;
+  }
+  .split-container {
+    flex-direction: column;
+  }
+  .list-panel {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: none;
+    height: auto;
+    transition: height 0.3s ease, padding 0.3s ease, opacity 0.3s ease;
+  }
+  .list-panel.hide {
+    height: 0;
+    opacity: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+  .app-list-stats {
+    flex: 1;
+    width: 100%;
+    height: auto;
+  }
+  .app-list-toggle-btn {
+    top: auto;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-radius: 16px;
+    transition: bottom 0.3s ease;
+  }
+  .split-container.collapsed .app-list-toggle-btn {
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
   }
 }

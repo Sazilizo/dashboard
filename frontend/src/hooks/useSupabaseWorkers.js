@@ -36,7 +36,7 @@ export function useSupabaseWorkers() {
           clearance_pdf,
           child_protection_pdf,
           story
-          school:schools(name)   -- example join to get school name (optional)
+          school:schools(name)   
         `);
 
         if (normalizedFilters.school_id.length > 0) {

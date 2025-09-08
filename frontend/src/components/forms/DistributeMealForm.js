@@ -9,6 +9,7 @@ import FiltersPanel from "../filters/FiltersPanel";
 import { useFilters } from "../../context/FiltersContext";
 import UploadFileHelper from "../profiles/UploadHelper";
 import api from "../../api/client";
+import "../../styles/dynamicForm.css"
 
 const gradeOptions = [
   "R1", "R2", "R3",

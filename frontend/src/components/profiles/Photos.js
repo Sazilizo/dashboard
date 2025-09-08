@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
-import api from "../../api/client"; // your supabase client
+import api from "../../api/client"; // supabase client
 
-function Photos({ id, bucketName, folderName ,photoCount}) {
+function Photos({ id, bucketName, folderName, photoCount = 5 }) {
   const [files, setFiles] = useState([]);
   const [signedUrls, setSignedUrls] = useState({});
   const [error, setError] = useState(null);
@@ -17,45 +17,57 @@ function Photos({ id, bucketName, folderName ,photoCount}) {
           setError(error.message);
           return;
         }
-        setFiles(data || []);
 
-        // For each file, get signed URL
+        // Sort files by created_at descending if available, then slice
+        const sortedFiles = (data || [])
+          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+          .slice(0, photoCount);
+
+        setFiles(sortedFiles);
+
+        // Batch signed URLs for efficiency
+        const paths = sortedFiles.map((f) => `${folderName}/${id}/${f.name}`);
+        const { data: urlsData, error: urlError } = await api.storage
+          .from(bucketName)
+          .createSignedUrls(paths, 60);
+
+        if (urlError) throw urlError;
+
+        // Map file names to signed URLs
         const urls = {};
-        for (const file of data) {
-          const { data: urlData, error: urlError } = await api.storage
-            .from(bucketName)
-            .createSignedUrl(`${folderName}/${id}/${file.name}`, 60);
-          if (urlError) {
-            console.error("URL error for file:", file.name, urlError);
-            urls[file.name] = null;
-          } else {
-            urls[file.name] = urlData.signedUrl;
-          }
-        }
+        urlsData.forEach((u, idx) => {
+          urls[sortedFiles[idx].name] = u.signedUrl;
+        });
         setSignedUrls(urls);
       } catch (err) {
+        console.error("Failed to fetch photos:", err);
         setError(err.message);
       }
     }
 
     if (id) fetchFilesAndUrls();
-  }, [id]);
+  }, [id, bucketName, folderName, photoCount]);
 
-  if (error) return <div>Error loading images: {error}</div>;
+  if (error) return <div className="text-red-500">Error loading images: {error}</div>;
   if (!files.length) return <div>No photos found</div>;
 
   return (
-    <div>
+    <div className="">
       {files.map((file) => {
         const url = signedUrls[file.name];
         if (!url) return null;
         return (
-          <img
-            key={file.id}
-            src={url}
-            alt={file.name}
-            style={{ maxWidth: "200px", margin: "0.5rem" }}
-          />
+          <div
+            key={file.name}
+            className=""
+          >
+            <img
+              src={url}
+              alt={file.name}
+              loading="lazy"
+              className=""
+            />
+          </div>
         );
       })}
     </div>

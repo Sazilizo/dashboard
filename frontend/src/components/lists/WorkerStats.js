@@ -51,10 +51,6 @@ const WorkerStats = ({ workers, loading, singleWorker }) => {
     return Object.entries(counts).map(([label, value]) => ({ label, value }));
   }, [singleWorker]);
 
-  useEffect(() =>{
-    console.log("WorkerStats - workers:", workers);
-  },[workers])
-
   if (loading) {
     return (
       <div className="page-stats">

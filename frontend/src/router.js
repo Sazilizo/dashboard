@@ -1,0 +1,123 @@
+import React from "react";
+import { createBrowserRouter, Navigate } from "react-router-dom";
+import DashboardLayout from "./pages/Dashboard";
+import DashboardHome from "./pages/DashboardHome";
+import StudentList from "./components/lists/StudentList";
+import StudentForm from "./components/forms/StudentForm";
+import LearnerProfile from "./components/profiles/LearnerProfile";
+import UpdateLearnerProfile from "./components/updates/UpdateLearnerProfile";
+import LearnerAttendanceCalendar from "./components/profiles/LearnerAttendance";
+import WorkerList from "./components/lists/WorkerList";
+import WorkerForm from "./components/forms/WorkerForm";
+import DynamicForm from "./utils/dynamicForm";
+import SessionList from "./components/lists/SessionList";
+import SessionForm from "./components/forms/SessionForm";
+import BulkUploadSessions from "./components/forms/BulkUploadSessions";
+import TrainingList from "./components/lists/TrainingList";
+import TrainingForm from "./components/forms/TrainingForm";
+import MealList from "./components/lists/MealList";
+import MealForm from "./components/forms/MealForm";
+import DistributeMealForm from "./components/forms/DistributeMealForm";
+import SchoolsDashboard from "./pages/SchoolsDashboard";
+import SchoolProfile from "./components/profiles/schoolProfile";
+import Register from "./pages/Register";
+import Login from "./pages/Login";
+import Logout from "./pages/Logout";
+import LandingPage from "./pages/LandingPage";
+// import PrivateRoute from "./components/PrivateRoute";
+import ErrorBoundary from "./components/ErrorBoundary";
+
+const router = createBrowserRouter([
+  {
+    path: "/",
+    element: <LandingPage />,
+    errorElement: <ErrorBoundary />,
+  },
+  {
+    path: "/login",
+    element: <Login />,
+    errorElement: <ErrorBoundary />,
+  },
+  {
+    path: "/dashboard",
+    element: (
+        <DashboardLayout />
+    ),
+    errorElement: <ErrorBoundary />,
+    children: [
+      { index: true, element: <DashboardHome /> },
+
+      {
+        path: "schools",
+        errorElement: <ErrorBoundary />,
+        children: [
+          { index: true, element: <SchoolsDashboard /> },
+          { path: ":id", element: <SchoolProfile /> },
+        ],
+      },
+
+      {
+        path: "students",
+        errorElement: <ErrorBoundary />,
+        children: [
+          { index: true, element: <StudentList /> },
+          { path: "create", element: <StudentForm /> },
+          { path: ":id", element: <LearnerProfile /> },
+          { path: "attandance/:id", element: <LearnerAttendanceCalendar /> },
+          { path: "update/:id", element: <UpdateLearnerProfile /> },
+          { path: "deleted", element: <StudentList deleted /> },
+        ],
+      },
+
+      {
+        path: "workers",
+        errorElement: <ErrorBoundary />,
+        children: [
+          { index: true, element: <WorkerList /> },
+          { path: "create", element: <WorkerForm /> },
+          { path: ":id/edit", element: <DynamicForm model="Worker" mode="edit" /> },
+          { path: "deleted", element: <WorkerList deleted /> },
+        ],
+      },
+
+      {
+        path: "sessions",
+        errorElement: <ErrorBoundary />,
+        children: [
+          { index: true, element: <SessionList /> },
+          { path: "create", element: <SessionForm /> },
+          { path: ":id/edit", element: <DynamicForm mode="edit" /> },
+          { path: "bulk-upload", element: <BulkUploadSessions /> },
+          { path: "record/:id", element: <SessionForm /> },
+        ],
+      },
+
+      {
+        path: "trainings",
+        errorElement: <ErrorBoundary />,
+        children: [
+          { index: true, element: <TrainingList /> },
+          { path: "create", element: <TrainingForm /> },
+          { path: ":id/edit", element: <DynamicForm mode="edit" /> },
+        ],
+      },
+
+      {
+        path: "meals",
+        errorElement: <ErrorBoundary />,
+        children: [
+          { index: true, element: <MealList /> },
+          { path: "create", element: <MealForm /> },
+          { path: "distribute/:id", element: <DistributeMealForm /> },
+        ],
+      },
+
+      { path: "register", element: <Register /> },
+      { path: "logout", element: <Logout /> },
+
+      { path: "*", element: <Navigate to="/dashboard" /> },
+    ],
+  },
+]);
+
+export default router;
