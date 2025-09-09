@@ -89,27 +89,46 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
 
     const loadReferences = async () => {
       const labeledDescriptors = []
+
       for (const id of ids) {
         try {
           const { data: files } = await api.storage.from(bucketName).list(`${folderName}/${id}`)
           if (!files || files.length === 0) continue
 
-          const file = files[0]
-          const { data: signedUrl } = await api.storage.from(bucketName).createSignedUrl(
-            `${folderName}/${id}/${file.name}`,
-            60 * 60
+          // Only keep real images (skip .emptyFolderPlaceholder etc.)
+          const imageFiles = files.filter(f =>
+            !f.name.startsWith(".") && /\.(jpg|jpeg|png)$/i.test(f.name)
           )
+          if (imageFiles.length === 0) continue
 
-          if (signedUrl?.signedUrl) {
-            const img = await faceapi.fetchImage(signedUrl.signedUrl)
-            const detection = await faceapi
-              .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
-              .withFaceLandmarks()
-              .withFaceDescriptor()
+          const descriptors = []
+          for (const file of imageFiles) {
+            const { data: signedUrl } = await api.storage.from(bucketName).createSignedUrl(
+              `${folderName}/${id}/${file.name}`,
+              60 * 60
+            )
 
-            if (detection) {
-              labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(id.toString(), [detection.descriptor]))
+            if (signedUrl?.signedUrl) {
+              try {
+                const img = await faceapi.fetchImage(signedUrl.signedUrl)
+                const detection = await faceapi
+                  .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+                  .withFaceLandmarks()
+                  .withFaceDescriptor()
+
+                if (detection) {
+                  descriptors.push(detection.descriptor)
+                }
+              } catch (err) {
+                console.error(`Skipping invalid file for ${id}: ${file.name}`, err)
+              }
             }
+          }
+
+          if (descriptors.length > 0) {
+            labeledDescriptors.push(
+              new faceapi.LabeledFaceDescriptors(id.toString(), descriptors)
+            )
           }
         } catch (err) {
           console.error("Error loading reference for", id, err)
