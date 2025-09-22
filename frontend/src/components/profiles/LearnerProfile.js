@@ -145,7 +145,7 @@ const LearnerProfile = () => {
             </div>
           </div>
         )}
-        {student.academic_sessions || student.pe_sessions && <button className="btn primary-btn" onClick={()=>setToggleSessionList(!toggleSessionList)}>{!toggleSessionList ? "show sessions": "close sessions"}</button>}
+        {student.academic_sessions.length > 0 || student.pe_sessions.length > 0 && <button className="btn primary-btn" onClick={()=>setToggleSessionList(!toggleSessionList)}>{!toggleSessionList ? "show sessions": "close sessions"}</button>}
         {
           toggleSessionList && (
 
