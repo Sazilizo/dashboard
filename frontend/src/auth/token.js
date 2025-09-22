@@ -1,7 +1,4 @@
-// src/auth/token.js
-// Senior-level JWT token utility for React SPA
 
-// Get tokens from localStorage
 export const getAccessToken = () => localStorage.getItem("access_token");
 export const getRefreshToken = () => localStorage.getItem("refresh_token");
 

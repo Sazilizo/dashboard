@@ -23,8 +23,8 @@ const InfoCount = ({ label, count, icon, duration = 1000 }) => {
     <div className="info-count-card">
       {icon && <div className="info-count-icon">{icon}</div>}
       <div className="info-count-details">
-        <p className="info-count-number">{displayCount}</p>
         <p className="info-count-label">{label}</p>
+        <p className="info-count-number">{displayCount}</p>
       </div>
     </div>
   );

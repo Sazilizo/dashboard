@@ -64,11 +64,6 @@ function FilesDownloader({ bucketName, folderName, id }) {
       <button onClick={downloadAllFiles} disabled={loading}>
         {loading ? "Preparing download..." : "Download All Files"}
       </button>
-      <ul>
-        {files.map((file) => (
-          <li key={file.id}>{file.name}</li>
-        ))}
-      </ul>
     </div>
   );
 }

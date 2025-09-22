@@ -7,4 +7,11 @@ export const iconImports = {
   twitter: () => import("@fortawesome/free-brands-svg-icons/faTwitter"),
   pe: () => import("@fortawesome/free-solid-svg-icons/faDumbbell"),
   academic: () => import("@fortawesome/free-solid-svg-icons/faBook"),
+  dashboard: () => import("@fortawesome/free-solid-svg-icons/faTachographDigital"),
+  schools: () => import("@fortawesome/free-solid-svg-icons/faSchool"),
+  students: () => import("@fortawesome/free-solid-svg-icons/faUserGraduate"),
+  sessions: () => import("@fortawesome/free-solid-svg-icons/faChalkboardTeacher"),
+  meals: () => import("@fortawesome/free-solid-svg-icons/faUtensils"),
+  workers: () => import("@fortawesome/free-solid-svg-icons/faUsers"),
+  trainings: () => import("@fortawesome/free-solid-svg-icons/faBriefcase"),
 };

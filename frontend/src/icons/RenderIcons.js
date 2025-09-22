@@ -2,8 +2,9 @@ import React, { useState, useEffect } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { library } from "@fortawesome/fontawesome-svg-core";
 import { iconImports } from "./iconLoader";
+import "./tooltip.css"; // Add this line to import custom tooltip styles
 
-export default function RenderIcons({ name, ...props }) {
+export default function RenderIcons({ name, label, ...props }) {
   const [icon, setIcon] = useState(null);
 
   useEffect(() => {
@@ -13,11 +14,10 @@ export default function RenderIcons({ name, ...props }) {
       if (iconImports[name]) {
         try {
           const mod = await iconImports[name]();
-          // Grab the first export (e.g., faPhone)
           const iconDef = Object.values(mod)[0];
           if (isMounted) {
-            library.add(iconDef); // register in FA library
-            setIcon(iconDef); // set for direct usage
+            library.add(iconDef);
+            setIcon(iconDef);
           }
         } catch (err) {
           console.error(`Failed to load icon ${name}:`, err);
@@ -33,5 +33,10 @@ export default function RenderIcons({ name, ...props }) {
 
   if (!icon) return <span style={{ width: "1em", display: "inline-block" }} />;
 
-  return <FontAwesomeIcon icon={icon} {...props} />;
+  return (
+    <span className="tooltip-wrapper">
+      <FontAwesomeIcon icon={icon} {...props} />
+      {label && <span className="tooltip-text">{label}</span>}
+    </span>
+  );
 }

@@ -11,16 +11,9 @@ import {
 } from "recharts";
 
 const COLORS = [
-  "#8884d8",
-  "#82ca9d",
-  "#ffc658",
-  "#ff8042",
-  "#8dd1e1",
-  "#a4de6c",
-  "#d0ed57",
-  "#ffbb28",
-  "#ff6666",
-  "#99ccff",
+  "#ea333f", // red
+  "#0077be", // blue
+  "#169a59"  // green
 ];
 
 export default function StackedCategoryGradeChart({ students, height = 300 }) {

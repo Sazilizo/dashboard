@@ -24,6 +24,8 @@ import Register from "./pages/Register";
 import Login from "./pages/Login";
 import Logout from "./pages/Logout";
 import LandingPage from "./pages/LandingPage";
+import SessionMarkingForm from "./components/forms/SessionMarkingForm";
+import Users from "./components/lists/Users";
 // import PrivateRoute from "./components/PrivateRoute";
 import ErrorBoundary from "./components/ErrorBoundary";
 
@@ -38,6 +40,7 @@ const router = createBrowserRouter([
     element: <Login />,
     errorElement: <ErrorBoundary />,
   },
+  { path: "register", element: <Register /> },
   {
     path: "/dashboard",
     element: (
@@ -57,7 +60,7 @@ const router = createBrowserRouter([
       },
 
       {
-        path: "students",
+        path: "students/",
         errorElement: <ErrorBoundary />,
         children: [
           { index: true, element: <StudentList /> },
@@ -65,6 +68,7 @@ const router = createBrowserRouter([
           { path: ":id", element: <LearnerProfile /> },
           { path: "attandance/:id", element: <LearnerAttendanceCalendar /> },
           { path: "update/:id", element: <UpdateLearnerProfile /> },
+          { path: "mark-session/:id", element:<SessionMarkingForm/>},
           { path: "deleted", element: <StudentList deleted /> },
         ],
       },
@@ -77,6 +81,7 @@ const router = createBrowserRouter([
           { path: "create", element: <WorkerForm /> },
           { path: ":id/edit", element: <DynamicForm model="Worker" mode="edit" /> },
           { path: "deleted", element: <WorkerList deleted /> },
+          {path: "users", element:<Users/>}
         ],
       },
 

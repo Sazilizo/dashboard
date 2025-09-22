@@ -56,13 +56,6 @@ const StudentStats = ({ students, loading }) => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Stacked Chart */}
         <div className="stacked-chart-stats">
-          <StackedCategoryGradeChart
-            title="Categories per Grade"
-            students={students}
-          />
-        </div>
-
-        <div className="bar-charts">
           {barChartData.length > 0 && (
             <div className="bar-chart-stats">
               <GradeDistributionBarChart
@@ -75,7 +68,13 @@ const StudentStats = ({ students, loading }) => {
               />
             </div>
           )}
+        </div>
 
+        <div className="bar-charts">
+          <StackedCategoryGradeChart
+            title="Categories per Grade"
+            students={students}
+          />
           {pieChartData.length > 0 && (
             <div className="pie-chart-stats">
               <PieChartStats

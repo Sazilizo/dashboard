@@ -40,10 +40,10 @@ export function AuthProvider({ children }) {
 
       // Fetch profile and join roles to get role name
       const { data: profile, error: profileError } = await api
-        .from("users")
+        .from("profiles")
         .select("id, username, role_id, school_id, roles(name)")
-        .eq("auth_uid", supabaseUser.id)
-        .maybeSingle();
+        .eq("auth_uid", supabaseUser && supabaseUser.id)
+        .maybeSingle({ head: true });
 
       if (profileError) {
         console.error("Failed to fetch user profile:", profileError);
@@ -81,7 +81,7 @@ export function AuthProvider({ children }) {
 
     return () => subscription?.unsubscribe?.();
   }, []);
-
+  
   return (
     <AuthContext.Provider value={{ user, setUser, refreshUser, loading }}>
       {children}

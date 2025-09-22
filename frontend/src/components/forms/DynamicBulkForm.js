@@ -5,8 +5,9 @@ import RoleSelect from "../../hooks/RoleSelect";
 import EntityMultiSelect from "../../hooks/EntityMultiSelect";
 import UploadFile from "../profiles/UploadFile";
 import { useSchools } from "../../context/SchoolsContext";
+import { useAuth } from "../../context/AuthProvider";
 
-export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubmit, studentId }) {
+export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubmit, studentId, tutorOptions, coachOptions }) {
   const { id } = useParams();
   const { schools } = useSchools();
   const [schema, setSchema] = useState([]);
@@ -189,6 +190,56 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
         </div>
       );
     }
+    if (field.name === "tutor_id") {
+      const schoolId = formData.school_id;
+      console.log("school Id for form:",schoolId)
+      const filteredTutors = (tutorOptions || []).filter(
+        (opt) => !schoolId || opt.school_id === Number(schoolId)
+      );
+
+      return (
+        <div key={field.name} className="mb-4">
+          <label className="block font-medium">{field.label || "Tutor"}</label>
+          <select
+            value={formData[field.name] || ""}
+            onChange={(e) => handleChange("tutor_id", Number(e.target.value))}
+            className="w-full p-2 border rounded"
+          >
+            <option value="">Select Tutor...</option>
+            {filteredTutors.map((opt) => (
+              
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+
+    if (field.name === "coach_id") {
+      const schoolId = formData.school_id;
+      const filteredCoaches = (coachOptions || []).filter(
+        (opt) => !schoolId || opt.school_id === Number(schoolId)
+      );
+      return (
+        <div key={field.name} className="mb-4">
+          <label className="block font-medium">{field.label || "Coach"}</label>
+          <select
+            value={formData[field.name] || ""}
+            onChange={(e) => handleChange("coach_id", Number(e.target.value))}
+            className="w-full p-2 border rounded"
+          >
+            <option value="">Select Coach...</option>
+            {filteredCoaches.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
 
 
     if (field.readOnly) {
@@ -317,7 +368,7 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
           <div key={field.name} className="mb-4">
             <label className="block font-medium">{field.label}</label>
             <select
-              multiple={field.multiple}
+              multiple={field.multiple} 
               value={formData[field.name] || (field.multiple ? [] : "")}
               onChange={(e) =>
                 handleChange(
@@ -365,6 +416,16 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
     }
   };
 
+  // useEffect(()=>{
+  //   console.log("formData: ", formData)
+  // },[formData])
+
+  // useEffect(()=>{
+  //   console.log("scheema: ", schema)
+  // },[schema])
+  useEffect(()=>{
+    console.log("presetFields: ", presetFields)
+  },[presetFields])
   return (
     <form onSubmit={handleSubmit} className="p-4 bg-white rounded shadow-md">
       {error && <p className="text-red-500">{error}</p>}

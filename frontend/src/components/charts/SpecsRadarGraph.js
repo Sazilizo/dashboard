@@ -88,12 +88,12 @@ const SpecsRadarChart = ({ student, user }) => {
     };
   }, [sessions]);
 
-  // Initialize defaults
+  // Initialize defaults only when no year is selected
   useEffect(() => {
-    if (filterOptions.years.length > 0 && !selectedYear) {
-      const firstYear = filterOptions.years[0];
-      setSelectedYear(firstYear);
-      setSelectedTerms(filterOptions.terms[firstYear] || []);
+    if (!selectedYear && filterOptions.years.length > 0) {
+      const fallbackYear = filterOptions.years[0];
+      setSelectedYear(fallbackYear);
+      setSelectedTerms(filterOptions.terms[fallbackYear] || []);
       setSelectedMonths([]);
     }
   }, [filterOptions, selectedYear]);
@@ -131,16 +131,6 @@ const SpecsRadarChart = ({ student, user }) => {
       A: Math.round(totals[key] / counts[key]),
     }));
   }, [sessions, selectedYear, selectedMonths, selectedTerms]);
-
-  // Reset if no valid specs
-  useEffect(() => {
-    if (aggregatedData.length === 0 && filterOptions.years.length > 0) {
-      const fallbackYear = filterOptions.years[0];
-      setSelectedYear(fallbackYear);
-      setSelectedTerms(filterOptions.terms[fallbackYear] || []);
-      setSelectedMonths([]);
-    }
-  }, [aggregatedData, filterOptions]);
 
   return (
     <div className="p-4 bg-white rounded-2xl shadow-md">

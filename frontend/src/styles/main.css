@@ -6,6 +6,7 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    font-size: clamp(14px, 1.2vw, 1.2rem);
 }
 .dashboard-layout{
   display: flex;
@@ -18,12 +19,68 @@
   justify-content: space-between;
   place-items: center;
   margin:0 .5rem;
-  
 }
+.topbar{
+  border-bottom: 2px solid gray;
+}
+.topbar .logo{
+  width:5rem;
+  height: auto;
+  padding: 0 .5rem
+}
+/* Topbar layout */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  position: relative;
+  z-index: 10;
+}
+
+.user-info p {
+  margin: 0;
+}
+
+/* Modal overlay */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+/* Modal content */
+.modal-content {
+  background: #fff;
+  padding: 2rem;
+  border-radius: 10px;
+  max-width: 500px;
+  width: 100%;
+  box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+}
+
+/* Responsive adjustments */
+@media (max-width: 600px) {
+  .modal-content {
+    padding: 1rem;
+  }
+}
+
 .sidebar{
-    width:20vw;
-    height:100vh;
-    background-color:#180ad6;
+    width:min-content;
+    height:100%;
+    background-color: #0b38cc;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
@@ -32,16 +89,28 @@
     margin:0;
     font-size: 1.2rem;
 }
-li {
+.sidebar li {
     list-style: none;
+    padding:10px;
+    text-align: center;
 }
 .sidebar a {
     text-decoration: none;
     color: white;
 }
+.sidebar li:hover{
+  background-color: #3b82f6;
+  border-radius: 5px;
+}
+.sidebar-footer{
+  color:grey;
+  font-size:clamp(1vw, 12px, 1.2rem);
+  
+}
 .danger {
     color: white;
     background-color: red;
+    font-size: clamp(0.8rem, 1.5vw, 1rem);
 }
 
 @keyframes pulse {
@@ -55,6 +124,7 @@ li {
   display: inline-block;
   text-align: left;
   width: 100%;
+  font-size: clamp(1rem, 2rem, 2.2rem);
 }
 
 .filter-label {
@@ -155,17 +225,27 @@ li {
   justify-content: space-between;
   gap: 1rem;
 }
-.list{
+/* .list{
   width:100%;
-  /* border:1px solid green; */
+  border:1px solid green;
   scroll-behavior: smooth;
   overflow-y: scroll;
   background-color: #ecedee;
   border-radius: 5px;
   box-shadow: 5px 5px 10px 2px #202020;
-}
+} */
+.app-list{
+  list-style: none;
+  padding:1rem;
+  scroll-behavior: smooth;
+  /* overflow-y: scroll; */
+  border:1px solid green;
+  font-size: 12px;
+} 
  .app-list li {
-  margin:1rem 0.02rem;
+  margin:.5rem 0.02rem;
+  background-color: #ecedee;
+  border-radius: 5px;
   
 }
  .app-list li a{
@@ -213,13 +293,14 @@ img{
 }
 
 .app-list-panel {
-  width: 300px; /* default width of sidebar */
+  width: 25vw; /* default width of sidebar */
   transition: width 0.3s ease, opacity 0.3s ease;
   overflow: hidden;
+  overflow-y: scroll;
 }
 
 .app-list-panel.show {
-  width: 300px;
+  width: 25vw;
   opacity: 1;
 }
 
@@ -230,13 +311,14 @@ img{
 }
 
 .app-list-toggle-btn {
-  background: #202020;
+  background: #a80808;
   color: white;
   border: none;
   cursor: pointer;
-  padding: 0.5rem 1rem;
+  padding: 0.5rem;
   margin: 0;
   transition: background 0.2s;
+  position:absolute;
 }
 
 .app-list-toggle-btn:hover {
@@ -246,6 +328,7 @@ img{
 .app-list-stats {
   flex: 1; /* takes remaining space */
   transition: all 0.3s ease;
+  background-color: red;
 }
 
 .bar-chart-stats{
