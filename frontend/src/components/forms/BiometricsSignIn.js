@@ -30,21 +30,42 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
     localStorage.setItem("pendingSignIns", JSON.stringify(pendingSignIns))
   }, [pendingSignIns])
 
-  // Load models
   useEffect(() => {
-    const loadModels = async () => {
-      const MODEL_URL = "/models"
-      await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-      ])
-      setLoadingModels(false)
+    const loadModelsFromStorage = async () => {
+      try {
+        const MODEL_FILES = [
+          "tiny_face_detector_model-weights_manifest.json",
+          "face_landmark_68_model-weights_manifest.json",
+          "face_recognition_model-weights_manifest.json"
+        ]
+
+        const MODEL_URLS = await Promise.all(
+          MODEL_FILES.map(async (file) => {
+            const { data, error } = await api.storage
+              .from("faceapi-models")
+              .createSignedUrl(file, 60 * 60) // 1 hour
+            if (error) throw error
+            return data.signedUrl
+          })
+        )
+
+        // Load models
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URLS[0]),
+          faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URLS[1]),
+          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URLS[2]),
+        ])
+
+        setLoadingModels(false)
+      } catch (err) {
+        console.error("Failed to load models from storage", err)
+        setMessage("Failed to load face detection models.")
+      }
     }
-    loadModels()
+
+    loadModelsFromStorage()
   }, [])
 
-  // Fetch student names for display
   useEffect(() => {
     const ids = Array.isArray(studentId) ? studentId : [studentId]
     if (ids.length === 0) return
@@ -62,7 +83,6 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
     fetchNames()
   }, [studentId])
 
-  // Setup webcam
   useEffect(() => {
     if (captureDone) return
     const startWebcam = async () => {
@@ -82,7 +102,6 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
     }
   }, [captureDone])
 
-  // Load reference images
   useEffect(() => {
     if (!studentId || !bucketName || !folderName) return
     const ids = Array.isArray(studentId) ? studentId : [studentId]
@@ -92,10 +111,9 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
 
       for (const id of ids) {
         try {
-          const { data: files } = await api.storage.from(bucketName).list(`${folderName}/${id}`)
-          if (!files || files.length === 0) continue
+          const { data: files, error } = await api.storage.from(bucketName).list(`${folderName}/${id}`)
+          if (error || !files || files.length === 0) continue
 
-          // Only keep real images (skip .emptyFolderPlaceholder etc.)
           const imageFiles = files.filter(f =>
             !f.name.startsWith(".") && /\.(jpg|jpeg|png)$/i.test(f.name)
           )
@@ -107,28 +125,22 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
               `${folderName}/${id}/${file.name}`,
               60 * 60
             )
+            if (!signedUrl?.signedUrl) continue
 
-            if (signedUrl?.signedUrl) {
-              try {
-                const img = await faceapi.fetchImage(signedUrl.signedUrl)
-                const detection = await faceapi
-                  .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
-                  .withFaceLandmarks()
-                  .withFaceDescriptor()
+            try {
+              const img = await faceapi.fetchImage(signedUrl.signedUrl)
+              const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+                .withFaceLandmarks()
+                .withFaceDescriptor()
 
-                if (detection) {
-                  descriptors.push(detection.descriptor)
-                }
-              } catch (err) {
-                console.error(`Skipping invalid file for ${id}: ${file.name}`, err)
-              }
+              if (detection) descriptors.push(detection.descriptor)
+            } catch (err) {
+              console.error(`Skipping invalid file for ${id}: ${file.name}`, err)
             }
           }
 
           if (descriptors.length > 0) {
-            labeledDescriptors.push(
-              new faceapi.LabeledFaceDescriptors(id.toString(), descriptors)
-            )
+            labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(id.toString(), descriptors))
           }
         } catch (err) {
           console.error("Error loading reference for", id, err)
