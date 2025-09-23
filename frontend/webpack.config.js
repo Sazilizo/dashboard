@@ -67,7 +67,7 @@ module.exports = {
     }),
   ],
   devServer: {
-    static: { directory: path.resolve(__dirname, "public"), publicPath: "/" },
+    static: { directory: path.resolve(__dirname, "dist"), publicPath: "/" },
     port: 3000,
     historyApiFallback: true,
     hot: true,

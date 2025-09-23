@@ -30,8 +30,9 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
     localStorage.setItem("pendingSignIns", JSON.stringify(pendingSignIns))
   }, [pendingSignIns])
 
+  // Load face-api models directly from Supabase public URLs
   useEffect(() => {
-    const loadModelsFromStorage = async () => {
+    const loadModelsFromSupabase = async () => {
       try {
         const MODEL_FILES = [
           "tiny_face_detector_model-weights_manifest.json",
@@ -39,17 +40,11 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
           "face_recognition_model-weights_manifest.json"
         ]
 
-        const MODEL_URLS = await Promise.all(
-          MODEL_FILES.map(async (file) => {
-            const { data, error } = await api.storage
-              .from("faceapi-models")
-              .createSignedUrl(file, 60 * 60) // 1 hour
-            if (error) throw error
-            return data.signedUrl
-          })
+        // Map to public URLs in your bucket
+        const MODEL_URLS = MODEL_FILES.map(f =>
+          `https://pmvecwjomvyxpgzfweov.supabase.co/storage/v1/object/public/faceapi-models/${f}`
         )
 
-        // Load models
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URLS[0]),
           faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URLS[1]),
@@ -58,14 +53,15 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
 
         setLoadingModels(false)
       } catch (err) {
-        console.error("Failed to load models from storage", err)
+        console.error("Failed to load models from Supabase", err)
         setMessage("Failed to load face detection models.")
       }
     }
 
-    loadModelsFromStorage()
+    loadModelsFromSupabase()
   }, [])
 
+  // Fetch student names for display
   useEffect(() => {
     const ids = Array.isArray(studentId) ? studentId : [studentId]
     if (ids.length === 0) return
@@ -83,6 +79,7 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
     fetchNames()
   }, [studentId])
 
+  // Setup webcam
   useEffect(() => {
     if (captureDone) return
     const startWebcam = async () => {
@@ -102,60 +99,57 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
     }
   }, [captureDone])
 
+  // Load reference images
   useEffect(() => {
     if (!studentId || !bucketName || !folderName) return
     const ids = Array.isArray(studentId) ? studentId : [studentId]
 
     const loadReferences = async () => {
-      const labeledDescriptors = []
+      try {
+        const labeledDescriptors = await Promise.all(
+          ids.map(async (id) => {
+            const { data: files, error } = await api.storage.from(bucketName).list(`${folderName}/${id}`)
+            if (error || !files || files.length === 0) return null
 
-      for (const id of ids) {
-        try {
-          const { data: files, error } = await api.storage.from(bucketName).list(`${folderName}/${id}`)
-          if (error || !files || files.length === 0) continue
+            const imageFiles = files.filter(f => /\.(jpg|jpeg|png)$/i.test(f.name))
+            if (imageFiles.length === 0) return null
 
-          const imageFiles = files.filter(f =>
-            !f.name.startsWith(".") && /\.(jpg|jpeg|png)$/i.test(f.name)
-          )
-          if (imageFiles.length === 0) continue
-
-          const descriptors = []
-          for (const file of imageFiles) {
-            const { data: signedUrl } = await api.storage.from(bucketName).createSignedUrl(
-              `${folderName}/${id}/${file.name}`,
-              60 * 60
+            const descriptors = await Promise.all(
+              imageFiles.map(async (file) => {
+                try {
+                  const signedUrl = `https://pmvecwjomvyxpgzfweov.supabase.co/storage/v1/object/public/${bucketName}/${folderName}/${id}/${file.name}`
+                  const img = await faceapi.fetchImage(signedUrl)
+                  const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+                    .withFaceLandmarks()
+                    .withFaceDescriptor()
+                  return detection?.descriptor ?? null
+                } catch (err) {
+                  console.error(`Skipping invalid file for ${id}: ${file.name}`, err)
+                  return null
+                }
+              })
             )
-            if (!signedUrl?.signedUrl) continue
 
-            try {
-              const img = await faceapi.fetchImage(signedUrl.signedUrl)
-              const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
-                .withFaceLandmarks()
-                .withFaceDescriptor()
+            const validDescriptors = descriptors.filter(d => d !== null)
+            if (validDescriptors.length === 0) return null
+            return new faceapi.LabeledFaceDescriptors(id.toString(), validDescriptors)
+          })
+        )
 
-              if (detection) descriptors.push(detection.descriptor)
-            } catch (err) {
-              console.error(`Skipping invalid file for ${id}: ${file.name}`, err)
-            }
-          }
-
-          if (descriptors.length > 0) {
-            labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(id.toString(), descriptors))
-          }
-        } catch (err) {
-          console.error("Error loading reference for", id, err)
+        const filteredDescriptors = labeledDescriptors.filter(ld => ld !== null)
+        if (filteredDescriptors.length > 0) {
+          setFaceMatcher(new faceapi.FaceMatcher(filteredDescriptors, threshold))
+          setReferencesReady(true)
         }
-      }
-
-      if (labeledDescriptors.length > 0) {
-        setFaceMatcher(new faceapi.FaceMatcher(labeledDescriptors, threshold))
-        setReferencesReady(true)
+      } catch (err) {
+        console.error("Error loading reference images", err)
       }
     }
 
     loadReferences()
   }, [studentId, bucketName, folderName])
 
+  // Handle capture
   const handleCapture = async (action) => {
     if (!referencesReady || !faceMatcher) {
       setMessage("Reference faces not ready yet.")
