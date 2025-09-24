@@ -6,7 +6,7 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
-    font-size: clamp(14px, 1.2vw, 1.2rem);
+    font-size: clamp(16px, 1.4vw, 1.5rem);
 }
 .dashboard-layout{
   display: flex;

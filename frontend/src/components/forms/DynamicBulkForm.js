@@ -7,7 +7,7 @@ import UploadFile from "../profiles/UploadFile";
 import { useSchools } from "../../context/SchoolsContext";
 import { useAuth } from "../../context/AuthProvider";
 
-export default function DynamicBulkForm({ schema_name, presetFields = {}, user, onSubmit, studentId, tutorOptions, coachOptions }) {
+export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubmit, studentId, tutorOptions, coachOptions }) {
   const { id } = useParams();
   const { schools } = useSchools();
   const [schema, setSchema] = useState([]);
@@ -239,19 +239,19 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, user, 
         </div>
       );
     }
-    // if (field.readOnly) {
-    //   return (
-    //     <div key={field.name} className="mb-4">
-    //       <label className="block text-sm font-medium">{field.label}</label>
-    //       <input
-    //         type="text"
-    //         value={presetFields[field.name] || ""}
-    //         readOnly
-    //         className="w-full p-2 border rounded bg-gray-100"
-    //       />
-    //     </div>
-    //   );
-    // }
+    if (field.readOnly) {
+      return (
+        <div key={field.name} className="mb-4">
+          <label className="block text-sm font-medium">{field.label}</label>
+          <input
+            type="text"
+            value={presetFields[field.name] || ""}
+            readOnly
+            className="w-full p-2 border rounded bg-gray-100"
+          />
+        </div>
+      );
+    }
 
     if (field.name === "age") {
       return (
@@ -413,13 +413,6 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, user, 
     }
   };
 
-  useEffect(()=>{
-    console.log("presetFields: ", presetFields)
-  },[presetFields])
-
-  useEffect(()=>{
-    console.log("user: ", user)
-  },[user])
   return (
     <form onSubmit={handleSubmit} className="p-4 bg-white rounded shadow-md">
       {error && <p className="text-red-500">{error}</p>}
@@ -429,7 +422,7 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, user, 
         disabled={loading}
         className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
       >
-        {loading ? "Saving..." : id ? "Save Record" : "Submit Bulk"}
+        {loading ? "Saving..." : id ? "Save Record" : "Submit"}
       </button>
     </form>
   );
