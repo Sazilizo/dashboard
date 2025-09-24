@@ -45,10 +45,6 @@ export default function Sidebar() {
         })}
       </ul>
     </nav>
-
-    <div className="sidebar-footer">
-      <p>© {new Date().getFullYear()} School Dashboard</p>
-    </div>
   </div>
   );
 }

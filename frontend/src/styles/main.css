@@ -469,6 +469,10 @@ img{
     display: flex;
     justify-content: space-around;
   }
+  .sidebar nav ul li{
+    padding: 10px;
+    margin:10px;
+  }
   .split-container {
     flex-direction: column;
   }

@@ -1,512 +1,284 @@
-import React, { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import api from "../../api/client";
-import RoleSelect from "../../hooks/RoleSelect";
-import EntityMultiSelect from "../../hooks/EntityMultiSelect";
-import UploadFile from "../profiles/UploadFile";
-import { useSchools } from "../../context/SchoolsContext";
-import { useAuth } from "../../context/AuthProvider";
+import React, { useState, useRef, useEffect } from "react"
+import { useNavigate } from "react-router-dom"
+import api from "../../api/client"
+import * as faceapi from "face-api.js"
+import "../../styles/BiometricsSignIn.css"
 
-export default function DynamicBulkForm({
-  schema_name,
-  presetFields = {},
-  onSubmit,
-  studentId,
-  tutorOptions,
-  coachOptions,
-  students = [], // <-- pass students for bulk mode
-}) {
-  const { id } = useParams();
-  const { schools } = useSchools();
-  const { user } = useAuth();
-  const role = user?.role;
+// Global cache for face descriptors
+const faceDescriptorCache = {}
 
-  const [schema, setSchema] = useState([]);
-  const [formData, setFormData] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, sessionType }) => {
+  const [loadingModels, setLoadingModels] = useState(true)
+  const [message, setMessage] = useState("")
+  const [faceMatcher, setFaceMatcher] = useState(null)
+  const [pendingSignIns, setPendingSignIns] = useState({})
+  const [captureDone, setCaptureDone] = useState(false)
+  const [referencesReady, setReferencesReady] = useState(false)
+  const [studentNames, setStudentNames] = useState({})
 
-  const [sessionType, setSessionType] = useState("");
-  const [selectedStudents, setSelectedStudents] = useState([]);
-  const [filteredStudents, setFilteredStudents] = useState([]);
+  const webcamRef = useRef()
+  const canvasRef = useRef()
+  const threshold = 0.6
+  const navigate = useNavigate()
 
-  const sessionOptions = [
-    { value: "academic", label: "Academic Session" },
-    { value: "pe", label: "PE Session" },
-  ];
-
+  // Load persisted pending sign-ins metadata
   useEffect(() => {
-    if (students.length) {
-      setFilteredStudents(students.filter((s) => s.active));
-    }
-  }, [students]);
+    const stored = localStorage.getItem("pendingSignIns")
+    if (stored) setPendingSignIns(JSON.parse(stored))
+  }, [])
 
-  const calculateAge = (dobStr) => {
-    if (!dobStr) return "";
-    const today = new Date();
-    const dob = new Date(dobStr);
-    let age = today.getFullYear() - dob.getFullYear();
-    const m = today.getMonth() - dob.getMonth();
-    if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
-    return age;
-  };
-
-  const parseIdNumberToDob = (idNumber) => {
-    if (!idNumber || idNumber.length < 6) return "";
-    const year = parseInt(idNumber.substring(0, 2), 10);
-    const month = parseInt(idNumber.substring(2, 4), 10) - 1;
-    const day = parseInt(idNumber.substring(4, 6), 10);
-    const currentYear = new Date().getFullYear() % 100;
-    const fullYear = year > currentYear ? 1900 + year : 2000 + year;
-    return new Date(fullYear, month, day).toISOString().split("T")[0];
-  };
-
+  // Persist sign-ins metadata whenever they change
   useEffect(() => {
-    if (!schema_name) return;
+    localStorage.setItem("pendingSignIns", JSON.stringify(pendingSignIns))
+  }, [pendingSignIns])
 
-    async function fetchSchema() {
-      const { data: schemaData, error: schemaError } = await api
-        .from("form_schemas")
-        .select("schema")
-        .eq("model_name", schema_name)
-        .single();
-
-      if (schemaError) {
-        setError("Failed to load form schema.");
-        return;
-      }
-
-      const fields = schemaData.schema?.fields || [];
-      setSchema(fields);
-
-      const defaults = {};
-      fields.forEach((f) => {
-        if (f.type === "json_object") {
-          const groupDefaults = {};
-          f.group.forEach((g) => {
-            groupDefaults[g.key] = g.default ?? 0;
-          });
-          defaults[f.name] = { ...groupDefaults };
-        } else if (f.type === "checkbox" || f.type === "boolean") {
-          defaults[f.name] = false;
-        } else if (f.type === "select" && f.multiple) {
-          defaults[f.name] = id ? [id] : [];
-        } else {
-          defaults[f.name] = "";
-        }
-      });
-
-      Object.assign(defaults, presetFields);
-      if (id) defaults.school_id = Number(id);
-      if (presetFields.category) defaults.category = presetFields.category;
-
-      setFormData(defaults);
-    }
-
-    fetchSchema();
-  }, [schema_name, presetFields, id]);
-
-  const handleChange = (name, value) => {
-    let updated = { ...formData, [name]: value };
-
-    if (name === "is_fruit" && !value) {
-      updated.fruit_type = "";
-      updated.fruit_other_description = "";
-    }
-
-    if (name === "id_number" && value.length >= 6 && schema_name === "Worker") {
-      const dob = parseIdNumberToDob(value);
-      if (dob) {
-        const age = calculateAge(dob);
-        if (age < 18 || age > 60) {
-          setError("Worker must be between 18 and 60 years old.");
-        } else {
-          updated.date_of_birth = dob;
-          updated.age = age;
-          setError(null);
-        }
+  // Load face-api models from Supabase
+  useEffect(() => {
+    const loadModelsFromSupabase = async () => {
+      try {
+        const MODEL_FILES = [
+          "tiny_face_detector_model-weights_manifest.json",
+          "face_landmark_68_model-weights_manifest.json",
+          "face_recognition_model-weights_manifest.json"
+        ]
+        const MODEL_URLS = MODEL_FILES.map(f =>
+          `https://pmvecwjomvyxpgzfweov.supabase.co/storage/v1/object/public/faceapi-models/${f}`
+        )
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URLS[0]),
+          faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URLS[1]),
+          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URLS[2]),
+        ])
+        setLoadingModels(false)
+      } catch (err) {
+        console.error("Failed to load models from Supabase", err)
+        setMessage("Failed to load face detection models.")
       }
     }
+    loadModelsFromSupabase()
+  }, [])
 
-    if (name === "date_of_birth" && schema_name === "Student") {
-      updated.age = calculateAge(value);
-      if (updated.age < 2) setError("Student must be at least 2 years old.");
-      else setError(null);
+  // Fetch student names for display
+  useEffect(() => {
+    const ids = Array.isArray(studentId) ? studentId : [studentId]
+    if (ids.length === 0) return
+    const fetchNames = async () => {
+      const { data, error } = await api
+        .from("students")
+        .select("id, first_name, last_name")
+        .in("id", ids)
+      if (!error && data) {
+        const map = {}
+        data.forEach(s => { map[s.id] = `${s.first_name} ${s.last_name}` })
+        setStudentNames(map)
+      }
+    }
+    fetchNames()
+  }, [studentId])
+
+  // Setup webcam
+  useEffect(() => {
+    if (captureDone) return
+    const startWebcam = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+        if (webcamRef.current) webcamRef.current.srcObject = stream
+      } catch (err) {
+        console.error(err)
+        setMessage("Could not access webcam.")
+      }
+    }
+    startWebcam()
+    return () => {
+      if (webcamRef.current?.srcObject) {
+        webcamRef.current.srcObject.getTracks().forEach(track => track.stop())
+      }
+    }
+  }, [captureDone])
+
+  // Load reference images and cache descriptors globally
+  useEffect(() => {
+    if (!studentId || !bucketName || !folderName) return
+    const ids = Array.isArray(studentId) ? studentId : [studentId]
+
+    const loadReferences = async () => {
+      try {
+        const labeledDescriptors = await Promise.all(
+          ids.map(async (id) => {
+            if (faceDescriptorCache[id]) return faceDescriptorCache[id]
+
+            const { data: files, error } = await api.storage.from(bucketName).list(`${folderName}/${id}`)
+            if (error || !files || files.length === 0) return null
+
+            const imageFiles = files.filter(f => /\.(jpg|jpeg|png)$/i.test(f.name))
+            if (imageFiles.length === 0) return null
+
+            const descriptors = await Promise.all(
+              imageFiles.map(async (file) => {
+                try {
+                  const path = `${folderName}/${id}/${file.name}`
+                  const { data: urlData, error: urlError } = await api.storage
+                    .from(bucketName)
+                    .createSignedUrl(path, 300)
+                  if (urlError || !urlData?.signedUrl) return null
+                  const img = await faceapi.fetchImage(urlData.signedUrl)
+                  const detection = await faceapi
+                    .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+                    .withFaceLandmarks()
+                    .withFaceDescriptor()
+                  return detection?.descriptor ?? null
+                } catch (err) {
+                  console.error(`Skipping invalid file for ${id}: ${file.name}`, err)
+                  return null
+                }
+              })
+            )
+
+            const validDescriptors = descriptors.filter(d => d !== null)
+            if (validDescriptors.length === 0) return null
+
+            const labeled = new faceapi.LabeledFaceDescriptors(id.toString(), validDescriptors)
+            faceDescriptorCache[id] = labeled
+            return labeled
+          })
+        )
+
+        const filteredDescriptors = labeledDescriptors.filter(ld => ld !== null)
+        if (filteredDescriptors.length > 0) {
+          setFaceMatcher(new faceapi.FaceMatcher(filteredDescriptors, threshold))
+          setReferencesReady(true)
+        } else {
+          setMessage("No valid reference images found for these students.")
+        }
+      } catch (err) {
+        console.error("Error loading reference images", err)
+        setMessage("Failed to load reference images.")
+      }
     }
 
-    setFormData(updated);
-  };
+    loadReferences()
+  }, [studentId, bucketName, folderName])
 
-  const handleJsonObjectChange = (fieldName, key, value) => {
-    setFormData((prev) => ({
-      ...prev,
-      [fieldName]: { ...prev[fieldName], [key]: Number(value) },
-    }));
-  };
+  // Capture and handle multi-student sign-in/sign-out
+  const handleCapture = async () => {
+    if (!referencesReady || !faceMatcher) {
+      setMessage("Reference faces not ready yet.")
+      return
+    }
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
+    setMessage("Detecting face(s)...")
+    const video = webcamRef.current
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext("2d")
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    const img = await faceapi.fetchImage(canvas.toDataURL("image/jpeg"))
+
+    const detections = await faceapi.detectAllFaces(img, new faceapi.TinyFaceDetectorOptions())
+      .withFaceLandmarks()
+      .withFaceDescriptors()
+    if (detections.length === 0) {
+      setMessage("No faces detected. Try again.")
+      return
+    }
+
+    const results = detections.map(d => faceMatcher.findBestMatch(d.descriptor))
+    const date = new Date().toISOString().split("T")[0]
+
     try {
-      const payload = { ...formData };
+      for (const match of results) {
+        if (match.label === "unknown") continue
+        const displayName = studentNames[match.label] || `ID ${match.label}`
 
-      schema.forEach((f) => {
-        if (f.type === "checkbox" || f.type === "boolean") {
-          payload[f.name] = !!payload[f.name];
-        }
-      });
+        if (!pendingSignIns[match.label]) {
+          // SIGN-IN
+          const signInTime = new Date().toISOString()
+          const { data, error } = await api.from("attendance_records").insert([{
+            student_id: match.label,
+            school_id: schoolId,
+            status: "present",
+            note: "biometric sign in",
+            date,
+            sign_in_time: signInTime
+          }]).select("id").single()
 
-      if (schema_name == "Student") {
-        payload.id = id;
-      } else {
-        payload.student_id = id || presetFields.student_id;
-      }
+          if (error) {
+            console.error(error)
+            setMessage(`Failed to record sign-in for ${displayName}.`)
+            continue
+          }
 
-      payload.category = presetFields.category || formData.category;
-      payload.school_id =
-        Number(presetFields.school_id) || Number(formData.school_id);
-
-      if (role === "superuser" || role === "admin") {
-        payload.sessionType = sessionType;
-      }
-      if (!id) {
-        payload.students = selectedStudents.map((s) => s.value);
-      }
-
-      await onSubmit(payload, id);
-
-      const resetData = {};
-      schema.forEach((f) => {
-        if (f.type === "json_object") {
-          const groupDefaults = {};
-          f.group.forEach((g) => (groupDefaults[g.key] = g.default ?? 0));
-          resetData[f.name] = { ...groupDefaults };
-        } else if (f.type === "checkbox" || f.type === "boolean") {
-          resetData[f.name] = false;
-        } else if (f.type === "select" && f.multiple) {
-          resetData[f.name] = [];
+          setPendingSignIns(prev => ({
+            ...prev,
+            [match.label]: { id: data.id, signInTime }
+          }))
+          setMessage(m => `${m}\n${displayName} signed in.`)
         } else {
-          resetData[f.name] = "";
+          // SIGN-OUT
+          const pending = pendingSignIns[match.label]
+          const signOutTime = new Date().toISOString()
+          const durationMs = new Date(signOutTime) - new Date(pending.signInTime)
+          const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(2)
+
+          await api.from("attendance_records").update({
+            sign_out_time: signOutTime
+          }).eq("id", pending.id)
+
+          if (sessionType === "academic") {
+            await api.from("academic_sessions").insert([{ student_id: match.label, duration_hours: durationHours, date }])
+          } else if (sessionType === "pe") {
+            await api.from("pe_sessions").insert([{ student_id: match.label, duration_hours: durationHours, date }])
+          }
+
+          setPendingSignIns(prev => {
+            const copy = { ...prev }
+            delete copy[match.label]
+            return copy
+          })
+          setMessage(m => `${m}\n${displayName} signed out. Duration: ${durationHours} hrs`)
         }
-      });
-      Object.assign(resetData, presetFields);
-      setFormData(resetData);
-    } catch (err) {
-      console.error(err);
-      setError(err.message || "Failed to submit");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const renderField = (field) => {
-    if (field.name === "student_id") return null;
-    if (field.name === "school_id") {
-      return (
-        <div key={field.name} className="mb-4">
-          <label className="block font-medium">{field.label || "School"}</label>
-          <select
-            value={formData[field.name] || ""}
-            onChange={(e) => handleChange(field.name, Number(e.target.value))}
-            className="w-full p-2 border rounded"
-          >
-            <option value="">Select School...</option>
-            {schools.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      );
-    }
-
-    if (field.name === "tutor_id") {
-      const schoolId = formData.school_id;
-      const filteredTutors = (tutorOptions || []).filter(
-        (opt) => !schoolId || opt.school_id === Number(schoolId)
-      );
-      return (
-        <div key={field.name} className="mb-4">
-          <label className="block font-medium">{field.label || "Tutor"}</label>
-          <select
-            value={formData[field.name] || ""}
-            onChange={(e) => handleChange("tutor_id", Number(e.target.value))}
-            className="w-full p-2 border rounded"
-          >
-            <option value="">Select Tutor...</option>
-            {filteredTutors.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      );
-    }
-
-    if (field.name === "coach_id") {
-      const schoolId = formData.school_id;
-      const filteredCoaches = (coachOptions || []).filter(
-        (opt) => !schoolId || opt.school_id === Number(schoolId)
-      );
-      return (
-        <div key={field.name} className="mb-4">
-          <label className="block font-medium">{field.label || "Coach"}</label>
-          <select
-            value={formData[field.name] || ""}
-            onChange={(e) => handleChange("coach_id", Number(e.target.value))}
-            className="w-full p-2 border rounded"
-          >
-            <option value="">Select Coach...</option>
-            {filteredCoaches.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      );
-    }
-
-    if (field.readOnly) {
-      return (
-        <div key={field.name} className="mb-4">
-          <label className="block text-sm font-medium">{field.label}</label>
-          <input
-            type="text"
-            value={presetFields[field.name] || ""}
-            readOnly
-            className="w-full p-2 border rounded bg-gray-100"
-          />
-        </div>
-      );
-    }
-
-    if (field.name === "age") {
-      return (
-        <div key={field.name} className="mb-4">
-          <label className="block text-sm font-medium">{field.label}</label>
-          <input
-            type="number"
-            value={formData[field.name] || ""}
-            readOnly
-            className="w-full p-2 border rounded bg-gray-100"
-          />
-        </div>
-      );
-    }
-
-    if (field.name === "date_of_birth") {
-      const today = new Date();
-      let minDate = "";
-      let maxDate = "";
-
-      if (schema_name === "Student") {
-        minDate = new Date(today.getFullYear() - 60, 0, 1)
-          .toISOString()
-          .split("T")[0];
-        maxDate = new Date(today.getFullYear() - 2, 11, 31)
-          .toISOString()
-          .split("T")[0];
-      } else if (schema_name === "Worker") {
-        minDate = new Date(today.getFullYear() - 60, 0, 1)
-          .toISOString()
-          .split("T")[0];
-        maxDate = new Date(today.getFullYear() - 18, 11, 31)
-          .toISOString()
-          .split("T")[0];
       }
 
-      return (
-        <div key={field.name} className="mb-4">
-          <label className="block text-sm font-medium">{field.label}</label>
-          <input
-            type="date"
-            value={formData[field.name] || ""}
-            onChange={(e) => handleChange(field.name, e.target.value)}
-            min={minDate}
-            max={maxDate}
-            className="w-full p-2 border rounded"
-          />
-        </div>
-      );
+      setCaptureDone(false) // Keep webcam open for next student
+    } catch (err) {
+      console.error(err)
+      setMessage("Failed to record attendance.")
     }
 
-    if (field.name === "is_fruit") {
-      return (
-        <div key={field.name} className="mb-4">
-          <label className="block font-medium mb-2">{field.label}</label>
-          <select
-            value={formData[field.name] || false}
-            onChange={(e) => handleChange(field.name, e.target.value === "true")}
-            className="w-full p-2 border rounded"
-          >
-            <option value="false">False</option>
-            <option value="true">True</option>
-          </select>
-        </div>
-      );
-    }
+    // Draw captured image on canvas
+    canvas.style.display = "block"
+    canvas.width = img.width
+    canvas.height = img.height
+    ctx.drawImage(img, 0, 0, img.width, img.height)
 
-    if (
-      (field.name === "fruit_type" ||
-        field.name === "fruit_other_description") &&
-      !formData.is_fruit
-    ) {
-      return null;
-    }
-
-    switch (field.type) {
-      case "multi_select":
-        return (
-          <EntityMultiSelect
-            key={field.name}
-            label={field.label}
-            value={formData[field.name]}
-            options={field.options || []}
-            onChange={(val) => handleChange(field.name, val)}
-          />
-        );
-      case "json_object":
-        const jsonValues = formData[field.name] || {};
-        return (
-          <div key={field.name}>
-            <label>{field.label}</label>
-            {field.group.map((g) => (
-              <div key={g.name}>
-                <label>{g.label}</label>
-                <input
-                  type="number"
-                  min={g.min ?? 0}
-                  max={g.max ?? 100}
-                  value={jsonValues[g.name]}
-                  onChange={(e) =>
-                    handleJsonObjectChange(field.name, g.name, e.target.value)
-                  }
-                  required
-                />
-              </div>
-            ))}
-          </div>
-        );
-      case "file":
-        return (
-          <UploadFile
-            key={field.name}
-            label={field.label}
-            value={formData[field.name]}
-            onChange={(val) => handleChange(field.name, val)}
-            folder="students"
-            id={studentId || id}
-            accept="image/*,.pdf"
-          />
-        );
-      case "select":
-        return (
-          <div key={field.name} className="mb-4">
-            <label className="block font-medium">{field.label}</label>
-            <select
-              multiple={field.multiple}
-              value={formData[field.name] || (field.multiple ? [] : "")}
-              onChange={(e) =>
-                handleChange(
-                  field.name,
-                  field.multiple
-                    ? Array.from(e.target.selectedOptions, (opt) => opt.value)
-                    : e.target.value
-                )
-              }
-              className="w-full p-2 border rounded"
-            >
-              <option value="">Select...</option>
-              {field.options?.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label || opt}
-                </option>
-              ))}
-            </select>
-          </div>
-        );
-      case "checkbox":
-        return (
-          <div key={field.name} className="mb-4 flex items-center">
-            <input
-              type="checkbox"
-              checked={!!formData[field.name]}
-              onChange={(e) => handleChange(field.name, e.target.checked)}
-              className="mr-2"
-            />
-            <label>{field.label}</label>
-          </div>
-        );
-      default:
-        return (
-          <div key={field.name} className="mb-4">
-            <label className="block text-sm font-medium">{field.label}</label>
-            <input
-              type={field.type || "text"}
-              value={formData[field.name] || ""}
-              onChange={(e) => handleChange(field.name, e.target.value)}
-              className="w-full p-2 border rounded"
-            />
-          </div>
-        );
-    }
-  };
+    setCaptureDone(true)
+  }
 
   return (
-    <form onSubmit={handleSubmit} className="p-4 bg-white rounded shadow-md">
-      {error && <p className="text-red-500">{error}</p>}
+    <div className="student-signin-container">
+      <h2>Biometric Sign In / Out</h2>
 
-      {(role === "superuser" || role === "admin") && (
-        <div className="mb-4">
-          <label className="block font-medium mb-2">Select Session Type</label>
-          <select
-            value={sessionType}
-            onChange={(e) => setSessionType(e.target.value)}
-            className="w-full p-2 border rounded"
-          >
-            <option value="">-- Select Session Type --</option>
-            {sessionOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
+      {loadingModels && <p>Loading face detection models...</p>}
+
+      {!loadingModels && (
+        <>
+          <div className="video-container">
+            <video ref={webcamRef} autoPlay width="320" height="240" style={{ display: captureDone ? 'none' : 'block' }} />
+            <canvas
+              ref={canvasRef}
+              width="320"
+              height="240"
+              style={{ display: captureDone ? 'block' : 'none' }}
+            />
+          </div>
+          <button className="submit-btn" onClick={handleCapture} disabled={!referencesReady}>
+            Sign In / Out Snapshot
+          </button>
+
+          {message && <pre className="message">{message}</pre>}
+        </>
       )}
-
-      <h1 className="text-2xl font-bold mb-6">
-        {id
-          ? `Log session for ${presetFields?.student?.full_name || "student"}`
-          : "Create Students Sessions (Bulk)"}
-      </h1>
-
-      {!id && (
-        <div className="mb-4">
-          <EntityMultiSelect
-            label="Select Students"
-            options={filteredStudents.map((s) => ({
-              label: s.full_name,
-              value: s.id,
-            }))}
-            value={selectedStudents}
-            onChange={setSelectedStudents}
-          />
-        </div>
-      )}
-
-      {schema.map(renderField)}
-
-      <button
-        type="submit"
-        disabled={loading}
-        className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-      >
-        {loading ? "Saving..." : id ? "Save Record" : "Submit"}
-      </button>
-    </form>
-  );
+    </div>
+  )
 }
+
+export default BiometricsSignIn
