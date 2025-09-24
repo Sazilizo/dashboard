@@ -40,7 +40,6 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
           "face_recognition_model-weights_manifest.json"
         ]
 
-        // Map to public URLs in your bucket
         const MODEL_URLS = MODEL_FILES.map(f =>
           `https://pmvecwjomvyxpgzfweov.supabase.co/storage/v1/object/public/faceapi-models/${f}`
         )
@@ -111,17 +110,29 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
             const { data: files, error } = await api.storage.from(bucketName).list(`${folderName}/${id}`)
             if (error || !files || files.length === 0) return null
 
+            // Filter out placeholders and non-image files
             const imageFiles = files.filter(f => /\.(jpg|jpeg|png)$/i.test(f.name))
             if (imageFiles.length === 0) return null
 
             const descriptors = await Promise.all(
               imageFiles.map(async (file) => {
                 try {
-                  const signedUrl = `https://pmvecwjomvyxpgzfweov.supabase.co/storage/v1/object/public/${bucketName}/${folderName}/${id}/${file.name}`
-                  const img = await faceapi.fetchImage(signedUrl)
-                  const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+                  const path = `${folderName}/${id}/${file.name}`
+                  const { data: urlData, error: urlError } = await api.storage
+                    .from(bucketName)
+                    .createSignedUrl(path, 60)
+
+                  if (urlError || !urlData?.signedUrl) {
+                    console.error("Signed URL error:", urlError)
+                    return null
+                  }
+
+                  const img = await faceapi.fetchImage(urlData.signedUrl)
+                  const detection = await faceapi
+                    .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
                     .withFaceLandmarks()
                     .withFaceDescriptor()
+
                   return detection?.descriptor ?? null
                 } catch (err) {
                   console.error(`Skipping invalid file for ${id}: ${file.name}`, err)
@@ -140,9 +151,12 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
         if (filteredDescriptors.length > 0) {
           setFaceMatcher(new faceapi.FaceMatcher(filteredDescriptors, threshold))
           setReferencesReady(true)
+        } else {
+          setMessage("No valid reference images found for this student.")
         }
       } catch (err) {
         console.error("Error loading reference images", err)
+        setMessage("Failed to load reference images.")
       }
     }
 
@@ -240,7 +254,6 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
       setUploadedFile(null)
       setCaptureDone(true)
 
-      setTimeout(() => navigate(-1), 2000)
     } catch (err) {
       console.error(err)
       setMessage("Failed to record attendance.")
