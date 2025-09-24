@@ -68,7 +68,6 @@ const router = createBrowserRouter([
           { path: ":id", element: <LearnerProfile /> },
           { path: "attandance/:id", element: <LearnerAttendanceCalendar /> },
           { path: "update/:id", element: <UpdateLearnerProfile /> },
-          { path: "mark-session/:id", element:<SessionMarkingForm/>},
           { path: "deleted", element: <StudentList deleted /> },
         ],
       },
@@ -94,6 +93,7 @@ const router = createBrowserRouter([
           { path: ":id/edit", element: <DynamicForm mode="edit" /> },
           { path: "bulk-upload", element: <BulkUploadSessions /> },
           { path: "record/:id", element: <SessionForm /> },
+          { path: "mark/:id", element:<SessionMarkingForm/>},
         ],
       },
 

@@ -27,11 +27,14 @@ export default function SessionMarkingForm() {
   }, [sessionType]);
 
   const presetFields = {
-    logged_by: user?.id,
+    // logged_by: user?.id,
     student_id: [id],
     session_id: selectedSession,
   };
 
+  useEffect(()=>{
+    console.log("user", user)
+  },[user])
   return (
     <div className="p-6">
       <h1 className="text-2xl font-bold mb-4">Mark Session for Student</h1>
@@ -57,6 +60,7 @@ export default function SessionMarkingForm() {
         <DynamicBulkForm
           schema_name={sessionType}
           presetFields={presetFields}
+          user={user && user}
           onSubmit={async (formData) => {
             const record = { ...formData, student_id: id, session_id: selectedSession };
             if (record.photo) {

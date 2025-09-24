@@ -99,6 +99,9 @@ const LearnerProfile = () => {
         <Link to={`/dashboard/sessions/record/${id}`} className="btn btn-primary">
           Record Session
         </Link>
+        <Link to={`/dashboard/sessions/mark/${id}`} className="btn btn-primary">
+          Mark Session
+        </Link>
         <Link to={`/dashboard/meals/distribute/${id}`} className="btn btn-secondary">
           Distribute Meal
         </Link>

@@ -55,8 +55,7 @@ export default function SessionForm() {
   });
 
   const presetFields = {
-    logged_by: user?.id || "",
-    school_id: filters?.school_id || user?.profile?.school_id,
+    school_id: Number(filters?.school_id) || Number(user?.profile?.school_id),
     ...(id ? { student_id: [id] } : { student_id: selectedStudents }),
   };
 
@@ -115,6 +114,7 @@ export default function SessionForm() {
         <DynamicBulkForm
           schema_name={sessionType === "academic_sessions" ? "Academic_sessions" : "PE_sessions"}
           presetFields={presetFields}
+          user={user}
           onSubmit={async (formData, singleId) => {
             const studentsId = singleId ? [singleId] : formData.student_id;
             if (!studentsId || studentsId.length === 0) {

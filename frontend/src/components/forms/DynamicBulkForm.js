@@ -7,7 +7,7 @@ import UploadFile from "../profiles/UploadFile";
 import { useSchools } from "../../context/SchoolsContext";
 import { useAuth } from "../../context/AuthProvider";
 
-export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubmit, studentId, tutorOptions, coachOptions }) {
+export default function DynamicBulkForm({ schema_name, presetFields = {}, user, onSubmit, studentId, tutorOptions, coachOptions }) {
   const { id } = useParams();
   const { schools } = useSchools();
   const [schema, setSchema] = useState([]);
@@ -71,7 +71,7 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
       });
 
       Object.assign(defaults, presetFields);
-      if (id) defaults.school_id = id
+      if (id) defaults.school_id = Number(id)
       if (presetFields.category) defaults.category = presetFields.category;
 
       setFormData(defaults);
@@ -138,7 +138,7 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
       }
 
       payload.category = presetFields.category || formData.category;
-      payload.school_id = presetFields.school_id || formData.school_id;
+      payload.school_id = Number(presetFields.school_id) || Number(formData.school_id);
 
       await onSubmit(payload, id);
 
@@ -177,7 +177,7 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
           <label className="block font-medium">{field.label || "School"}</label>
           <select
             value={formData[field.name] || ""}
-            onChange={(e) => handleChange(field.name, e.target.value)}
+            onChange={(e) => handleChange(field.name, Number(e.target.value))}
             className="w-full p-2 border rounded"
           >
             <option value="">Select School...</option>
@@ -192,7 +192,6 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
     }
     if (field.name === "tutor_id") {
       const schoolId = formData.school_id;
-      console.log("school Id for form:",schoolId)
       const filteredTutors = (tutorOptions || []).filter(
         (opt) => !schoolId || opt.school_id === Number(schoolId)
       );
@@ -240,21 +239,19 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
         </div>
       );
     }
-
-
-    if (field.readOnly) {
-      return (
-        <div key={field.name} className="mb-4">
-          <label className="block text-sm font-medium">{field.label}</label>
-          <input
-            type="text"
-            value={presetFields[field.name] || ""}
-            readOnly
-            className="w-full p-2 border rounded bg-gray-100"
-          />
-        </div>
-      );
-    }
+    // if (field.readOnly) {
+    //   return (
+    //     <div key={field.name} className="mb-4">
+    //       <label className="block text-sm font-medium">{field.label}</label>
+    //       <input
+    //         type="text"
+    //         value={presetFields[field.name] || ""}
+    //         readOnly
+    //         className="w-full p-2 border rounded bg-gray-100"
+    //       />
+    //     </div>
+    //   );
+    // }
 
     if (field.name === "age") {
       return (
@@ -416,16 +413,13 @@ export default function DynamicBulkForm({ schema_name, presetFields = {}, onSubm
     }
   };
 
-  // useEffect(()=>{
-  //   console.log("formData: ", formData)
-  // },[formData])
-
-  // useEffect(()=>{
-  //   console.log("scheema: ", schema)
-  // },[schema])
   useEffect(()=>{
     console.log("presetFields: ", presetFields)
   },[presetFields])
+
+  useEffect(()=>{
+    console.log("user: ", user)
+  },[user])
   return (
     <form onSubmit={handleSubmit} className="p-4 bg-white rounded shadow-md">
       {error && <p className="text-red-500">{error}</p>}

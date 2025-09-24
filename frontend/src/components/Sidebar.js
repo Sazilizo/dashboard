@@ -19,6 +19,9 @@ export default function Sidebar() {
   const { user } = useAuth();
   const notPrivileged = ["head tutor", "head coach"].includes(user?.profile?.roles.name);
 
+  useEffect(()=>{
+    console.log("user:", user)
+  })
  return (
   <div className="sidebar">
     <nav>
