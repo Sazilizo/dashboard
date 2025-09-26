@@ -1,4 +1,3 @@
-// src/pages/TrainingForm.jsx
 import React, { useState, useEffect } from "react";
 import DynamicBulkForm from "./DynamicBulkForm";
 import api from "../../api/client";

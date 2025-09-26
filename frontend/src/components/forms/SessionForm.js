@@ -63,7 +63,7 @@ export default function SessionForm() {
 
   return (
     <div className="p-6">
-      {/* {!id && (
+      {!id && (
         <div className="page-filters">
           <FiltersPanel
             user={user}
@@ -77,10 +77,10 @@ export default function SessionForm() {
             showDeletedOption={["admin", "hr", "superviser"].includes(role)}
           />
         </div>
-      )} */}
-
+      )}
+    <div className="form-container">
       {(role === "superuser" || role === "admin") && (
-        <div className="mb-4">
+        <div className="form-session-select">
           <label className="block font-medium mb-2">Select Session Type</label>
           <select
             value={sessionType}
@@ -95,32 +95,13 @@ export default function SessionForm() {
         </div>
       )}
 
-      <h1 className="text-2xl font-bold mb-6">
-        {id ? `Log session for ${student?.full_name || "student"}` : "Create Students Sessions (Bulk)"}
-      </h1>
-
-      {/* {!id && (
-        <div className="mb-4">
-          <EntityMultiSelect
-            label="Select Students"
-            options={filteredStudents}
-            value={selectedStudents}
-            onChange={setSelectedStudents}
-          />
-        </div>
-      )} */}
-
       {sessionType && (
         <DynamicBulkForm
           schema_name={sessionType === "academic_sessions" ? "Academic_sessions" : "PE_sessions"}
           presetFields={presetFields}
           user={user}
-          EntityMultiSelect={<EntityMultiSelect
-            label="Select Students"
-            options={filteredStudents}
-            value={selectedStudents}
-            onChange={setSelectedStudents}
-          />}
+          students={filteredStudents}
+          id={id && id}
           onSubmit={async (formData, singleId) => {
             const studentsId = singleId ? [singleId] : formData.student_id;
             if (!studentsId || studentsId.length === 0) {
@@ -128,7 +109,6 @@ export default function SessionForm() {
             }
 
             const tableName = sessionType;
-
             for (const studentId of studentsId) {
               const record = { ...formData, student_id: studentId };
               if (record.photo) {
@@ -146,6 +126,7 @@ export default function SessionForm() {
           }}
         />
       )}
+    </div>
     </div>
   );
 }

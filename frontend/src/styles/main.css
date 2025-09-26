@@ -441,6 +441,26 @@ img{
 .app-list-filters{
   font-size: 1.4vw;
 }
+
+.form-container{
+  border:1px solid red;
+  width:80%;
+  padding:20px;
+  margin:10px auto;
+  text-align: left;
+}
+.form-session-select{
+  width:fit-content;
+  margin: 20px auto
+}
+.student-multiselect{
+  width:40vw;
+  height:20vh;
+  overflow: hidden;
+  overflow-y: scroll;
+  margin: 20px auto;
+  scroll-behavior: smooth;
+}
 @keyframes shimmer {
   0% {
     background-position: 200% 0;

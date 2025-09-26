@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import api from "../../api/client";
-import RoleSelect from "../../hooks/RoleSelect";
 import EntityMultiSelect from "../../hooks/EntityMultiSelect";
 import UploadFile from "../profiles/UploadFile";
 import { useSchools } from "../../context/SchoolsContext";
@@ -157,7 +156,7 @@ export default function DynamicBulkForm({
         }
       });
 
-      if (schema_name == "Student") {
+      if (schema_name === "Student") {
         payload.id = id;
       } else {
         payload.student_id = id || presetFields.student_id;
@@ -176,6 +175,7 @@ export default function DynamicBulkForm({
 
       await onSubmit(payload, id);
 
+      // reset form
       const resetData = {};
       schema.forEach((f) => {
         if (f.type === "json_object") {
@@ -202,6 +202,27 @@ export default function DynamicBulkForm({
 
   const renderField = (field) => {
     if (field.name === "student_id") return null;
+
+    if (field.name === "school_id") {
+      return (
+        <div key={field.name} className="mb-4">
+          <label className="block font-medium">{field.label || "School"}</label>
+          <select
+            value={formData[field.name] || ""}
+            onChange={(e) => handleChange(field.name, Number(e.target.value))}
+            className="w-full p-2 border rounded"
+          >
+            <option value="">Select School...</option>
+            {schools.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+
     if (field.name === "school_id") {
       return (
         <div key={field.name} className="mb-4">
@@ -403,44 +424,6 @@ export default function DynamicBulkForm({
             accept="image/*,.pdf"
           />
         );
-      case "select":
-        return (
-          <div key={field.name} className="mb-4">
-            <label className="block font-medium">{field.label}</label>
-            <select
-              multiple={field.multiple}
-              value={formData[field.name] || (field.multiple ? [] : "")}
-              onChange={(e) =>
-                handleChange(
-                  field.name,
-                  field.multiple
-                    ? Array.from(e.target.selectedOptions, (opt) => opt.value)
-                    : e.target.value
-                )
-              }
-              className="w-full p-2 border rounded"
-            >
-              <option value="">Select...</option>
-              {field.options?.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label || opt}
-                </option>
-              ))}
-            </select>
-          </div>
-        );
-      case "checkbox":
-        return (
-          <div key={field.name} className="mb-4 flex items-center">
-            <input
-              type="checkbox"
-              checked={!!formData[field.name]}
-              onChange={(e) => handleChange(field.name, e.target.checked)}
-              className="mr-2"
-            />
-            <label>{field.label}</label>
-          </div>
-        );
       default:
         return (
           <div key={field.name} className="mb-4">
@@ -460,6 +443,7 @@ export default function DynamicBulkForm({
     <form onSubmit={handleSubmit} className="p-4 bg-white rounded shadow-md">
       {error && <p className="text-red-500">{error}</p>}
 
+      {/* Session type selector for admin/superuser */}
       {(role === "superuser" || role === "admin") && (
         <div className="mb-4">
           <label className="block font-medium mb-2">Select Session Type</label>
@@ -484,20 +468,19 @@ export default function DynamicBulkForm({
           : "Create Students Sessions (Bulk)"}
       </h1>
 
+      {/* Bulk mode student selector */}
       {!id && (
         <div className="mb-4">
           <EntityMultiSelect
             label="Select Students"
-            options={filteredStudents.map((s) => ({
-              label: s.full_name,
-              value: s.id,
-            }))}
+            options={filteredStudents}
             value={selectedStudents}
             onChange={setSelectedStudents}
           />
         </div>
       )}
 
+      {/* Schema-driven fields */}
       {schema.map(renderField)}
 
       <button
@@ -510,3 +493,5 @@ export default function DynamicBulkForm({
     </form>
   );
 }
+
+

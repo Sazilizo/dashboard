@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useAuth } from "../../context/AuthProvider";
 import { useSchools } from "../../context/SchoolsContext";
 import FiltersPanel from "../filters/FiltersPanel";
@@ -26,6 +26,10 @@ export default function StudentList() {
   const { filters, setFilters } = useFilters();
   const [showList, setShowList] = useState(true);
 
+
+  useEffect(() =>{
+    console.log(schools)
+  },[schools])
   const schoolIds = React.useMemo(() => {
     const roleName = user?.profile?.roles?.name;
     if (["superuser","admin","hr","viewer"].includes(roleName)) return schools.map(s => s.id).filter(Boolean);

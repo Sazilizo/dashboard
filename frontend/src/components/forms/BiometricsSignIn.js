@@ -209,7 +209,7 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
 
           setPendingSignIns(prev => ({
             ...prev,
-            [match.label]: { id: data.id, signInTime }
+            [match.label]: { id : data.id, signInTime }
           }))
           setMessage(m => `${m}\n${displayName} signed in.`)
         } else {
