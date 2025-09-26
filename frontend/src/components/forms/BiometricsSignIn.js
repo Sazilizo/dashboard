@@ -1,197 +1,233 @@
-import React, { useState, useRef, useEffect } from "react"
-import { useNavigate } from "react-router-dom"
-import api from "../../api/client"
-import * as faceapi from "face-api.js"
-import "../../styles/BiometricsSignIn.css"
+import React, { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import api from "../../api/client";
+import * as faceapi from "face-api.js";
+import "../../styles/BiometricsSignIn.css";
 
-// Global cache for face descriptors
-const faceDescriptorCache = {}
+// Global caches so multiple mounts reuse them
+const faceDescriptorCache = {};
+let modelsLoadedGlobal = false;
 
 const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, sessionType }) => {
-  const [loadingModels, setLoadingModels] = useState(true)
-  const [message, setMessage] = useState("")
-  const [faceMatcher, setFaceMatcher] = useState(null)
-  const [pendingSignIns, setPendingSignIns] = useState({})
-  const [captureDone, setCaptureDone] = useState(false)
-  const [referencesReady, setReferencesReady] = useState(false)
-  const [studentNames, setStudentNames] = useState({})
+  const [loadingModels, setLoadingModels] = useState(true);
+  const [message, setMessage] = useState("");
+  const [faceMatcher, setFaceMatcher] = useState(null);
+  const [pendingSignIns, setPendingSignIns] = useState({});
+  const [captureDone, setCaptureDone] = useState(false);
+  const [referencesReady, setReferencesReady] = useState(false);
+  const [studentNames, setStudentNames] = useState({});
+  const [isProcessing, setIsProcessing] = useState(false);
 
-  const webcamRef = useRef()
-  const canvasRef = useRef()
-  const threshold = 0.6
-  const navigate = useNavigate()
+  const webcamRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const threshold = 0.6; // Adjust as needed
+  const navigate = useNavigate();
 
-  // Load persisted pending sign-ins metadata
+  // Load pending sign-ins from localStorage
   useEffect(() => {
-    const stored = localStorage.getItem("pendingSignIns")
-    if (stored) setPendingSignIns(JSON.parse(stored))
-  }, [])
+    const stored = localStorage.getItem("pendingSignIns");
+    if (stored) setPendingSignIns(JSON.parse(stored));
+  }, []);
 
-  // Persist sign-ins metadata whenever they change
+  // Persist pending sign-ins
   useEffect(() => {
-    localStorage.setItem("pendingSignIns", JSON.stringify(pendingSignIns))
-  }, [pendingSignIns])
+    localStorage.setItem("pendingSignIns", JSON.stringify(pendingSignIns));
+  }, [pendingSignIns]);
 
-  // Load face-api models from Supabase
+  // Load face-api models (once globally)
   useEffect(() => {
-    const loadModelsFromSupabase = async () => {
+    let cancelled = false;
+
+    const loadModels = async () => {
       try {
+        if (modelsLoadedGlobal) {
+          setLoadingModels(false);
+          return;
+        }
+
         const MODEL_FILES = [
           "tiny_face_detector_model-weights_manifest.json",
           "face_landmark_68_model-weights_manifest.json",
           "face_recognition_model-weights_manifest.json"
-        ]
+        ];
+
         const MODEL_URLS = MODEL_FILES.map(f =>
           `https://pmvecwjomvyxpgzfweov.supabase.co/storage/v1/object/public/faceapi-models/${f}`
-        )
+        );
+
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URLS[0]),
           faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URLS[1]),
-          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URLS[2]),
-        ])
-        setLoadingModels(false)
+          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URLS[2])
+        ]);
+
+        modelsLoadedGlobal = true;
+        if (!cancelled) setLoadingModels(false);
       } catch (err) {
-        console.error("Failed to load models from Supabase", err)
-        setMessage("Failed to load face detection models.")
+        console.error("Failed to load face-api models from Supabase", err);
+        if (!cancelled) setMessage("Failed to load face detection models.");
       }
-    }
-    loadModelsFromSupabase()
-  }, [])
+    };
 
-  // Fetch student names for display
+    loadModels();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Fetch student names
   useEffect(() => {
-    const ids = Array.isArray(studentId) ? studentId : [studentId]
-    if (ids.length === 0) return
+    const ids = Array.isArray(studentId) ? studentId : [studentId];
+    if (!ids.length) return;
+
     const fetchNames = async () => {
-      const { data, error } = await api
-        .from("students")
-        .select("id, first_name, last_name")
-        .in("id", ids)
-      if (!error && data) {
-        const map = {}
-        data.forEach(s => { map[s.id] = `${s.first_name} ${s.last_name}` })
-        setStudentNames(map)
+      try {
+        const { data, error } = await api.from("students").select("id, full_name").in("id", ids);
+        if (!error && data) {
+          const map = {};
+          data.forEach(s => { map[s.id] = s.full_name; });
+          setStudentNames(map);
+        }
+      } catch (err) {
+        console.error("Failed to fetch student names", err);
       }
-    }
-    fetchNames()
-  }, [studentId])
+    };
 
-  // Setup webcam
+    fetchNames();
+  }, [studentId]);
+
+  // Webcam setup
   useEffect(() => {
-    if (captureDone) return
+    let mounted = true;
     const startWebcam = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true })
-        if (webcamRef.current) webcamRef.current.srcObject = stream
+        const constraints = {
+          audio: false,
+          video: { facingMode: "user", width: { ideal: 320 }, height: { ideal: 240 } }
+        };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        streamRef.current = stream;
+        if (webcamRef.current && mounted) {
+          webcamRef.current.srcObject = stream;
+          try { await webcamRef.current.play(); } catch (e) {}
+        }
       } catch (err) {
-        console.error(err)
-        setMessage("Could not access webcam.")
+        console.error("Could not access webcam.", err);
+        setMessage("Could not access webcam. Ensure camera is available and permission granted.");
       }
-    }
-    startWebcam()
-    return () => {
-      if (webcamRef.current?.srcObject) {
-        webcamRef.current.srcObject.getTracks().forEach(track => track.stop())
-      }
-    }
-  }, [captureDone])
+    };
 
-  // Load reference images and cache descriptors globally
+    if (!captureDone) startWebcam();
+
+    return () => {
+      mounted = false;
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
+    };
+  }, [captureDone]);
+
+  // Load reference images and create FaceMatcher
   useEffect(() => {
-    if (!studentId || !bucketName || !folderName) return
-    const ids = Array.isArray(studentId) ? studentId : [studentId]
+    if (!studentId || !bucketName || !folderName) return;
+    const ids = Array.isArray(studentId) ? studentId : [studentId];
 
     const loadReferences = async () => {
       try {
         const labeledDescriptors = await Promise.all(
-          ids.map(async (id) => {
-            if (faceDescriptorCache[id]) return faceDescriptorCache[id]
+          ids.map(async id => {
+            if (faceDescriptorCache[id]) return faceDescriptorCache[id];
 
-            const { data: files, error } = await api.storage.from(bucketName).list(`${folderName}/${id}`)
-            if (error || !files || files.length === 0) return null
+            const { data: files, error } = await api.storage.from(bucketName).list(`${folderName}/${id}`);
+            if (error || !files?.length) return null;
 
-            const imageFiles = files.filter(f => /\.(jpg|jpeg|png)$/i.test(f.name))
-            if (imageFiles.length === 0) return null
+            const imageFiles = files.filter(f => /\.(jpg|jpeg|png)$/i.test(f.name));
+            if (!imageFiles.length) return null;
 
             const descriptors = await Promise.all(
-              imageFiles.map(async (file) => {
+              imageFiles.map(async file => {
                 try {
-                  const path = `${folderName}/${id}/${file.name}`
-                  const { data: urlData, error: urlError } = await api.storage
-                    .from(bucketName)
-                    .createSignedUrl(path, 300)
-                  if (urlError || !urlData?.signedUrl) return null
-                  const img = await faceapi.fetchImage(urlData.signedUrl)
+                  const path = `${folderName}/${id}/${file.name}`;
+                  const { data: urlData, error: urlError } = await api.storage.from(bucketName).createSignedUrl(path, 300);
+                  if (urlError || !urlData?.signedUrl) return null;
+
+                  const img = await faceapi.fetchImage(urlData.signedUrl);
                   const detection = await faceapi
-                    .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+                    .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 192, scoreThreshold: 0.5 }))
                     .withFaceLandmarks()
-                    .withFaceDescriptor()
-                  return detection?.descriptor ?? null
+                    .withFaceDescriptor();
+
+                  return detection?.descriptor ?? null;
                 } catch (err) {
-                  console.error(`Skipping invalid file for ${id}: ${file.name}`, err)
-                  return null
+                  console.error(`Skipping invalid file for ${id}: ${file.name}`, err);
+                  return null;
                 }
               })
-            )
+            );
 
-            const validDescriptors = descriptors.filter(d => d !== null)
-            if (validDescriptors.length === 0) return null
+            const validDescriptors = descriptors.filter(d => d !== null);
+            if (!validDescriptors.length) return null;
 
-            const labeled = new faceapi.LabeledFaceDescriptors(id.toString(), validDescriptors)
-            faceDescriptorCache[id] = labeled
-            return labeled
+            const labeled = new faceapi.LabeledFaceDescriptors(id.toString(), validDescriptors);
+            faceDescriptorCache[id] = labeled;
+            return labeled;
           })
-        )
+        );
 
-        const filteredDescriptors = labeledDescriptors.filter(ld => ld !== null)
-        if (filteredDescriptors.length > 0) {
-          setFaceMatcher(new faceapi.FaceMatcher(filteredDescriptors, threshold))
-          setReferencesReady(true)
+        const filteredDescriptors = labeledDescriptors.filter(ld => ld !== null);
+        if (filteredDescriptors.length) {
+          setFaceMatcher(new faceapi.FaceMatcher(filteredDescriptors, threshold));
+          setReferencesReady(true);
         } else {
-          setMessage("No valid reference images found for these students.")
+          setMessage("No valid reference images found for these students.");
         }
       } catch (err) {
-        console.error("Error loading reference images", err)
-        setMessage("Failed to load reference images.")
+        console.error("Error loading reference images", err);
+        setMessage("Failed to load reference images.");
       }
-    }
+    };
 
-    loadReferences()
-  }, [studentId, bucketName, folderName])
+    loadReferences();
+  }, [studentId, bucketName, folderName, threshold]);
 
-  // Capture and handle multi-student sign-in/sign-out
+  // Capture handler (sign in/out)
   const handleCapture = async () => {
+    if (isProcessing) return;
     if (!referencesReady || !faceMatcher) {
-      setMessage("Reference faces not ready yet.")
-      return
+      setMessage("Reference faces not ready yet.");
+      return;
+    }
+    if (!webcamRef.current) {
+      setMessage("Webcam not initialized.");
+      return;
     }
 
-    setMessage("Detecting face(s)...")
-    const video = webcamRef.current
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext("2d")
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-    const img = await faceapi.fetchImage(canvas.toDataURL("image/jpeg"))
-
-    const detections = await faceapi.detectAllFaces(img, new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks()
-      .withFaceDescriptors()
-    if (detections.length === 0) {
-      setMessage("No faces detected. Try again.")
-      return
-    }
-
-    const results = detections.map(d => faceMatcher.findBestMatch(d.descriptor))
-    const date = new Date().toISOString().split("T")[0]
+    setIsProcessing(true);
+    setMessage("Detecting face(s)...");
 
     try {
+      const detectorOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 192, scoreThreshold: 0.5 });
+      const detections = await faceapi
+        .detectAllFaces(webcamRef.current, detectorOptions)
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+
+      if (!detections?.length) {
+        setMessage("No faces detected. Try again.");
+        setIsProcessing(false);
+        return;
+      }
+
+      const results = detections.map(d => faceMatcher.findBestMatch(d.descriptor));
+      const date = new Date().toISOString().split("T")[0];
+
       for (const match of results) {
-        if (match.label === "unknown") continue
-        const displayName = studentNames[match.label] || `ID ${match.label}`
+        if (match.label === "unknown") continue;
+        const displayName = studentNames[match.label] || `ID ${match.label}`;
 
         if (!pendingSignIns[match.label]) {
-          // SIGN-IN
-          const signInTime = new Date().toISOString()
+          // --- Sign In ---
+          const signInTime = new Date().toISOString();
           const { data, error } = await api.from("attendance_records").insert([{
             student_id: match.label,
             school_id: schoolId,
@@ -199,59 +235,54 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
             note: "biometric sign in",
             date,
             sign_in_time: signInTime
-          }]).select("id").single()
+          }]).select("id").single();
 
-          if (error) {
-            console.error(error)
-            setMessage(`Failed to record sign-in for ${displayName}.`)
-            continue
+          if (!error && data?.id) {
+            setPendingSignIns(prev => ({ ...prev, [match.label]: { id: data.id, signInTime } }));
+            setMessage(m => `${m}\n${displayName} signed in.`);
           }
 
-          setPendingSignIns(prev => ({
-            ...prev,
-            [match.label]: { id : data.id, signInTime }
-          }))
-          setMessage(m => `${m}\n${displayName} signed in.`)
         } else {
-          // SIGN-OUT
-          const pending = pendingSignIns[match.label]
-          const signOutTime = new Date().toISOString()
-          const durationMs = new Date(signOutTime) - new Date(pending.signInTime)
-          const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(2)
+          // --- Sign Out ---
+          const pending = pendingSignIns[match.label];
+          const signOutTime = new Date().toISOString();
+          const durationMs = new Date(signOutTime) - new Date(pending.signInTime);
+          const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(2);
 
-          await api.from("attendance_records").update({
-            sign_out_time: signOutTime
-          }).eq("id", pending.id)
+          await api.from("attendance_records").update({ sign_out_time: signOutTime }).eq("id", pending.id);
 
           if (sessionType === "academic") {
-            await api.from("academic_sessions").insert([{ student_id: match.label, duration_hours: durationHours, date }])
+            await api.from("academic_sessions").insert([{ student_id: match.label, duration_hours: durationHours, date }]);
           } else if (sessionType === "pe") {
-            await api.from("pe_sessions").insert([{ student_id: match.label, duration_hours: durationHours, date }])
+            await api.from("pe_sessions").insert([{ student_id: match.label, duration_hours: durationHours, date }]);
           }
 
           setPendingSignIns(prev => {
-            const copy = { ...prev }
-            delete copy[match.label]
-            return copy
-          })
-          setMessage(m => `${m}\n${displayName} signed out. Duration: ${durationHours} hrs`)
+            const copy = { ...prev };
+            delete copy[match.label];
+            return copy;
+          });
+          setMessage(m => `${m}\n${displayName} signed out. Duration: ${durationHours} hrs`);
         }
       }
 
-      setCaptureDone(false) // Keep webcam open for next student
+      // Draw snapshot
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext("2d");
+      const width = webcamRef.current.videoWidth || 320;
+      const height = webcamRef.current.videoHeight || 240;
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(webcamRef.current, 0, 0, width, height);
+
+      setCaptureDone(true);
     } catch (err) {
-      console.error(err)
-      setMessage("Failed to record attendance.")
+      console.error("handleCapture error:", err);
+      setMessage("Failed to detect/record attendance. Try again.");
+    } finally {
+      setIsProcessing(false);
     }
-
-    // Draw captured image on canvas
-    canvas.style.display = "block"
-    canvas.width = img.width
-    canvas.height = img.height
-    ctx.drawImage(img, 0, 0, img.width, img.height)
-
-    setCaptureDone(true)
-  }
+  };
 
   return (
     <div className="student-signin-container">
@@ -262,23 +293,34 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
       {!loadingModels && (
         <>
           <div className="video-container">
-            <video ref={webcamRef} autoPlay width="320" height="240" style={{ display: captureDone ? 'none' : 'block' }} />
-            <canvas
-              ref={canvasRef}
+            <video
+              ref={webcamRef}
+              autoPlay
+              playsInline
+              muted
               width="320"
               height="240"
-              style={{ display: captureDone ? 'block' : 'none' }}
+              style={{ display: captureDone ? 'none' : 'block', width: '100%' }}
+            />
+            <canvas
+              ref={canvasRef}
+              style={{ display: captureDone ? 'block' : 'none', width: '100%' }}
             />
           </div>
-          <button className="submit-btn" onClick={handleCapture} disabled={!referencesReady}>
-            Sign In / Out Snapshot
+
+          <button
+            className="submit-btn"
+            onClick={handleCapture}
+            disabled={!referencesReady || isProcessing}
+          >
+            {isProcessing ? "Processing..." : (Object.keys(pendingSignIns).length === 0 ? "Sign In Snapshot" : "Sign Out Snapshot")}
           </button>
 
           {message && <pre className="message">{message}</pre>}
         </>
       )}
     </div>
-  )
-}
+  );
+};
 
-export default BiometricsSignIn
+export default BiometricsSignIn;
