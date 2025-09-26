@@ -63,7 +63,7 @@ export default function SessionForm() {
 
   return (
     <div className="p-6">
-      {!id && (
+      {/* {!id && (
         <div className="page-filters">
           <FiltersPanel
             user={user}
@@ -77,7 +77,7 @@ export default function SessionForm() {
             showDeletedOption={["admin", "hr", "superviser"].includes(role)}
           />
         </div>
-      )}
+      )} */}
 
       {(role === "superuser" || role === "admin") && (
         <div className="mb-4">
@@ -99,7 +99,7 @@ export default function SessionForm() {
         {id ? `Log session for ${student?.full_name || "student"}` : "Create Students Sessions (Bulk)"}
       </h1>
 
-      {!id && (
+      {/* {!id && (
         <div className="mb-4">
           <EntityMultiSelect
             label="Select Students"
@@ -108,13 +108,19 @@ export default function SessionForm() {
             onChange={setSelectedStudents}
           />
         </div>
-      )}
+      )} */}
 
       {sessionType && (
         <DynamicBulkForm
           schema_name={sessionType === "academic_sessions" ? "Academic_sessions" : "PE_sessions"}
           presetFields={presetFields}
           user={user}
+          EntityMultiSelect={<EntityMultiSelect
+            label="Select Students"
+            options={filteredStudents}
+            value={selectedStudents}
+            onChange={setSelectedStudents}
+          />}
           onSubmit={async (formData, singleId) => {
             const studentsId = singleId ? [singleId] : formData.student_id;
             if (!studentsId || studentsId.length === 0) {
