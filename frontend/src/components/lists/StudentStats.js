@@ -53,11 +53,9 @@ const StudentStats = ({ students, loading }) => {
 
   return (
     <div className="page-stats">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Stacked Chart */}
-        <div className="stacked-chart-stats">
           {barChartData.length > 0 && (
-            <div className="bar-chart-stats">
+            <div className="grid-item page-stats-grid-items grade-distribution-chart">
               <GradeDistributionBarChart
                 title="Categories per Grade"
                 students={students}
@@ -68,15 +66,15 @@ const StudentStats = ({ students, loading }) => {
               />
             </div>
           )}
-        </div>
 
-        <div className="bar-charts">
+        <div className="grid-item page-stats-grid-items grade-category-chart">
           <StackedCategoryGradeChart
             title="Categories per Grade"
             students={students}
           />
-          {pieChartData.length > 0 && (
-            <div className="pie-chart-stats">
+        </div>
+        {pieChartData.length > 0 && (
+            <div className="grid-item page-stats-grid-items breakdown-pie-chart">
               <PieChartStats
                 title="Stdnt Cat Breakdown"
                 data={pieChartData}
@@ -85,8 +83,6 @@ const StudentStats = ({ students, loading }) => {
               />
             </div>
           )}
-        </div>
-      </div>
     </div>
   );
 };

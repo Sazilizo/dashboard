@@ -26,7 +26,7 @@ const LogoutButton = () => {
   return (
     <button
       onClick={handleLogout}
-      className="logout-button btn danger"
+      className="dropdown-item danger"
     >
       Logout
     </button>

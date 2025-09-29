@@ -1,6 +1,8 @@
+// src/components/forms/DynamicBulkForm.js
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import api from "../../api/client";
+import RoleSelect from "../../hooks/RoleSelect";
 import EntityMultiSelect from "../../hooks/EntityMultiSelect";
 import UploadFile from "../profiles/UploadFile";
 import { useSchools } from "../../context/SchoolsContext";
@@ -13,7 +15,9 @@ export default function DynamicBulkForm({
   studentId,
   tutorOptions,
   coachOptions,
-  students = [], // <-- pass students for bulk mode
+  selectedData,
+  filteredData,
+  valueChange
 }) {
   const { id } = useParams();
   const { schools } = useSchools();
@@ -34,11 +38,11 @@ export default function DynamicBulkForm({
     { value: "pe", label: "PE Session" },
   ];
 
-  useEffect(() => {
-    if (students.length) {
-      setFilteredStudents(students.filter((s) => s.active));
-    }
-  }, [students]);
+  // useEffect(() => {
+  //   if (students.length) {
+  //     setFilteredStudents(students.filter((s) => s.active));
+  //   }
+  // }, [students]);
 
   const calculateAge = (dobStr) => {
     if (!dobStr) return "";
@@ -95,9 +99,11 @@ export default function DynamicBulkForm({
         }
       });
 
-      Object.assign(defaults, presetFields);
-      if (id) defaults.school_id = Number(id);
-      if (presetFields.category) defaults.category = presetFields.category;
+      Object.keys(presetFields).forEach((k) => {
+        if (fields.some((f) => f.name === k)) {
+          defaults[k] = presetFields[k];
+        }
+      });
 
       setFormData(defaults);
     }
@@ -142,40 +148,59 @@ export default function DynamicBulkForm({
       [fieldName]: { ...prev[fieldName], [key]: Number(value) },
     }));
   };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     try {
-      const payload = { ...formData };
-
+      const payload = {...formData};
+      console.log(payload);
       schema.forEach((f) => {
+        let val = formData[f.name];
         if (f.type === "checkbox" || f.type === "boolean") {
-          payload[f.name] = !!payload[f.name];
+          val = !!val;
         }
+        payload[f.name] = val;
       });
 
-      if (schema_name === "Student") {
-        payload.id = id;
-      } else {
+      // if (schema.some((f) => f.name === "category")) {
+      //   payload.category = presetFields.category || formData.category;
+      // }
+      if (schema.some((f) => f.name === "school_id")) {
+        payload.school_id =
+          Number(presetFields.school_id) || Number(formData.school_id);
+      }
+      if (schema.some((f) => f.name === "student_id")) {
         payload.student_id = id || presetFields.student_id;
       }
-
-      payload.category = presetFields.category || formData.category;
-      payload.school_id =
-        Number(presetFields.school_id) || Number(formData.school_id);
 
       if (role === "superuser" || role === "admin") {
         payload.sessionType = sessionType;
       }
-      if (!id) {
-        payload.students = selectedStudents.map((s) => s.value);
+      if (["academic_sessions", "pe_sessions"].includes(schema_name  )) {
+        payload.auth_uid = user.id; // 👈 inject logged-in user’s UID
+        if (user.school_id) {
+          payload.school_id = user.school_id;
+        }
       }
 
-      await onSubmit(payload, id);
+       if (!id && (payload.student_ids?.length || payload.worker_ids?.length)) {
+        const ids = payload.student_ids || payload.worker_ids;
+        for (const entityId of ids) {
+          const record = {
+            ...payload,
+            student_id: payload.student_ids ? entityId : undefined,
+            worker_id: payload.worker_ids ? entityId : undefined,
+          };
+          await onSubmit(record, entityId);
+        }
+      } else {
+        // Single insert/update
+        console.log("payload ->: ", payload)
+        await onSubmit(payload, id);
+      }
 
-      // reset form
+      // Reset form
       const resetData = {};
       schema.forEach((f) => {
         if (f.type === "json_object") {
@@ -202,28 +227,9 @@ export default function DynamicBulkForm({
 
   const renderField = (field) => {
     if (field.name === "student_id") return null;
+    if (field.name === "school_id" && !schools?.length) return null;
 
-    if (field.name === "school_id") {
-      return (
-        <div key={field.name} className="mb-4">
-          <label className="block font-medium">{field.label || "School"}</label>
-          <select
-            value={formData[field.name] || ""}
-            onChange={(e) => handleChange(field.name, Number(e.target.value))}
-            className="w-full p-2 border rounded"
-          >
-            <option value="">Select School...</option>
-            {schools.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      );
-    }
-
-    if (field.name === "school_id") {
+    if (field.name === "school_id" && schools?.length) {
       return (
         <div key={field.name} className="mb-4">
           <label className="block font-medium">{field.label || "School"}</label>
@@ -272,6 +278,14 @@ export default function DynamicBulkForm({
       const filteredCoaches = (coachOptions || []).filter(
         (opt) => !schoolId || opt.school_id === Number(schoolId)
       );
+
+      const showCoach =
+        schema_name === "Student" &&
+        (formData.physical_education === true ||
+          formData.physical_education === "true"); 
+
+      if (!showCoach) return null;
+
       return (
         <div key={field.name} className="mb-4">
           <label className="block font-medium">{field.label || "Coach"}</label>
@@ -290,6 +304,7 @@ export default function DynamicBulkForm({
         </div>
       );
     }
+
 
     if (field.readOnly) {
       return (
@@ -378,9 +393,45 @@ export default function DynamicBulkForm({
     ) {
       return null;
     }
+    if (field.name === "gender") {
+      return (
+        <div key={field.name} className="mb-4">
+          <label className="block font-medium">{field.label || "Gender"}</label>
+          <select
+            value={formData[field.name] || ""}
+            onChange={(e) => handleChange("gender", e.target.value)}
+            className="w-full p-2 border rounded"
+          >
+            <option value="">Select Gender...</option>
+            <option value="male">Male</option>
+            <option value="female">Female</option>
+          </select>
+        </div>
+      );
+    }
+
+    if (field.name === "race") {
+      return (
+        <div key={field.name} className="mb-4">
+          <label className="block font-medium">{field.label || "Race"}</label>
+          <select
+            value={formData[field.name] || ""}
+            onChange={(e) => handleChange("race", e.target.value)}
+            className="w-full p-2 border rounded"
+          >
+            <option value="">Select Race...</option>
+            <option value="black">Black</option>
+            <option value="white">White</option>
+            <option value="coloured">Coloured</option>
+            <option value="indian">Indian</option>
+          </select>
+        </div>
+      );
+    }
+
 
     switch (field.type) {
-      case "multi_select":
+      case "multi_select" && field.label ==="Students":
         return (
           <EntityMultiSelect
             key={field.name}
@@ -424,6 +475,44 @@ export default function DynamicBulkForm({
             accept="image/*,.pdf"
           />
         );
+      case "select":
+        return (
+          <div key={field.name} className="mb-4">
+            <label className="block font-medium">{field.label}</label>
+            <select
+              multiple={field.multiple}
+              value={formData[field.name] || (field.multiple ? [] : "")}
+              onChange={(e) =>
+                handleChange(
+                  field.name,
+                  field.multiple
+                    ? Array.from(e.target.selectedOptions, (opt) => opt.value)
+                    : e.target.value
+                )
+              }
+              className="w-full p-2 border rounded"
+            >
+              <option value="">Select...</option>
+              {field.options?.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label || opt}
+                </option>
+              ))}
+            </select>
+          </div>
+        );
+      case "checkbox":
+        return (
+          <div key={field.name} className="mb-4 flex items-center">
+            <input
+              type="checkbox"
+              checked={!!formData[field.name]}
+              onChange={(e) => handleChange(field.name, e.target.checked)}
+              className="mr-2"
+            />
+            <label>{field.label}</label>
+          </div>
+        );
       default:
         return (
           <div key={field.name} className="mb-4">
@@ -439,11 +528,11 @@ export default function DynamicBulkForm({
     }
   };
 
+
   return (
     <form onSubmit={handleSubmit} className="p-4 bg-white rounded shadow-md">
       {error && <p className="text-red-500">{error}</p>}
 
-      {/* Session type selector for admin/superuser */}
       {(role === "superuser" || role === "admin") && (
         <div className="mb-4">
           <label className="block font-medium mb-2">Select Session Type</label>
@@ -468,19 +557,18 @@ export default function DynamicBulkForm({
           : "Create Students Sessions (Bulk)"}
       </h1>
 
-      {/* Bulk mode student selector */}
+      {/* Entity selector for bulk */}
       {!id && (
         <div className="mb-4">
           <EntityMultiSelect
-            label="Select Students"
-            options={filteredStudents}
-            value={selectedStudents}
-            onChange={setSelectedStudents}
+            label="Select Workers"
+            options={filteredData || []}
+            value={selectedData}
+            onChange={valueChange}
           />
         </div>
       )}
 
-      {/* Schema-driven fields */}
       {schema.map(renderField)}
 
       <button
@@ -493,5 +581,3 @@ export default function DynamicBulkForm({
     </form>
   );
 }
-
-

@@ -23,6 +23,7 @@ export function SchoolsProvider({ children }) {
           students:students(count),
           users:users(count),
           meals:meal_distributions(count)
+          trainings:training_records(count)
         `)
         .order("name", { ascending: true });
 

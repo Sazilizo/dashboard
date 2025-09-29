@@ -31,7 +31,7 @@ const GradeDistributionBarChart = ({ title, students, height = 300 }) => {
   if (data.length === 0) return null;
 
   return (
-    <div className="rounded-chart">
+    <div className="rounded-chart" style={{width:"100%",padding:0, margin:0}}>
       <h3 className="chart-title">{title}</h3>
       <ResponsiveContainer width="100%" height={height}>
         <BarChart data={data} margin={{ top: 20, right: 20, left: 0, bottom: 5 }}>

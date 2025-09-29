@@ -33,6 +33,9 @@ export default function SchoolsDashboard() {
       ? allowedSchools.filter((s) => schoolIds.includes(s.id))
       : allowedSchools;
 
+  useEffect(()=>{
+    console.log("schools: ", schools)
+  })
 
   return (
     <div>

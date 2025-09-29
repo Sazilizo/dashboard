@@ -10,7 +10,7 @@ import ProfileInfoCard from "../widgets/ProfileInfoCard";
 // import InfoCount from "../widgets/infoCount";
 import StatsDashboard from "../StatsDashboard";
 import { useAuth } from "../../context/AuthProvider";
-
+import "../../styles/Profile.css"
 const LearnerProfile = () => {
   const { id } = useParams();
   const { user } = useAuth();
@@ -32,6 +32,16 @@ const LearnerProfile = () => {
             attendance_records:attendance_records(student_id, *),
             assessments:assessments(student_id, *),
             pe_sessions:pe_sessions(student_id, *),
+            completed_academic_sessions: academic_session_participants(
+              id,
+              student_id,
+              specs,
+              session_id,
+              academic_session:session_id (
+                session_name,
+                date
+              )
+            ),
             meal_distributions:meal_distributions(
               student_id,
               *,
@@ -42,7 +52,18 @@ const LearnerProfile = () => {
           .single();
 
         if (error) throw error;
-        setStudent(data);
+
+        //Flatten academic_session fields
+        const flattened = {
+          ...data,
+          completed_academic_sessions: data.completed_academic_sessions?.map((p) => ({
+            ...p,
+            session_name: p.academic_session?.session_name,
+            date: p.academic_session?.date,
+          })) || [],
+        };
+
+        setStudent(flattened);
       } catch (err) {
         setError(err.message || err);
       } finally {
@@ -52,6 +73,8 @@ const LearnerProfile = () => {
 
     if (id) fetchStudent();
   }, [id]);
+
+
 
   // --- Build chart config dynamically ---
   const statsCharts = useMemo(() => {
@@ -78,7 +101,9 @@ const LearnerProfile = () => {
     document.title = student ? `${student.full_name} - Profile` : "Learner Profile";
   }, [student]);
 
-  useEffect(() => { console.log(student)}, [student]);
+  useEffect(()=>{
+    console.log("Student: ", student)
+  })
 
   if (loading) return <p>Loading student data...</p>;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
@@ -96,7 +121,7 @@ const LearnerProfile = () => {
       </div>
 
       <div className="student-edit-section">
-        <Link to={`/dashboard/sessions/record/${id}`} className="btn btn-primary">
+        <Link to={`/dashboard/sessions/create/single/${id}`} className="btn btn-primary">
           Record Session
         </Link>
         <Link to={`/dashboard/sessions/mark/${id}`} className="btn btn-primary">
@@ -116,7 +141,7 @@ const LearnerProfile = () => {
         </button>
       </div>
 
-      <div className="profile-container">
+      <div className="grid-layout">
         <div className="profile-wrapper">
           <Card className="profile-details-card-wrapper">
             <ProfileInfoCard data={student} bucketName="student-uploads" folderName="students" />
@@ -148,31 +173,47 @@ const LearnerProfile = () => {
             </div>
           </div>
         )}
-        {student.academic_sessions.length > 0 || student.pe_sessions.length > 0 && <button className="btn primary-btn" onClick={()=>setToggleSessionList(!toggleSessionList)}>{!toggleSessionList ? "show sessions": "close sessions"}</button>}
-        {
-          toggleSessionList && (
 
-          <div className="student-sessions-list">
-            <ul className="app-list">
-              {student.academic_sessions.map((s) => (
-                <li key={s.id}>
-                  <Link to={`/dashboard/students/${s.id}`}>
-                    <div className="app-profile-photo">
-                      {/* <Photos bucketName="student-uploads" folderName="students" id={s.id} photoCount={1} /> */}
-                    </div>
-                    <div className="app-list-item-details">
-                      <p><strong>{s.session_name}</strong><span style={{padding:" 5px 12px"}}>{s.category}</span></p>
-                      {/* <p>Grade: {s.grade}</p> */}
-                    </div>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-          )
-        }
+        <div className="grid-item list-items student-sessions-list">
+          {(student?.academic_sessions.length > 0 || student?.pe_sessions.length > 0) && (
+            <button className="btn primary-btn" onClick={()=>setToggleSessionList(!toggleSessionList)}>
+              {!toggleSessionList ? "show sessions": "close sessions"}
+            </button>
+          )}
+          {toggleSessionList && (
+              <ul className="app-list">
+                {student.academic_sessions?.map((s) => (
+                  <li key={s.id}>
+                    <Link to={`/dashboard/students/${s.id}`}>
+                      <div className="app-profile-photo"></div>
+                      <div className="app-list-item-details">
+                        <p>
+                          <strong>{s.session_name}</strong>
+                          <span style={{ padding: "5px 12px" }}>{s.category}</span>
+                        </p>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+                {student.pe_sessions?.map((s) => (
+                  <li key={`pe-${s.id}`}>
+                    <Link to={`/dashboard/students/${s.id}`}>
+                      <div className="app-profile-photo"></div>
+                      <div className="app-list-item-details">
+                        <p>
+                          <strong>{s.session_name}</strong>
+                          <span style={{ padding: "5px 12px" }}>{s.category}</span>
+                        </p>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+          )}
+        </div>
+
         {/* Use reusable StatsDashboard */}
-        <div className="profile-stats mt-6">
+        <div className="grid-item stats-container profile-stats mt-6">
           <StatsDashboard charts={statsCharts} loading={loading} layout="2col" />
         </div>
       </div>

@@ -60,6 +60,10 @@ export default function StudentForm() {
       ? { school_id: user.profile.school_id }
       : {}),
   };
+
+  useEffect(()=>{
+    console.log("tutors: ", tutorOptions, "coaches: ", coachOptions)
+  },[tutorOptions,coachOptions])
   const handleSubmit = async (payload) => {
     try {
       const { data, error } = await api

@@ -23,11 +23,7 @@ export function useSupabaseStudents() {
 
       try {
         let query = api.from("students").select(`
-          id,
-          full_name,
-          grade,
-          category,
-          school_id,
+          *,
           school:schools(name)   -- example join to get school name (optional)
         `);
 

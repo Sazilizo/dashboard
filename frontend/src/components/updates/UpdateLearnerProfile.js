@@ -4,11 +4,24 @@ import { useParams } from "react-router-dom";
 import api from "../../api/client";
 import DynamicBulkForm from "../forms/DynamicBulkForm";
 import UploadFileHelper from "../profiles/UploadHelper";
+import { useSchools } from "../../context/SchoolsContext";
+import { useAuth } from "../../context/AuthProvider";
 
 export default function UpdateLearnerProfile() {
   const { id } = useParams();
+  const {user} = useAuth()
+  const {schools} = useSchools();
   const [student, setStudent] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [tutorOptions, setTutorOptions] = useState([]);
+  const [coachOptions, setCoachOptions] = useState([]);
+
+
+  const schoolIds = React.useMemo(() => {
+        const roleName = user?.profile?.roles?.name;
+        if (["superuser","admin","hr","viewer"].includes(roleName)) return schools.map(s => s.id).filter(Boolean);
+        return user?.profile?.school_id ? [user.profile.school_id] : [];
+      }, [user?.profile?.roles?.name, user?.profile?.school_id, schools]);
 
   useEffect(() => {
     const fetchStudent = async () => {
@@ -31,6 +44,37 @@ export default function UpdateLearnerProfile() {
     if (id) fetchStudent();
   }, [id]);
 
+   useEffect(() => {
+    if (!schoolIds) return;
+
+    async function fetchWorkers() {
+      const { data, error } = await api
+        .from("workers")
+        .select("id, name, last_name, role:roles(name),school_id")
+        .in("school_id", schoolIds);
+
+      if (error) {
+        console.error("Failed to fetch workers:", error);
+        return;
+      }
+      console.log("data",data)
+
+      setTutorOptions(
+        data
+          .filter((w) => w.role?.name === "tutor")
+          .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id}))
+      );
+
+      setCoachOptions(
+        data
+          .filter((w) => w.role?.name === "coach")
+          .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id }))
+      );
+    }
+
+    fetchWorkers();
+  }, [schoolIds]);
+
   useEffect(()=>{
     console.log("student to update:", student)
   },[student])
@@ -50,6 +94,9 @@ export default function UpdateLearnerProfile() {
         <DynamicBulkForm
           schema_name="Student"
           presetFields={student}
+          tutorOptions={tutorOptions}
+          coachOptions={coachOptions}
+          id={id && id}
           onSubmit={async (formData) => {
             try {
               const record = { ...formData };

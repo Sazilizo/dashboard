@@ -20,19 +20,23 @@ const formatDateParts = (dateStr) => {
 };
 
 const SpecsRadarChart = ({ student, user }) => {
-  const role = user?.profile?.roles?.name;
+  const role = user?.profile?.roles?.name?.toLowerCase();
 
-  // Merge sessions and tag with session_type
+  console.log(student)
+  //Merge participants and tag type
   const allSessions = useMemo(() => {
     if (!student) return [];
 
-    const academic = (student.academic_sessions || []).map((s) => ({
+    const academic = (student.completed_academic_sessions || []).map((s) => ({
       ...s,
       session_type: "academic",
+      date: s.date, 
     }));
-    const pe = (student.pe_sessions || []).map((s) => ({
+
+    const pe = (student.pe_session_participants || []).map((s) => ({
       ...s,
       session_type: "pe",
+      date: s.date, 
     }));
 
     if (role === "admin" || role === "superuser") return [...academic, ...pe];
@@ -41,7 +45,6 @@ const SpecsRadarChart = ({ student, user }) => {
     return [];
   }, [student, role]);
 
-  // Session type filter for admins/superusers
   const [selectedSessionType, setSelectedSessionType] = useState("all");
 
   const sessions = useMemo(() => {
@@ -53,7 +56,7 @@ const SpecsRadarChart = ({ student, user }) => {
   const [selectedMonths, setSelectedMonths] = useState([]);
   const [selectedTerms, setSelectedTerms] = useState([]);
 
-  // Build filter options dynamically
+  // Build filter options
   const filterOptions = useMemo(() => {
     if (!sessions) return { years: [], months: {}, terms: {} };
 
@@ -88,7 +91,7 @@ const SpecsRadarChart = ({ student, user }) => {
     };
   }, [sessions]);
 
-  // Initialize defaults only when no year is selected
+  // Default year
   useEffect(() => {
     if (!selectedYear && filterOptions.years.length > 0) {
       const fallbackYear = filterOptions.years[0];
@@ -98,7 +101,7 @@ const SpecsRadarChart = ({ student, user }) => {
     }
   }, [filterOptions, selectedYear]);
 
-  // Aggregate filtered specs
+  // Aggregate specs
   const aggregatedData = useMemo(() => {
     if (!sessions || sessions.length === 0 || !selectedYear) return [];
 
@@ -132,9 +135,12 @@ const SpecsRadarChart = ({ student, user }) => {
     }));
   }, [sessions, selectedYear, selectedMonths, selectedTerms]);
 
+  useEffect(()=>{
+    console.log("Aggregated data:", aggregatedData && aggregatedData)
+  },[aggregatedData])
   return (
     <div className="p-4 bg-white rounded-2xl shadow-md">
-      {/* Admin session type selector */}
+      {/* Admin filter */}
       {(role === "admin" || role === "superuser") && (
         <div className="mb-4">
           <label className="mr-2 font-semibold">Session Type:</label>
@@ -171,52 +177,6 @@ const SpecsRadarChart = ({ student, user }) => {
           ))}
         </select>
       </div>
-
-      {/* Term checkboxes */}
-      {selectedYear && filterOptions.terms[selectedYear] && (
-        <div className="mb-4">
-          <p className="font-semibold mb-1">Terms:</p>
-          {filterOptions.terms[selectedYear].map((term) => (
-            <label key={term} className="mr-4">
-              <input
-                type="checkbox"
-                checked={selectedTerms.includes(term)}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    setSelectedTerms([...selectedTerms, term]);
-                  } else {
-                    setSelectedTerms(selectedTerms.filter((t) => t !== term));
-                  }
-                }}
-              />{" "}
-              {term}
-            </label>
-          ))}
-        </div>
-      )}
-
-      {/* Month checkboxes */}
-      {selectedYear && filterOptions.months[selectedYear] && (
-        <div className="mb-4">
-          <p className="font-semibold mb-1">Months:</p>
-          {filterOptions.months[selectedYear].map((month) => (
-            <label key={month} className="mr-4">
-              <input
-                type="checkbox"
-                checked={selectedMonths.includes(month)}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    setSelectedMonths([...selectedMonths, month]);
-                  } else {
-                    setSelectedMonths(selectedMonths.filter((m) => m !== month));
-                  }
-                }}
-              />{" "}
-              {month}
-            </label>
-          ))}
-        </div>
-      )}
 
       {/* Chart */}
       {aggregatedData.length > 0 ? (

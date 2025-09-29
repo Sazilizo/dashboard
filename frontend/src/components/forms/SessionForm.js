@@ -56,9 +56,10 @@ export default function SessionForm() {
 
   const presetFields = {
     school_id: Number(filters?.school_id) || Number(user?.profile?.school_id),
+    logged_by: user && user?.profile?.id,
     ...(id ? { student_id: [id] } : { student_id: selectedStudents }),
   };
-
+  console.log(filteredStudents)
   const student = students.find(s => s.id === Number(id));
 
   return (
@@ -78,6 +79,11 @@ export default function SessionForm() {
           />
         </div>
       )}
+      <h1 className="text-2xl font-bold mb-6">
+        {id
+          ? `Log session for ${student?.full_name || "student"}`
+          : "Create Students Sessions (Bulk)"}
+      </h1>
     <div className="form-container">
       {(role === "superuser" || role === "admin") && (
         <div className="form-session-select">
@@ -100,17 +106,20 @@ export default function SessionForm() {
           schema_name={sessionType === "academic_sessions" ? "Academic_sessions" : "PE_sessions"}
           presetFields={presetFields}
           user={user}
-          students={filteredStudents}
+          filteredData={filteredStudents}
+          selectedData={selectedStudents}
+          valueChange={setSelectedStudents}
           id={id && id}
           onSubmit={async (formData, singleId) => {
             const studentsId = singleId ? [singleId] : formData.student_id;
             if (!studentsId || studentsId.length === 0) {
               throw new Error("Please select at least one student.");
             }
-
+ 
+            console.log("formData: ", formData);
             const tableName = sessionType;
             for (const studentId of studentsId) {
-              const record = { ...formData, student_id: studentId };
+              const record = { ...formData, student_id: studentId, user_id: user && user.profile?.id};
               if (record.photo) {
                 record.photo = await UploadFile(
                   record.photo,
@@ -118,8 +127,8 @@ export default function SessionForm() {
                   `${studentId}/${record.title || "session"}`
                 );
               }
-              delete record.logged_by;
 
+              console.log(record)
               const { error } = await api.from(tableName).insert(record);
               if (error) throw error;
             }

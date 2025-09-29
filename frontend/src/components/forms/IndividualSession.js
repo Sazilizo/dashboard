@@ -7,11 +7,10 @@ import EntityMultiSelect from "../../hooks/EntityMultiSelect";
 import { useAuth } from "../../context/AuthProvider";
 import UploadFileHelper from "../profiles/UploadHelper";
 
-export default function TrainingForm() {
+export default function IndividualSessionForm() {
   const { id } = useParams(); // single student mode
   const { user } = useAuth();
   const [student, setStudent] = useState(null);
-  const [workers, setWorkers] = useState([]);
   const [selectedWorkers, setSelectedWorkers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -44,19 +43,21 @@ export default function TrainingForm() {
   }, [id]);
 
   // Fetch all workers for bulk mode
-  useEffect(() => {
-    if (id) return; // skip in single mode
-    async function fetchWorkers() {
-      try {
-        const { data, error } = await api.from("workers").select("*");
-        if (error) throw error;
-        setWorkers(data || []);
-      } catch (err) {
-        console.error(err);
-      }
-    }
-    fetchWorkers();
-  }, [id]);
+  // useEffect(() => {
+  //   if (id) return; // skip in single mode
+  //   async function fetchWorkers() {
+  //     try {
+  //       const { data, error } = await api.from("workers").select("*");
+  //       if (error) throw error;
+  //       setWorkers(data || []);
+  //     } catch (err) {
+  //       console.error(err);
+  //     }
+  //   }
+  //   fetchWorkers();
+  // }, [id]);
+
+  // const student = students.find(s => s.id === Number(id));
 
   // Prepare preset fields
   const presetFields = {
@@ -64,32 +65,26 @@ export default function TrainingForm() {
     ...(student?.category ? { category: student.category } : {}),
   };
 
+  useEffect(()=>{
+    console.log("student: ", student)
+  },[student])
+
   if (loading) return <p>Loading...</p>;
   if (error) return <p className="text-red-500">{error}</p>;
 
   return (
     <div className="p-6">
       <h1 className="text-2xl font-bold mb-6">
-        {id ? "Log Training for Worker" : "Create Worker Trainings (Bulk)"}
+        {/* Create session for {student && student.full_name} */}
       </h1>
 
-      {/* Bulk mode: show MultiSelect */}
-      {!id && (
-        <div className="mb-4">
-          <EntityMultiSelect
-            label="Select Workers"
-            options={workers}
-            value={selectedWorkers}
-            onChange={setSelectedWorkers}
-          />
-        </div>
-      )}
 
       {/* Render the dynamic form */}
-      {(!id || (id && student)) && (
+      {/* {(!id || (id && student)) && (
         <DynamicBulkForm
           schema_name="academic_sessions"
           presetFields={presetFields}
+          studentId={student.id}
           onSubmit={async (formData, singleId) => {
             // Determine worker IDs
             const workerIds = singleId ? [singleId] : selectedWorkers;
@@ -116,7 +111,7 @@ export default function TrainingForm() {
             }
           }}
         />
-      )}
+      )} */}
     </div>
   );
 }

@@ -59,9 +59,9 @@ export default function StudentList() {
           </div>
         </div>
 
-        <div className={`split-container ${showList ? "expanded" : "collapsed"}`}>
-          <div className={`app-list-panel ${showList ? "show" : "hide"}`}>
-            <Link to="/dashboard/students/create" className="app-btn app-btn-primary">Create student</Link>
+        <div className={`grid-layout split-container ${showList ? "expanded" : "collapsed"}`}>
+          <div className={`list-items grid-item app-list-panel ${showList ? "show" : "hide"}`}>
+            <Link to="/dashboard/students/create" className="btn btn-primary">Create student</Link>
 
             {loading && <SkeletonList count={10} />}
             {!loading && error && <div style={{color:"red"}}>{error.message || error}</div>}
@@ -70,11 +70,7 @@ export default function StudentList() {
             {/* <Pagination page={page} hasMore={hasMore} loadMore={loadMore} loading={loading} /> */}
           </div>
 
-          <button className="app-list-toggle-btn" onClick={() => setShowList(prev => !prev)}>
-            {showList ? "<" : ">"}
-          </button>
-
-          <div className="app-list-stats">
+          <div className="grid-item stats-container app-list-stats">
             {students.length > 0 && <StudentStats students={students} loading={loading} />}
           </div>
         </div>

@@ -70,12 +70,12 @@ export default function StackedCategoryGradeChart({ students, height = 300 }) {
     : [];
 
   return (
-    <div className="rounded-chart">
+    <div className="rounded-chart" style={{width:"100%",padding:0, margin:0}}>
       <h3 className="chart-title">Student Cat. per Grade</h3>
       <ResponsiveContainer width="100%" height={height}>
         <BarChart
           data={data}
-          margin={{ top: 16, right: 16, left: 16, bottom: 16 }}
+          // margin={{ top: 16, right: 16, left: 16, bottom: 16 }}
           stackOffset="expand" // optional: for percent stacking, remove if you want absolute
         >
           <CartesianGrid strokeDasharray="3 6" />

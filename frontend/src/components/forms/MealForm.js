@@ -10,10 +10,6 @@ export default function MealForm() {
   const { user } = useAuth();
   const [mealId, setMealId] = useState(null);
 
-  const presetFields = {
-    // school_id: user?.profile?.school_id,
-  };
-
   const handleSubmit = async (payload) => {
     try {
       // insert into meals table
@@ -37,7 +33,6 @@ export default function MealForm() {
       <h2 className="text-xl font-bold mb-4">Create Meal</h2>
       <DynamicBulkForm
         schema_name="Meal"
-        presetFields={presetFields}
         onSubmit={handleSubmit}
         studentId={mealId} // optional for consistency with DynamicBulkForm
       />

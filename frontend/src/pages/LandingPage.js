@@ -18,13 +18,16 @@ const LandingPage = () => {
     >
       <div className="overlay">
         <div className="brand-title">EduTracker</div>
-        <div className="tagline">
-          Empowering educators and tracking learner growth with ease.
+        <div style={{display:"flex", justifyContent:"space-between"}}>
+          <div className="tagline">
+            Empowering educators and tracking learner growth with ease.
+          </div>
+          <button className="login-button" onClick={handleLogin}>
+            Login
+          </button>
         </div>
-        <button className="login-button" onClick={handleLogin}>
-          Login
-        </button>
-      </div>
+
+        </div>
     </div>
   );
 };

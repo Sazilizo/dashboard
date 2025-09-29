@@ -1,13 +1,15 @@
-
+body{
+  font-size: 14px;
+}
 .profile-wrapper{
   width:100%;
-  padding:1rem;
+  /* padding:1rem; */
   display: flex;
   justify-content: space-between;
 }
 .profile-details-count-card, .profile-details-card-wrapper{
   border:1px solid blue;
-  width:49%;
+  width: clamp(200px, 50%, 800px);
   height:fit-content;
   border:2px solid rgba(0, 0, 0, 0.2);
   box-shadow: 5px 5px 10px 2px #a19f9f;
@@ -17,14 +19,12 @@
 .profile-details-count-card{
   display: flex;
   flex-wrap: wrap;
-  gap: .7rem;
   padding:.5rem;
   text-align: center;
 }
 .info-count-card{
   border:2px solid rgba(0, 0, 0, 0.2);
   box-shadow: 5px 5px 10px 2px #a19f9f;
-  padding:.2rem;
   width:48%;
   border-radius: 5px;
   font-size: clamp(1rem, 2vw, 1.054rem);
@@ -96,4 +96,88 @@
 .app-card{
   flex-wrap: wrap;
 }
+/* Container for the form */
+.edit-profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 500px;
+  padding: 1rem;
+  border-radius: 10px;
+  box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+  background-color: #fff;
+  font-family: Arial, sans-serif;
+}
 
+/* Labels */
+.edit-profile-form label {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+/* Inputs and selects */
+.edit-profile-form input,
+.edit-profile-form select {
+  padding: 0.5rem;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  font-size: 0.95rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.edit-profile-form input:disabled {
+  background-color: #f0f0f0;
+  cursor: not-allowed;
+}
+
+/* Avatar upload */
+.avatar-preview {
+  margin-top: 0.5rem;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background-color: #ccc;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-weight: bold;
+  font-size: 1.5rem;
+  overflow: hidden;
+  object-fit: cover;
+}
+
+.avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Buttons */
+.edit-profile-form button[type="submit"] {
+  padding: 0.6rem 1rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  background-color: teal;
+  color: #fff;
+  transition: background-color 0.2s;
+}
+
+.edit-profile-form button[type="submit"]:disabled {
+  background-color: #888;
+  cursor: not-allowed;
+}
+
+.edit-profile-form button[type="submit"]:hover:not(:disabled) {
+  background-color: #006666;
+}
+
+/* Error message */
+.edit-profile-form .error-message {
+  color: red;
+  font-weight: 500;
+  margin-top: -0.5rem;
+}

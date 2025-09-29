@@ -61,7 +61,7 @@ export default function AttendanceBarChart({ student }) {
   }, [filteredData]);
 
   return (
-    <div className="p-4 bg-white rounded-2xl shadow">
+    <>
       <h2 className="text-lg font-bold mb-2">Attendance Chart</h2>
       <StudentChartFilters filters={filters} onChange={setFilters} />
 
@@ -78,6 +78,6 @@ export default function AttendanceBarChart({ student }) {
           </Bar>
         </BarChart>
       </ResponsiveContainer>
-    </div>
+    </>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import api from "../../api/client"; // Postgres table operations
+import api from "../../api/client";
 
 export default function EditProfile({ user }) {
   const [form, setForm] = useState({
@@ -41,10 +41,10 @@ export default function EditProfile({ user }) {
     const fileExt = file.name.split('.').pop();
     const fileName = `${user.id}.${fileExt}`;
     const { error: uploadError } = await api.storage
-      .from('avatars')
+      .from('profile-avatars')
       .upload(fileName, file, { upsert: true });
     if (uploadError) return setError(uploadError.message);
-    const url = api.storage.from('avatars').getPublicUrl(fileName).publicUrl;
+    const url = api.storage.from('profile-avatars').getPublicUrl(fileName).publicUrl;
     setForm(f => ({ ...f, avatar_url: url }));
   };
 
@@ -54,7 +54,6 @@ export default function EditProfile({ user }) {
     setError("");
 
     try {
-      // Regular user: update email and password
       if (!isPrivileged) {
         if (form.email !== user.email) {
           const { error: emailError } = await api.auth.updateUser({ email: form.email });
@@ -66,7 +65,6 @@ export default function EditProfile({ user }) {
         }
       }
 
-      // Update public.profiles
       const updates = {
         username: form.username,
         avatar_url: form.avatar_url
@@ -92,14 +90,14 @@ export default function EditProfile({ user }) {
   };
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form onSubmit={handleSubmit} className="edit-profile-form">
       <label>Email:</label>
       <input
         type="email"
         name="email"
         value={form.email}
         onChange={handleChange}
-        disabled={isPrivileged} // only user themselves can change
+        disabled={isPrivileged}
       />
 
       <label>Password:</label>
@@ -117,7 +115,13 @@ export default function EditProfile({ user }) {
 
       <label>Avatar:</label>
       <input type="file" accept="image/*" onChange={handleAvatarChange} />
-      {form.avatar_url && <img src={form.avatar_url} alt="avatar" width={80} height={80} />}
+      <div className="avatar-preview">
+        {form.avatar_url ? (
+          <img src={form.avatar_url} alt="avatar" onError={(e)=>e.currentTarget.style.display='none'} />
+        ) : (
+          <span>{user?.profile?.username?.[0]?.toUpperCase() || "?"}</span>
+        )}
+      </div>
 
       {isPrivileged && (
         <>
@@ -135,7 +139,7 @@ export default function EditProfile({ user }) {
         </>
       )}
 
-      {error && <div style={{ color: "red" }}>{error}</div>}
+      {error && <div className="error-message">{error}</div>}
       <button type="submit" disabled={loading}>
         {loading ? "Saving..." : "Save"}
       </button>

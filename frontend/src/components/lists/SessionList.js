@@ -58,6 +58,7 @@ export default function SessionList({deleted}) {
       {!loading && !error && (
         <ul className="app-list">
           {sessions && sessions.map(s => {
+            console.log()
             return (
               <li key={s.id}>
                 <Link to={`/dashboard/dashboard/session/${s.id}`}>

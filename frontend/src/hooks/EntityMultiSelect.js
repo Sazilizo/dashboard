@@ -1,33 +1,31 @@
 import React from "react";
 
-function EntityMultiSelect({ options, value, onChange }) {
+function EntityMultiSelect({ label = "Please Select", options, value, onChange }) {
   const safeValue = Array.isArray(value) ? value : value ? [value] : [];
 
   const handleToggle = (id) => {
-    console.log("student id", id);
-    console.log("current value", safeValue);
     if (safeValue.includes(id)) {
-      onChange(safeValue.filter(v => v !== id));
+      onChange(safeValue.filter((v) => v !== id));
     } else {
       onChange([...safeValue, id]);
     }
   };
 
   return (
-    <div className="student-multiselect">
-      <h2>Please Select</h2>
-      {options.map(opt => (
-        <label key={opt.id} style={{ display: "block" }}>
+    <div className="entity-multiselect mb-4">
+      <h2 className="font-medium mb-2">{label}</h2>
+      {options.map((opt) => (
+        <label key={opt.id} className="block">
           <input
             type="checkbox"
             checked={safeValue.includes(opt.id)}
             onChange={() => handleToggle(opt.id)}
           />
-          {opt.full_name || opt.name}
+          <span className="ml-2">{opt.full_name || opt.name || `ID: ${opt.id}`}</span>
         </label>
       ))}
     </div>
   );
 }
 
-export default EntityMultiSelect
+export default EntityMultiSelect;

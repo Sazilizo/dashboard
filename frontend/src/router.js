@@ -28,6 +28,8 @@ import SessionMarkingForm from "./components/forms/SessionMarkingForm";
 import Users from "./components/lists/Users";
 // import PrivateRoute from "./components/PrivateRoute";
 import ErrorBoundary from "./components/ErrorBoundary";
+import IndividualSessionForm from "./components/forms/IndividualSession";
+import WorkerProfile from "./components/profiles/WorkerProfile";
 
 const router = createBrowserRouter([
   {
@@ -78,6 +80,7 @@ const router = createBrowserRouter([
         children: [
           { index: true, element: <WorkerList /> },
           { path: "create", element: <WorkerForm /> },
+          { path: ":id", element:<WorkerProfile />},
           { path: ":id/edit", element: <DynamicForm model="Worker" mode="edit" /> },
           { path: "deleted", element: <WorkerList deleted /> },
           {path: "users", element:<Users/>}
@@ -90,6 +93,7 @@ const router = createBrowserRouter([
         children: [
           { index: true, element: <SessionList /> },
           { path: "create", element: <SessionForm /> },
+          { path: "create/single/:id", element:<IndividualSessionForm/>},
           { path: ":id/edit", element: <DynamicForm mode="edit" /> },
           { path: "bulk-upload", element: <BulkUploadSessions /> },
           { path: "record/:id", element: <SessionForm /> },

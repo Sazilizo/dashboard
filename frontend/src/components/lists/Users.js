@@ -62,7 +62,7 @@ export default function Users() {
     let filtered = profiles;
     console.log(profiles)
     if (roleFilter) {
-      filtered = profiles.filter(p => p.profiles?.id === Number(roleFilter));
+      filtered = profiles.filter(p => p.profiles?.roles.name === roleFilter);
     }
     setFilteredProfiles(filtered);
     setCurrentPage(1);
@@ -89,7 +89,7 @@ export default function Users() {
         <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
           <option value="">All roles</option>
           {roles.map(r => (
-            <option key={r.id} value={r.id}>{r.name}</option>
+            <option key={r.id} value={r.name}>{r.name}</option>
           ))}
         </select>
       </div>

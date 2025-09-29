@@ -25,7 +25,7 @@ export default function TrainingForm() {
 
   // Preset fields for DynamicBulkForm
   const presetFields = {
-    logged_by: user?.id || "",
+    // logged_by: user?.id,
     // single mode: preset worker_id to [id]
     ...(id ? { worker_id: [id] } : { worker_id: selectedWorkers }),
   };
