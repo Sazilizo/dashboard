@@ -84,14 +84,14 @@ const LearnerProfile = () => {
     const specsDataChart = {
       title: "Performance Overview",
       Component: SpecsRadarChart,
-      props: { student, user },
+      props: { student, user, className:"specs-radar-grid" },
     };
 
     // Attendance chart
     const attendanceDataChart = {
       title: "Attendance Overview",
       Component: AttendanceBarChart,
-      props: { student },
+      props: { student, className:"Attendance-overview-graph" },
     };
 
     return [specsDataChart, attendanceDataChart];

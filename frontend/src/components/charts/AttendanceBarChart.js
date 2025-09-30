@@ -4,7 +4,7 @@ import {
 } from "recharts";
 import StudentChartFilters from "../filters/StudentChartFilters";
 
-export default function AttendanceBarChart({ student }) {
+export default function AttendanceBarChart({ student, className }) {
   const [filters, setFilters] = useState({
     year: new Date().getFullYear(),
     months: [new Date().toLocaleString("default", { month: "long" })],
@@ -61,7 +61,7 @@ export default function AttendanceBarChart({ student }) {
   }, [filteredData]);
 
   return (
-    <>
+    <div className={`${className} grid-item`}>
       <h2 className="text-lg font-bold mb-2">Attendance Chart</h2>
       <StudentChartFilters filters={filters} onChange={setFilters} />
 
@@ -78,6 +78,6 @@ export default function AttendanceBarChart({ student }) {
           </Bar>
         </BarChart>
       </ResponsiveContainer>
-    </>
+    </div>
   );
 }

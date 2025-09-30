@@ -3,6 +3,8 @@ import api from "../../api/client";
 import EditProfile from "../profiles/EditUserProfile";
 import { useAuth } from "../../context/AuthProvider";
 import "../../styles/Users.css"
+import RegisterForm from "../forms/RegisterForm";
+import { Link } from "react-router-dom";
 
 export default function Users() {
 
@@ -81,6 +83,9 @@ export default function Users() {
 
   return (
     <div className="users-container">
+      <div className="register-user">
+        <Link className="btn btn-primary" to="/register">Create new user</Link>
+      </div>
       <h2>Users</h2>
 
       {/* Role filter */}

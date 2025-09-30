@@ -18,16 +18,13 @@ const StatsDashboard = ({ charts = [], loading }) => {
   }
 
   return (
-    <div className="page-stats">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {charts.map(({ Component, props, title }, i) => (
-          <div key={i} className="chart-card p-4 bg-white shadow rounded-xl">
-            {title && <h4 className="mb-2 text-lg font-semibold">{title}</h4>}
+    <>
+        {charts.map(({ Component, props }, i) => (
+          <div key={i} className="page-stats chart-card p-4 bg-white shadow rounded-xl">
             <Component {...props} />
           </div>
         ))}
-      </div>
-    </div>
+    </>
   );
 };
 

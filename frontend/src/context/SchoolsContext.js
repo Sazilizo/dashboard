@@ -23,7 +23,7 @@ export function SchoolsProvider({ children }) {
           students:students(count),
           users:users(count),
           meals:meal_distributions(count)
-          trainings:training_records(count)
+          trainings_records:training_records(count)
         `)
         .order("name", { ascending: true });
 
@@ -47,6 +47,7 @@ export function SchoolsProvider({ children }) {
         students_count: school.students?.[0]?.count ?? 0,
         users_count: school.users?.[0]?.count ?? 0,
         meals_count: school.meals?.[0]?.count ?? 0,
+        trainings_count: school.training_records?.[0]?.count ?? 0,
       }));
 
       setSchools(schoolsWithCounts);
