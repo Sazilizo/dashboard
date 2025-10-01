@@ -7,11 +7,10 @@ import LearnerAttendance from "./LearnerAttendance";
 import BiometricsSignIn from "../forms/BiometricsSignIn";
 import Card from "../widgets/Card";
 import ProfileInfoCard from "../widgets/ProfileInfoCard";
-import InfoCount from "../widgets/infoCount";
 import StatsDashboard from "../StatsDashboard";
 import { useAuth } from "../../context/AuthProvider";
 import "../../styles/Profile.css"
-
+import InfoCount from "../widgets/infoCount";
 
 const LearnerProfile = () => {
   const { id } = useParams();
