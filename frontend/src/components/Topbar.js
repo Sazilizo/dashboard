@@ -1,19 +1,56 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../context/AuthProvider";
 import Logout from "../pages/Logout";
 import EditProfile from "./profiles/EditUserProfile";
 import logo from "../assets/education-bg.png";
-// import "./Topbar.css"; // external CSS
+import api from "../api/client";
 
 export default function Topbar() {
   const { user } = useAuth();
   const [showProfile, setShowProfile] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [loading, setLoading] = useState(true);
 
-  const toggleProfile = () => setShowProfile(prev => !prev);
-  const toggleDropdown = () => setDropdownOpen(prev => !prev);
+  const toggleProfile = () => setShowProfile((prev) => !prev);
+  const toggleDropdown = () => setDropdownOpen((prev) => !prev);
 
-  const avatarUrl = user?.profile?.avatar_url || "";
+  const fetchAvatar = useCallback(async () => {
+    if (!user?.profile?.id) return;
+    setLoading(true);
+
+    const userId = user.profile.id;
+    const extensions = ["jpg", "jpeg", "png", "webp"];
+
+    try {
+      for (const ext of extensions) {
+        const fileName = `${userId}.${ext}`;
+        const { data, error } = await api.storage
+          .from("profile-avatars")
+          .createSignedUrl(fileName, 60);
+
+        if (error) continue;
+
+        if (data?.signedUrl) {
+          const res = await fetch(data.signedUrl, { method: "HEAD" });
+          if (res.ok) {
+            setAvatarUrl(`${data.signedUrl}&t=${Date.now()}`);
+            setLoading(false);
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch avatar:", err);
+    }
+
+    setAvatarUrl("");
+    setLoading(false);
+  }, [user?.profile?.id]);
+
+  useEffect(() => {
+    fetchAvatar();
+  }, [fetchAvatar]);
 
   return (
     <>
@@ -24,12 +61,17 @@ export default function Topbar() {
         <div style={{ fontWeight: 600 }}>School Dashboard</div>
         <div className="user-info">
           <div className="avatar-wrapper" onClick={toggleDropdown}>
-            {avatarUrl ? (
+            {loading ? (
+              <div className="profile-image fallback animate-pulse bg-gray-300" />
+            ) : avatarUrl ? (
               <img
                 src={avatarUrl}
                 alt="avatar"
                 className="profile-image"
-                onError={(e) => (e.currentTarget.style.display = "none")}
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                  setAvatarUrl(""); 
+                }}
               />
             ) : (
               <div className="profile-image fallback">
@@ -55,8 +97,6 @@ export default function Topbar() {
           )}
         </div>
       </header>
-
-      {/* Modal overlay */}
       {showProfile && (
         <div className="modal-overlay" onClick={toggleProfile}>
           <div
@@ -64,7 +104,7 @@ export default function Topbar() {
             onClick={(e) => e.stopPropagation()}
           >
             <h2>Edit Profile</h2>
-            <EditProfile user={user?.profile} />
+            <EditProfile user={user?.profile} onAvatarUpdated={fetchAvatar} />
             <button className="close-btn" onClick={toggleProfile}>
               Close
             </button>

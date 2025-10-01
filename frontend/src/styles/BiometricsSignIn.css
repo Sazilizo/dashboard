@@ -1,11 +1,13 @@
+
 .student-signin-container {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-start; /* Push content toward top */
-  min-height: 100vh;
+  min-height: fit-content;
   padding-top: 2rem; /* spacing from very top */
   box-sizing: border-box;
+  width: 100%;
 }
 
 .student-signin-container h2 {
@@ -17,7 +19,7 @@
   display: flex;
   justify-content: center;
   align-items: center;
-  width: 90%;
+  width: 100%;
   max-width: 480px; /* prevent being too wide on desktops */
   margin: 0 auto 1rem auto;
   border-radius: 12px;
@@ -32,6 +34,25 @@
   height: auto;
   display: block;
 }
+.switch-camera-btn-overlay {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border: none;
+  border-radius: 50px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s;
+}
+
+.switch-camera-btn-overlay:hover {
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
 
 .submit-btn {
   margin-top: 1rem;
@@ -65,4 +86,21 @@
   white-space: pre-wrap;
   text-align: center;
   font-size: 0.95rem;
+}
+@media (max-width: 900px) {
+  .overlay-content{
+    width:100%;
+  }
+  .student-signin-container {
+    padding: 1rem;
+  }
+
+  .video-container {
+    max-width: 100%;
+  }
+
+  .submit-btn {
+    width: 100%;
+    padding: 0.75rem;
+  }
 }

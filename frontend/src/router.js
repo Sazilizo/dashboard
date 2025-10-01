@@ -94,7 +94,7 @@ const router = createBrowserRouter([
         children: [
           { index: true, element: <SessionList /> },
           { path: "create", element: <SessionForm /> },
-          { path: "create/single/:id", element:<DynamicBulkForm/>},
+          { path: "create/single/:id", element: <SessionForm/>},
           { path: ":id/edit", element: <DynamicForm mode="edit" /> },
           { path: "bulk-upload", element: <BulkUploadSessions /> },
           { path: "record/:id", element: <SessionForm /> },

@@ -18,11 +18,23 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
   const [studentNames, setStudentNames] = useState({});
   const [isProcessing, setIsProcessing] = useState(false);
 
+  const [facingMode, setFacingMode] = useState("user"); // front camera default
+  const [availableCameras, setAvailableCameras] = useState([]);
+  const [isSmallScreen, setIsSmallScreen] = useState(false);
+
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const threshold = 0.6; // Adjust as needed
   const navigate = useNavigate();
+
+  // Detect screen size
+  useEffect(() => {
+    const handleResize = () => setIsSmallScreen(window.innerWidth <= 900);
+    window.addEventListener("resize", handleResize);
+    handleResize();
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   // Load pending sign-ins from localStorage
   useEffect(() => {
@@ -95,37 +107,55 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
     fetchNames();
   }, [studentId]);
 
-  // Webcam setup
+  // List available cameras
   useEffect(() => {
-    let mounted = true;
-    const startWebcam = async () => {
+    const listCameras = async () => {
       try {
-        const constraints = {
-          audio: false,
-          video: { facingMode: "user", width: { ideal: 320 }, height: { ideal: 240 } }
-        };
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        streamRef.current = stream;
-        if (webcamRef.current && mounted) {
-          webcamRef.current.srcObject = stream;
-          try { await webcamRef.current.play(); } catch (e) {}
-        }
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === "videoinput");
+        setAvailableCameras(videoDevices);
       } catch (err) {
-        console.error("Could not access webcam.", err);
-        setMessage("Could not access webcam. Ensure camera is available and permission granted.");
+        console.error(err);
       }
     };
+    listCameras();
+  }, []);
 
-    if (!captureDone) startWebcam();
+  // Webcam setup
+  const startWebcam = async (facing = "user") => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+    }
 
+    try {
+      const constraints = {
+        audio: false,
+        video: { facingMode: facing, width: { ideal: 320 }, height: { ideal: 240 } }
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+      if (webcamRef.current) webcamRef.current.srcObject = stream;
+      await webcamRef.current.play();
+    } catch (err) {
+      console.error("Could not access webcam.", err);
+      setMessage("Could not access webcam. Ensure camera is available and permission granted.");
+    }
+  };
+
+  useEffect(() => {
+    if (!captureDone) startWebcam(facingMode);
     return () => {
-      mounted = false;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
         streamRef.current = null;
       }
     };
-  }, [captureDone]);
+  }, [captureDone, facingMode]);
+
+  const handleSwitchCamera = () => {
+    if (availableCameras.length < 2) return;
+    setFacingMode(prev => (prev === "user" ? "environment" : "user"));
+  };
 
   // Load reference images and create FaceMatcher
   useEffect(() => {
@@ -226,7 +256,6 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
         const displayName = studentNames[match.label] || `ID ${match.label}`;
 
         if (!pendingSignIns[match.label]) {
-          // --- Sign In ---
           const signInTime = new Date().toISOString();
           const { data, error } = await api.from("attendance_records").insert([{
             student_id: match.label,
@@ -241,9 +270,7 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
             setPendingSignIns(prev => ({ ...prev, [match.label]: { id: data.id, signInTime } }));
             setMessage(m => `${m}\n${displayName} signed in.`);
           }
-
         } else {
-          // --- Sign Out ---
           const pending = pendingSignIns[match.label];
           const signOutTime = new Date().toISOString();
           const durationMs = new Date(signOutTime) - new Date(pending.signInTime);
@@ -298,14 +325,19 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
               autoPlay
               playsInline
               muted
-              width="320"
-              height="240"
-              style={{ display: captureDone ? 'none' : 'block', width: '100%' }}
+              style={{ display: captureDone ? "none" : "block", width: "100%", borderRadius: "8px" }}
             />
             <canvas
               ref={canvasRef}
-              style={{ display: captureDone ? 'block' : 'none', width: '100%' }}
+              style={{ display: captureDone ? "block" : "none", width: "100%", borderRadius: "8px" }}
             />
+
+            {/* Overlay camera switch button */}
+            {isSmallScreen && availableCameras.length > 1 && !captureDone && (
+              <button className="switch-camera-btn-overlay" onClick={handleSwitchCamera}>
+                🔄 Switch Camera
+              </button>
+            )}
           </div>
 
           <button
@@ -313,7 +345,9 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
             onClick={handleCapture}
             disabled={!referencesReady || isProcessing}
           >
-            {isProcessing ? "Processing..." : (Object.keys(pendingSignIns).length === 0 ? "Sign In Snapshot" : "Sign Out Snapshot")}
+            {isProcessing
+              ? "Processing..."
+              : (Object.keys(pendingSignIns).length === 0 ? "Sign In Snapshot" : "Sign Out Snapshot")}
           </button>
 
           {message && <pre className="message">{message}</pre>}

@@ -76,7 +76,6 @@ export default function StackedCategoryGradeChart({ students, height = 300 }) {
         <BarChart
           data={data}
           // margin={{ top: 16, right: 16, left: 16, bottom: 16 }}
-          stackOffset="expand" // optional: for percent stacking, remove if you want absolute
         >
           <CartesianGrid strokeDasharray="3 6" />
           <XAxis dataKey="grade" />

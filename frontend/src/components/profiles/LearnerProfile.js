@@ -7,17 +7,19 @@ import LearnerAttendance from "./LearnerAttendance";
 import BiometricsSignIn from "../forms/BiometricsSignIn";
 import Card from "../widgets/Card";
 import ProfileInfoCard from "../widgets/ProfileInfoCard";
-// import InfoCount from "../widgets/infoCount";
+import InfoCount from "../widgets/infoCount";
 import StatsDashboard from "../StatsDashboard";
 import { useAuth } from "../../context/AuthProvider";
 import "../../styles/Profile.css"
+
+
 const LearnerProfile = () => {
   const { id } = useParams();
   const { user } = useAuth();
   const [student, setStudent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [attendanceMode, setAttendanceMode] = useState(null); // calendar | biometrics
+  const [attendanceMode, setAttendanceMode] = useState(null);
   const [toggleSessionList, setToggleSessionList] = useState(false)
 
   useEffect(() => {
@@ -147,10 +149,10 @@ const LearnerProfile = () => {
             <ProfileInfoCard data={student} bucketName="student-uploads" folderName="students" />
           </Card>
           <Card className="profile-details-count-card">
-            {/* <InfoCount label="Sessions Attended" count={student.academic_sessions?.length || 0} />
+            <InfoCount label="Sessions Attended" count={student.academic_sessions?.length || 0} />
             <InfoCount label="PE Sessions" count={student.pe_sessions?.length || 0} />
             <InfoCount label="Assessments Taken" count={student.assessments?.length || 0} />
-            <InfoCount label="Meals Received" count={student.meal_distributions?.length || 0} /> */}
+            <InfoCount label="Meals Received" count={student.meal_distributions?.length || 0} />
           </Card>
         </div>
 

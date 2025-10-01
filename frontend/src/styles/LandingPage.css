@@ -13,6 +13,9 @@
   padding: 50px;
   border-radius: 10px;
   text-align: center;
+  display: flex;
+  justify-content:center;
+  flex-direction: column;
 }
 
 .brand-title {

@@ -20,8 +20,10 @@ export default function Sidebar() {
   const notPrivileged = ["head tutor", "head coach"].includes(user?.profile?.roles.name);
 
   useEffect(()=>{
-    console.log("user:", user)
-  })
+    console.log("user:", user);
+    console.log("notPrivileged:", notPrivileged);
+  },[user, notPrivileged])
+
  return (
   <div className="sidebar">
     <nav>
@@ -29,6 +31,9 @@ export default function Sidebar() {
         {navItems.map(item => {
   
           if ((item.label.includes("Worker Trainings") || item.label.includes("Workers")) && notPrivileged) {
+            return null; 
+          }
+          if (item.label.includes("Users") && notPrivileged) {
             return null; 
           }
 

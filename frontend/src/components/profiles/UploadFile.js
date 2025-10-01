@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import UploadFileHelper from "./UploadHelper";
 
-const UploadFile = ({ label, value, onChange, folder = "students", id }) => {
+const UploadFile = ({ label, value, onChange, folder, id }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [pendingFile, setPendingFile] = useState(null); // store file if id isn't ready yet

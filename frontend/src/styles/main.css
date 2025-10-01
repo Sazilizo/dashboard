@@ -23,6 +23,7 @@
 /* Topbar layout */
 .topbar {
   display: flex;
+  width:100%;
   border-bottom: 2px solid gray;
   justify-content: space-between;
   align-items: center;
@@ -80,14 +81,14 @@
 
 .dropdown-menu {
   position: absolute;
-  right: 0;
+  right: 0%;
   top: 110%;
   background: #fff;
   border: 1px solid rgba(0,0,0,0.15);
   border-radius: 6px;
   box-shadow: 0 5px 10px rgba(0,0,0,0.1);
   z-index: 1000;
-  width: 120px;
+  width: 100%;
   display: flex;
   flex-direction: column;
   padding:.4rem
@@ -98,11 +99,11 @@
   background-color: teal;
   margin:.5rem 0;
   cursor: pointer;
-  /* border-bottom: 1px solid rgba(0,0,0,0.05); */
   outline: none;
   border: none;
   color:white
 }
+
 .logout-button{
   padding:0
 }
@@ -118,7 +119,7 @@
 
 .user-info p {
   margin: 0;
-}
+} */
 
 /* Modal overlay */
 .modal-overlay {
@@ -170,9 +171,9 @@
 .sidebar::-webkit-scrollbar {
   display: none;
 }
-.sidebar{
-  -ms-overflow-style: none; 
-  scrollbar-width: none;
+  .sidebar{
+    -ms-overflow-style: none;  /* IE/Edge */
+    scrollbar-width: none;     /* Firefox */
   }
 .sidebar li:hover{
   background-color: #3b82f6;
@@ -541,7 +542,7 @@ img{
   *{
     font-size: clamp(14px, 1.1vw, 20px);
   }
-  .filter-list-schools {
+  .filter-list {
     flex-direction: row;
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -558,10 +559,10 @@ img{
   }
 
   /* Hide scrollbar */
-  .filter-list-schools::-webkit-scrollbar {
+  .filter-list::-webkit-scrollbar {
     display: none;
   }
-  .filter-list-schools {
+  .filter-list {
     -ms-overflow-style: none;  /* IE/Edge */
     scrollbar-width: none;     /* Firefox */
   }
@@ -614,7 +615,7 @@ img{
   .stats-container{
     grid-column-start: 5;
     grid-column-end: 10;
-    grid-row: 2;
+    grid-row: auto;
   }
 }
 

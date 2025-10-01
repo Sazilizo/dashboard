@@ -31,22 +31,50 @@ export const UploadFileHelper = async (file, folder, id) => {
     }
 
     const ext = file.name.split(".").pop();
-    const fileName = `${folder}/${id}/${Date.now()}_${Math.random()
+    const uniqueName = `${Date.now()}_${Math.random()
       .toString(36)
       .substring(2)}.${ext}`;
 
-    // pick bucket
+    // ✅ If folder is a known resource, use bucket + folder/id
+    // ✅ Otherwise, treat folder as a custom folder inside student-uploads
     let bucketName = "";
-    if (folder === "students") bucketName = "student-uploads";
-    else if (folder === "workers") bucketName = "worker-uploads";
-    else if (folder === "sessions") bucketName = "session-uploads";
-    else if (folder === "meals") bucketName = "meal-uploads";
-    else bucketName = "student-uploads"; // fallback
+    let filePath = "";
 
-    // upload file
+    if (folder === "students") {
+      bucketName = "student-uploads";
+      filePath = `${folder}/${id}/${uniqueName}`;
+    } else if (folder === "workers") {
+      bucketName = "worker-uploads";
+      filePath = `${folder}/${id}/${uniqueName}`;
+    } else if (folder === "sessions") {
+      bucketName = "session-uploads";
+      filePath = `${folder}/${id}/${uniqueName}`;
+    } else if (folder === "meals") {
+      bucketName = "meal-uploads";
+      filePath = `${folder}/${id}/${uniqueName}`;
+    }else if (folder === "profile-avatars") {
+      bucketName = "profile-avatars";
+      const ext = file.name.split(".").pop().toLowerCase();
+      filePath = `${id}.${ext}`;
+      const extensions = ["jpg", "jpeg", "png", "webp"];
+      const oldFiles = extensions
+        .filter((e) => e !== ext)
+        .map((e) => `${id}.${e}`);
+
+      if (oldFiles.length) {
+        await api.storage.from(bucketName).remove(oldFiles);
+      }
+
+    } else {
+      // custom folder (fallback)
+      bucketName = "student-uploads";
+      filePath = id ? `${folder}/${id}/${uniqueName}` : `${folder}/${uniqueName}`;
+    }
+
+    // upload file (✅ allow overwrite)
     const { error: uploadError } = await api.storage
       .from(bucketName)
-      .upload(fileName, uploadFile);
+      .upload(filePath, uploadFile, { upsert: true });
 
     if (uploadError) {
       console.error("Upload error:", uploadError.message);
@@ -56,7 +84,7 @@ export const UploadFileHelper = async (file, folder, id) => {
     // get public url
     const { data: urlData, error: urlError } = api.storage
       .from(bucketName)
-      .getPublicUrl(fileName);
+      .getPublicUrl(filePath);
 
     if (urlError) {
       console.error("Get public URL error:", urlError.message);

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import api from "../../api/client";
+import UploadFileHelper from "./UploadHelper";
 
-export default function EditProfile({ user }) {
+export default function EditProfile({ user,onAvatarUpdated }) {
   const [form, setForm] = useState({
     email: user?.email || "",
     password: "",
@@ -16,7 +17,13 @@ export default function EditProfile({ user }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const isPrivileged = ["superuser","admin","hr"].includes(
+  // avatar states
+  const [pendingFile, setPendingFile] = useState(null);
+  const [newAvatarPreview, setNewAvatarPreview] = useState(null);
+  const [oldAvatarUrl, setOldAvatarUrl] = useState(null);
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const isPrivileged = ["superuser", "admin", "hr"].includes(
     user?.profile?.roles?.name?.toLowerCase()
   );
 
@@ -32,20 +39,36 @@ export default function EditProfile({ user }) {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setForm(f => ({ ...f, [name]: value }));
+    setForm((f) => ({ ...f, [name]: value }));
   };
 
-  const handleAvatarChange = async (e) => {
-    const file = e.target.files[0];
+  const handleAvatarChange = (e) => {
+    const file = e.target.files?.[0];
     if (!file) return;
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${user.id}.${fileExt}`;
-    const { error: uploadError } = await api.storage
-      .from('profile-avatars')
-      .upload(fileName, file, { upsert: true });
-    if (uploadError) return setError(uploadError.message);
-    const url = api.storage.from('profile-avatars').getPublicUrl(fileName).publicUrl;
-    setForm(f => ({ ...f, avatar_url: url }));
+
+    // cache old avatar before overwriting
+    setOldAvatarUrl(form.avatar_url);
+    setPendingFile(file);
+    setNewAvatarPreview(URL.createObjectURL(file));
+    setShowConfirm(true);
+  };
+
+  if (onAvatarUpdated) {
+    onAvatarUpdated();
+  }
+
+  const uploadAvatar = async (file) => {
+    try {
+      const url = await UploadFileHelper(file, "profile-avatars", user.id);
+      if (url) {
+        setForm((f) => ({ ...f, avatar_url: url }));
+        setPendingFile(null);
+        setNewAvatarPreview(null);
+        setShowConfirm(false);
+      }
+    } catch (err) {
+      setError("Avatar upload failed");
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -56,18 +79,22 @@ export default function EditProfile({ user }) {
     try {
       if (!isPrivileged) {
         if (form.email !== user.email) {
-          const { error: emailError } = await api.auth.updateUser({ email: form.email });
+          const { error: emailError } = await api.auth.updateUser({
+            email: form.email,
+          });
           if (emailError) throw emailError;
         }
         if (form.password) {
-          const { error: passError } = await api.auth.updateUser({ password: form.password });
+          const { error: passError } = await api.auth.updateUser({
+            password: form.password,
+          });
           if (passError) throw passError;
         }
       }
 
       const updates = {
         username: form.username,
-        avatar_url: form.avatar_url
+        avatar_url: form.avatar_url,
       };
       if (isPrivileged) {
         updates.role_id = form.role_id ? Number(form.role_id) : null;
@@ -90,59 +117,112 @@ export default function EditProfile({ user }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="edit-profile-form">
-      <label>Email:</label>
-      <input
-        type="email"
-        name="email"
-        value={form.email}
-        onChange={handleChange}
-        disabled={isPrivileged}
-      />
+    <>
+      <form onSubmit={handleSubmit} className="edit-profile-form">
+        <label>Email:</label>
+        <input
+          type="email"
+          name="email"
+          value={form.email}
+          onChange={handleChange}
+          disabled={isPrivileged}
+        />
 
-      <label>Password:</label>
-      <input
-        type="password"
-        name="password"
-        placeholder="Leave blank to keep current password"
-        value={form.password}
-        onChange={handleChange}
-        disabled={isPrivileged}
-      />
+        <label>Password:</label>
+        <input
+          type="password"
+          name="password"
+          placeholder="Leave blank to keep current password"
+          value={form.password}
+          onChange={handleChange}
+          disabled={isPrivileged}
+        />
 
-      <label>Username:</label>
-      <input name="username" value={form.username} onChange={handleChange} />
+        <label>Username:</label>
+        <input name="username" value={form.username} onChange={handleChange} />
 
-      <label>Avatar:</label>
-      <input type="file" accept="image/*" onChange={handleAvatarChange} />
-      <div className="avatar-preview">
-        {form.avatar_url ? (
-          <img src={form.avatar_url} alt="avatar" onError={(e)=>e.currentTarget.style.display='none'} />
-        ) : (
-          <span>{user?.profile?.username?.[0]?.toUpperCase() || "?"}</span>
+        <label>Avatar:</label>
+        <input type="file" accept="image/*" onChange={handleAvatarChange} />
+        <div className="avatar-preview">
+          {form.avatar_url ? (
+            <img
+              src={form.avatar_url}
+              alt="avatar"
+              onError={(e) => (e.currentTarget.style.display = "none")}
+            />
+          ) : (
+            <span>{user?.profile?.username?.[0]?.toUpperCase() || "?"}</span>
+          )}
+        </div>
+
+        {isPrivileged && (
+          <>
+            <label>Role:</label>
+            <select name="role_id" value={form.role_id} onChange={handleChange}>
+              <option value="">Select role</option>
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+
+            <label>School:</label>
+            <select
+              name="school_id"
+              value={form.school_id}
+              onChange={handleChange}
+            >
+              <option value="">Select school</option>
+              {schools.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </>
         )}
-      </div>
 
-      {isPrivileged && (
-        <>
-          <label>Role:</label>
-          <select name="role_id" value={form.role_id} onChange={handleChange}>
-            <option value="">Select role</option>
-            {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
+        {error && <div className="error-message">{error}</div>}
+        <button type="submit" disabled={loading}>
+          {loading ? "Saving..." : "Save"}
+        </button>
+      </form>
 
-          <label>School:</label>
-          <select name="school_id" value={form.school_id} onChange={handleChange}>
-            <option value="">Select school</option>
-            {schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </>
+      {showConfirm && (
+        <div className="modal-overlay" onClick={() => setShowConfirm(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>Replace Avatar?</h3>
+            <div className="avatar-comparison">
+              <div className="avatar-box">
+                <p>Current</p>
+                {oldAvatarUrl ? (
+                  <img src={oldAvatarUrl} alt="current avatar" />
+                ) : (
+                  <div className="placeholder" />
+                )}
+              </div>
+              <div className="avatar-box">
+                <p>New</p>
+                {newAvatarPreview && (
+                  <img src={newAvatarPreview} alt="new avatar" />
+                )}
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button onClick={() => setShowConfirm(false)}>Cancel</button>
+              <button
+                className="confirm-btn"
+                onClick={() => {
+                  if (pendingFile) uploadAvatar(pendingFile);
+                }}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
       )}
-
-      {error && <div className="error-message">{error}</div>}
-      <button type="submit" disabled={loading}>
-        {loading ? "Saving..." : "Save"}
-      </button>
-    </form>
+    </>
   );
 }
