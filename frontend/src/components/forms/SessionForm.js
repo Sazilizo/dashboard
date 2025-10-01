@@ -72,9 +72,9 @@ export default function SessionForm() {
             filters={{ ...filters, session_type: sessionType ? [sessionType] : [] }}
             setFilters={setFilters}
             resource="students"
-            gradeOptions={gradeOptions}
+            // gradeOptions={gradeOptions}
             sessionTypeOptions={role === "superuser" || role === "admin" ? sessionOptions.map(o => o.label) : []}
-            groupByOptions={groupByOptions}
+            // groupByOptions={groupByOptions}
             showDeletedOption={["admin", "hr", "superviser"].includes(role)}
           />
         </div>

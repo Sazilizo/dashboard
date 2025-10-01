@@ -561,7 +561,7 @@ export default function DynamicBulkForm({
       {!id && (
         <div className="mb-4">
           <EntityMultiSelect
-            label="Select Workers"
+            // label="Select Workers"
             options={filteredData || []}
             value={selectedData}
             onChange={valueChange}

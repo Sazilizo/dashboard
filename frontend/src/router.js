@@ -30,6 +30,7 @@ import Users from "./components/lists/Users";
 import ErrorBoundary from "./components/ErrorBoundary";
 import IndividualSessionForm from "./components/forms/IndividualSession";
 import WorkerProfile from "./components/profiles/WorkerProfile";
+import DynamicBulkForm from "./components/forms/DynamicBulkForm";
 
 const router = createBrowserRouter([
   {
@@ -93,7 +94,7 @@ const router = createBrowserRouter([
         children: [
           { index: true, element: <SessionList /> },
           { path: "create", element: <SessionForm /> },
-          { path: "create/single/:id", element:<IndividualSessionForm/>},
+          { path: "create/single/:id", element:<DynamicBulkForm/>},
           { path: ":id/edit", element: <DynamicForm mode="edit" /> },
           { path: "bulk-upload", element: <BulkUploadSessions /> },
           { path: "record/:id", element: <SessionForm /> },

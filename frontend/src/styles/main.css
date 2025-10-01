@@ -146,13 +146,6 @@
   box-shadow: 0 5px 15px rgba(0,0,0,0.3);
 }
 
-/* Responsive adjustments */
-@media (max-width: 600px) {
-  .modal-content {
-    padding: 1rem;
-  }
-}
-
 .sidebar{
     width:min-content;
     height:100%;
@@ -171,9 +164,16 @@
     text-align: center;
 }
 .sidebar a {
-    text-decoration: none;
-    color: white;
+  text-decoration: none;
+  color: white;
 }
+.sidebar::-webkit-scrollbar {
+  display: none;
+}
+.sidebar{
+  -ms-overflow-style: none; 
+  scrollbar-width: none;
+  }
 .sidebar li:hover{
   background-color: #3b82f6;
   border-radius: 5px;
@@ -307,7 +307,14 @@
   overflow-y: scroll;
   font-size: 12px;
   height:850px;
-} 
+}
+.app-list::-webkit-scrollbar {
+  display: none;
+}
+.app-list {
+  -ms-overflow-style: none;  /* IE/Edge */
+  scrollbar-width: none;     /* Firefox */
+}
  .app-list li {
   margin:.5rem 0.02rem;
   background-color: #ecedee;
@@ -460,7 +467,6 @@ img{
   grid-column-start: 1;
   grid-column-end: 3;
   grid-row: 1/1;
-  border:1px solid red;
 }
 .Attendance-overview-graph{
   grid-column-start: 1;
@@ -498,7 +504,6 @@ img{
 .grid-layout{
   width:100%;
   margin-top: .5rem;
-  padding:.5rem;
   display: grid;
   height:fit-content;
   grid-template-columns: repeat(9 ,1fr);
@@ -519,6 +524,7 @@ img{
   grid-column-start: 1;
   grid-column-end: 10;
   grid-row: 1/1;
+  display: flex;
 }
 .list-items{
   grid-column-start: 1;
@@ -535,13 +541,34 @@ img{
   *{
     font-size: clamp(14px, 1.1vw, 20px);
   }
-  .profile-wrapper{
-    flex-direction:column;
+  .filter-list-schools {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch; /* smooth iOS swipe */
+    gap: 1rem;
+    padding: 0.5rem 0.25rem;
+  }
+
+  .filter-list-item {
+    flex: 0 0 auto; 
+    display: flex;
+    align-items: center;
+  }
+
+  /* Hide scrollbar */
+  .filter-list-schools::-webkit-scrollbar {
+    display: none;
+  }
+  .filter-list-schools {
+    -ms-overflow-style: none;  /* IE/Edge */
+    scrollbar-width: none;     /* Firefox */
   }
   .profile-details-count-card, .profile-details-card-wrapper{
-    width:100%;
+    /* width:100%;
     margin:.3rem 0;
-    border:1px solid red;
+    border:1px solid red; */
   }
 
   .profile-details-card{
@@ -556,7 +583,7 @@ img{
   }
   .page-stats{
     display: grid;
-    grid-template-rows: repeat(3,1fr);
+    grid-template-rows: repeat(auto);
     height: fit-content;
   }
   .page-stats-grid-items{
@@ -581,31 +608,13 @@ img{
   .list-items{
     grid-column-start: 1;
     grid-column-end: 5;
-    grid-row: 2/3;
+    grid-row: auto;
+    height:fit-content
   }
   .stats-container{
     grid-column-start: 5;
     grid-column-end: 10;
     grid-row: 2;
-  }
-}
-@media screen and (max-width: 550px){
-  .list-items{
-    grid-column:1/10;
-    grid-row: 2;
-  }
-  .stats-container{
-    grid-column-start: 1;
-    grid-column-end: 10;
-    grid-row: 3;
-  }
-}
-@keyframes shimmer {
-  0% {
-    background-position: 200% 0;
-  }
-  100% {
-    background-position: -200% 0;
   }
 }
 
@@ -653,13 +662,9 @@ img{
     flex: 0 0 auto; /* prevent shrinking */
   }
 
-  /* Hide scrollbar across browsers */
-  .sidebar::-webkit-scrollbar {
-    display: none;
-  }
-  .sidebar {
-    -ms-overflow-style: none;  /* IE/Edge */
-    scrollbar-width: none;     /* Firefox */
+  .profile-details-card{
+    width:100%;
+    margin:.3rem 0;
   }
   .split-container {
     flex-direction: column;
@@ -682,17 +687,26 @@ img{
     width: 100%;
     height: auto;
   }
-  .app-list-toggle-btn {
-    top: auto;
-    bottom: 10px;
-    left: 50%;
-    transform: translateX(-50%);
-    border-radius: 16px;
-    transition: bottom 0.3s ease;
+}
+@media (max-width: 600px) {
+  .modal-content {
+    padding: 1rem;
   }
-  .split-container.collapsed .app-list-toggle-btn {
-    bottom: 10px;
-    left: 50%;
-    transform: translateX(-50%);
+  .list-items{
+    grid-column:1/10;
+    grid-row: 2;
+  }
+  .stats-container{
+    grid-column-start: 1;
+    grid-column-end: 10;
+    grid-row: 3;
+  }
+}
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
   }
 }

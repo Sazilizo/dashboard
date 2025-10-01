@@ -44,7 +44,7 @@ export default function SchoolFilter({ user, schools, onChange }) {
   return (
     <div className="school-filter">
       <label>Schools:</label>
-      <ul className="filter-list">
+      <ul className="filter-list-schools filter-list">
         {schools.map((school) => (
           <li key={school.id} className="filter-list-item">
             <input

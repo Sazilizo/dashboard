@@ -42,7 +42,6 @@ export default function WorkerList() {
         </div>
 
         <div className={`split-container ${showList ? "expanded" : "collapsed"}`}>
-          {/* LEFT = List */}
           <div className={`app-list-panel ${showList ? "show" : "hide"}`}>
             {isAllSchoolRole && (
               <Link to="/dashboard/workers/create" className="app-btn app-btn-primary">Create worker</Link>
