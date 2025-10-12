@@ -4,6 +4,7 @@ import api from "../../api/client";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthProvider";  // import your auth context hook
 import "../../styles/LoginPage.css";
+import { preloadFaceApiModels } from "../../utils/FaceApiLoader";
 
 export default function LoginForm() {
   const [form, setForm] = useState({ email: "", password: "" });
@@ -34,6 +35,7 @@ export default function LoginForm() {
         if (refreshUser) {
           await refreshUser();
         }
+        await preloadFaceApiModels();
 
         navigate("/dashboard");
       } catch (err) {

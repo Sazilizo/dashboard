@@ -148,27 +148,95 @@ export default function DynamicBulkForm({
       [fieldName]: { ...prev[fieldName], [key]: Number(value) },
     }));
   };
+
+  const handleSectionChange = (sectionIndex, key, value) => {
+    setFormData((prev) => {
+      const sectionsData = prev.sections.sections || [];
+      sectionsData[sectionIndex] = {
+        ...sectionsData[sectionIndex],
+        [key]: key === "number_of_questions" ? Number(value) : value,
+      };
+      return {
+        ...prev,
+        sections: { ...prev.sections, sections: sectionsData },
+      };
+    });
+  };
+
+  const handleQuestionChange = (sectionIndex, questionIndex, key, value) => {
+    setFormData((prev) => {
+      const sectionsData = prev.sections.sections || [];
+      const questionsData = sectionsData[sectionIndex].questions || [];
+      questionsData[questionIndex] = {
+        ...questionsData[questionIndex],
+        [key]: value,
+      };
+      sectionsData[sectionIndex].questions = questionsData;
+      return {
+        ...prev,
+        sections: { ...prev.sections, sections: sectionsData },
+      };
+    });
+  };
+
+  const handleAddSection = () => {
+    setFormData((prev) => {
+      const sectionsData = prev.sections.sections || [];
+      sectionsData.push({
+        section_title: "",
+        section_image: null,
+        number_of_questions: 0,
+        questions: [],
+      });
+      return {
+        ...prev,
+        sections: { ...prev.sections, sections: sectionsData },
+      };
+    });
+  };
+
+  const handleAddQuestion = (sectionIndex) => {
+    setFormData((prev) => {
+      const sectionsData = prev.sections.sections || [];
+      const questionsData = sectionsData[sectionIndex].questions || [];
+      questionsData.push({ question: "", type: "text", options: [], correct_answer: "" });
+      sectionsData[sectionIndex].questions = questionsData;
+      return {
+        ...prev,
+        sections: { ...prev.sections, sections: sectionsData },
+      };
+    });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+
     try {
-      const payload = {...formData};
-      console.log(payload);
+      // Validate sections & questions
+      const sections = formData.sections?.sections || [];
+      for (const [sIndex, sec] of sections.entries()) {
+        if (!sec.section_title) throw new Error(`Section ${sIndex + 1} title is required.`);
+        if (sec.number_of_questions !== sec.questions.length) {
+          throw new Error(`Section ${sIndex + 1} must have ${sec.number_of_questions} questions.`);
+        }
+        sec.questions.forEach((q, qIndex) => {
+          if (!q.question) throw new Error(`Question ${qIndex + 1} in Section ${sIndex + 1} is required.`);
+          if (!q.type) throw new Error(`Question ${qIndex + 1} in Section ${sIndex + 1} type is required.`);
+        });
+      }
+
+      const payload = { ...formData };
+
       schema.forEach((f) => {
         let val = formData[f.name];
-        if (f.type === "checkbox" || f.type === "boolean") {
-          val = !!val;
-        }
+        if (f.type === "checkbox" || f.type === "boolean") val = !!val;
         payload[f.name] = val;
       });
 
-      // if (schema.some((f) => f.name === "category")) {
-      //   payload.category = presetFields.category || formData.category;
-      // }
       if (schema.some((f) => f.name === "school_id")) {
-        payload.school_id =
-          Number(presetFields.school_id) || Number(formData.school_id);
+        payload.school_id = Number(presetFields.school_id) || Number(formData.school_id);
       }
       if (schema.some((f) => f.name === "student_id")) {
         payload.student_id = id || presetFields.student_id;
@@ -177,14 +245,12 @@ export default function DynamicBulkForm({
       if (role === "superuser" || role === "admin") {
         payload.sessionType = sessionType;
       }
-      if (["academic_sessions", "pe_sessions"].includes(schema_name  )) {
-        payload.auth_uid = user.id; // 👈 inject logged-in user’s UID
-        if (user.school_id) {
-          payload.school_id = user.school_id;
-        }
+      if (["academic_sessions", "pe_sessions"].includes(schema_name)) {
+        payload.auth_uid = user.id;
+        if (user.school_id) payload.school_id = user.school_id;
       }
 
-       if (!id && (payload.student_ids?.length || payload.worker_ids?.length)) {
+      if (!id && (payload.student_ids?.length || payload.worker_ids?.length)) {
         const ids = payload.student_ids || payload.worker_ids;
         for (const entityId of ids) {
           const record = {
@@ -195,8 +261,6 @@ export default function DynamicBulkForm({
           await onSubmit(record, entityId);
         }
       } else {
-        // Single insert/update
-        console.log("payload ->: ", payload)
         await onSubmit(payload, id);
       }
 
@@ -205,7 +269,9 @@ export default function DynamicBulkForm({
       schema.forEach((f) => {
         if (f.type === "json_object") {
           const groupDefaults = {};
-          f.group.forEach((g) => (groupDefaults[g.key] = g.default ?? 0));
+          f.group.forEach((g) => {
+            groupDefaults[g.name] = g.type === "repeater" ? [] : g.default ?? 0;
+          });
           resetData[f.name] = { ...groupDefaults };
         } else if (f.type === "checkbox" || f.type === "boolean") {
           resetData[f.name] = false;
@@ -370,6 +436,86 @@ export default function DynamicBulkForm({
       );
     }
 
+    if (field.type === "json_object" && field.group.some(g => g.type === "repeater")) {
+      const sectionsData = formData[field.name]?.sections || [];
+      return (
+        <div key={field.name} className="mb-4 border p-2 rounded">
+          <label className="font-medium">{field.label}</label>
+          <div className="mb-2">
+            <button type="button" onClick={handleAddSection} className="px-2 py-1 bg-green-500 text-white rounded">
+              + Add Section
+            </button>
+          </div>
+          {sectionsData.map((section, sIndex) => (
+            <div key={sIndex} className="mb-4 border p-2 rounded bg-gray-50">
+              <input
+                type="text"
+                placeholder={`Section ${sIndex + 1} Title`}
+                value={section.section_title}
+                onChange={(e) => handleSectionChange(sIndex, "section_title", e.target.value)}
+                className="w-full mb-2 p-2 border rounded"
+                required
+              />
+              <input
+                type="number"
+                placeholder="Number of Questions"
+                min={0}
+                max={20}
+                value={section.number_of_questions}
+                onChange={(e) => handleSectionChange(sIndex, "number_of_questions", e.target.value)}
+                className="w-full mb-2 p-2 border rounded"
+                required
+              />
+              <div>
+                <button type="button" onClick={() => handleAddQuestion(sIndex)} className="px-2 py-1 bg-blue-500 text-white rounded mb-2">
+                  + Add Question
+                </button>
+              </div>
+              {section.questions?.map((q, qIndex) => (
+                <div key={qIndex} className="mb-2 p-2 border rounded bg-white">
+                  <input
+                    type="text"
+                    placeholder={`Question ${qIndex + 1}`}
+                    value={q.question}
+                    onChange={(e) => handleQuestionChange(sIndex, qIndex, "question", e.target.value)}
+                    className="w-full mb-1 p-2 border rounded"
+                    required
+                  />
+                  <select
+                    value={q.type}
+                    onChange={(e) => handleQuestionChange(sIndex, qIndex, "type", e.target.value)}
+                    className="w-full mb-1 p-2 border rounded"
+                    required
+                  >
+                    <option value="">Select Type</option>
+                    <option value="text">Text</option>
+                    <option value="image_choice">Image Choice</option>
+                    <option value="multiple_choice">Multiple Choice</option>
+                    <option value="long_text">Long Text</option>
+                  </select>
+                  {(q.type === "multiple_choice" || q.type === "image_choice") && (
+                    <input
+                      type="text"
+                      placeholder="Options (comma separated)"
+                      value={q.options?.join(",") || ""}
+                      onChange={(e) => handleQuestionChange(sIndex, qIndex, "options", e.target.value.split(","))}
+                      className="w-full mb-1 p-2 border rounded"
+                    />
+                  )}
+                  <input
+                    type="text"
+                    placeholder="Correct Answer"
+                    value={q.correct_answer || ""}
+                    onChange={(e) => handleQuestionChange(sIndex, qIndex, "correct_answer", e.target.value)}
+                    className="w-full mb-1 p-2 border rounded"
+                  />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      );
+    }
     if (field.name === "is_fruit") {
       return (
         <div key={field.name} className="mb-4">
@@ -550,12 +696,6 @@ export default function DynamicBulkForm({
           </select>
         </div>
       )}
-
-      <h1 className="text-2xl font-bold mb-6">
-        {id
-          ? `Log session for ${presetFields?.student?.full_name || "student"}`
-          : "Create Students Sessions (Bulk)"}
-      </h1>
 
       {/* Entity selector for bulk */}
       {!id && (

@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../../api/client";
 import * as faceapi from "face-api.js";
+import { preloadFaceApiModels } from "../../utils/FaceApiLoader";
 import "../../styles/BiometricsSignIn.css";
 
 // Global caches so multiple mounts reuse them
@@ -50,38 +51,20 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
   // Load face-api models (once globally)
   useEffect(() => {
     let cancelled = false;
-
     const loadModels = async () => {
       try {
-        if (modelsLoadedGlobal) {
+        if (areFaceApiModelsLoaded()) {
           setLoadingModels(false);
           return;
         }
 
-        const MODEL_FILES = [
-          "tiny_face_detector_model-weights_manifest.json",
-          "face_landmark_68_model-weights_manifest.json",
-          "face_recognition_model-weights_manifest.json"
-        ];
-
-        const MODEL_URLS = MODEL_FILES.map(f =>
-          `https://pmvecwjomvyxpgzfweov.supabase.co/storage/v1/object/public/faceapi-models/${f}`
-        );
-
-        await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URLS[0]),
-          faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URLS[1]),
-          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URLS[2])
-        ]);
-
-        modelsLoadedGlobal = true;
+        await preloadFaceApiModels();
         if (!cancelled) setLoadingModels(false);
       } catch (err) {
-        console.error("Failed to load face-api models from Supabase", err);
+        console.error("Failed to load face-api models", err);
         if (!cancelled) setMessage("Failed to load face detection models.");
       }
     };
-
     loadModels();
     return () => { cancelled = true; };
   }, []);

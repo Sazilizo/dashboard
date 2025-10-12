@@ -20,6 +20,7 @@ const LearnerProfile = () => {
   const [error, setError] = useState(null);
   const [attendanceMode, setAttendanceMode] = useState(null);
   const [toggleSessionList, setToggleSessionList] = useState(false)
+  const [displayCount, setDisplayCount] = useState(0);
 
   useEffect(() => {
     const fetchStudent = async () => {
@@ -74,6 +75,22 @@ const LearnerProfile = () => {
 
     if (id) fetchStudent();
   }, [id]);
+
+  // useEffect(() => {
+  //   let start = 0;
+  //   const end = count;
+  //   const increment = end / (duration / 16); // approx 60fps
+  //   const timer = setInterval(() => {
+  //     start += increment;
+  //     if (start >= end) {
+  //       start = end;
+  //       clearInterval(timer);
+  //     }
+  //     setDisplayCount(Math.floor(start));
+  //   }, 16);
+  
+  //   return () => clearInterval(timer);
+  // }, [count, duration]);
 
 
 
@@ -148,6 +165,13 @@ const LearnerProfile = () => {
             <ProfileInfoCard data={student} bucketName="student-uploads" folderName="students" />
           </Card>
           <Card className="profile-details-count-card">
+            <div className="info-count-card">
+              {/* {icon && <div className="info-count-icon">{icon}</div>} */}
+              <div className="info-count-details">
+                <p className="info-count-label">Sessions Attended</p>
+                <p className="info-count-number">{student.academic_sessions?.length || 0}</p>
+              </div>
+            </div>
             {/* <InfoCount label="Sessions Attended" count={student.academic_sessions?.length || 0} />
             <InfoCount label="PE Sessions" count={student.pe_sessions?.length || 0} />
             <InfoCount label="Assessments Taken" count={student.assessments?.length || 0} />

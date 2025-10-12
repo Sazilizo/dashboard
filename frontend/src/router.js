@@ -31,6 +31,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import IndividualSessionForm from "./components/forms/IndividualSession";
 import WorkerProfile from "./components/profiles/WorkerProfile";
 import DynamicBulkForm from "./components/forms/DynamicBulkForm";
+import UpdateWorkerProfile from "./components/updates/UpdateWorkerProfile";
 
 const router = createBrowserRouter([
   {
@@ -82,6 +83,7 @@ const router = createBrowserRouter([
           { index: true, element: <WorkerList /> },
           { path: "create", element: <WorkerForm /> },
           { path: ":id", element:<WorkerProfile />},
+          { path: "update/:id", element: <UpdateWorkerProfile /> },
           { path: ":id/edit", element: <DynamicForm model="Worker" mode="edit" /> },
           { path: "deleted", element: <WorkerList deleted /> },
           {path: "users", element:<Users/>}

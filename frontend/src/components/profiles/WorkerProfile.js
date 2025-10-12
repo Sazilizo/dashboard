@@ -1,41 +1,96 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import api from "../../api/client";
-import SpecsRadarChart from "../charts/SpecsRadarGraph";
-import AttendanceBarChart from "../charts/AttendanceBarChart";
-import LearnerAttendance from "./LearnerAttendance";
-import BiometricsSignIn from "../forms/BiometricsSignIn";
 import Card from "../widgets/Card";
 import ProfileInfoCard from "../widgets/ProfileInfoCard";
-// import InfoCount from "../widgets/infoCount";
+import SpecsRadarChart from "../charts/SpecsRadarGraph";
 import StatsDashboard from "../StatsDashboard";
 import { useAuth } from "../../context/AuthProvider";
-import "../../styles/Profile.css"
+import "../../styles/Profile.css";
+
 const WorkerProfile = () => {
   const { id } = useParams();
   const { user } = useAuth();
   const [worker, setWorker] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [attendanceMode, setAttendanceMode] = useState(null); // calendar | biometrics
-  const [toggleSessionList, setToggleSessionList] = useState(false)
+  const [joinedSessions, setJoinedSessions] = useState([]);
 
   useEffect(() => {
     const fetchWorker = async () => {
       try {
-        const { data, error } = await api
+        // 1️⃣ Fetch worker base
+        const { data: workerData, error: workerError } = await api
           .from("workers")
           .select(`
             *,
-            school:school_id(*)
+            roles(name)
           `)
           .eq("id", id)
           .single();
 
-        if (error) throw error;
-        setWorker(data);
+        if (workerError) throw workerError;
+
+        const roleName = workerData?.roles?.name?.toLowerCase();
+
+        // 2️⃣ Role-based data fetch
+        if (roleName === "learner") {
+          // Mirror LearnerProfile behavior
+          const { data: learner, error: learnerError } = await api
+            .from("students")
+            .select(`
+              *,
+              school:school_id(*),
+              academic_sessions:academic_sessions(student_id, *),
+              attendance_records:attendance_records(student_id, *),
+              assessments:assessments(student_id, *),
+              pe_sessions:pe_sessions(student_id, *),
+              completed_academic_sessions: academic_session_participants(
+                id,
+                student_id,
+                specs,
+                session_id,
+                academic_session:session_id (
+                  session_name,
+                  date
+                )
+              ),
+              meal_distributions:meal_distributions(
+                student_id,
+                *,
+                meal:meal_id(name, type, ingredients)
+              )
+            `)
+            .eq("id", workerData.profile.user_id)
+            .single();
+
+          if (learnerError) throw learnerError;
+          setWorker({ ...workerData, learner });
+        }
+
+        else if (roleName === "tutor" || roleName === "head_tutor") {
+          // 3️⃣ Tutor logic: fetch both sessions and participants
+          const [{ data: sessions }, { data: participants }] = await Promise.all([
+            api.from("academic_sessions").select("*"),
+            api.from("academic_session_participants").select("*")
+          ]);
+
+          const userId = workerData.profile.user_id;
+          const joined = sessions.filter((s) =>
+            participants.some((p) => p.user_id === userId && p.session_id === s.id)
+          );
+
+          setWorker(workerData);
+          setJoinedSessions(joined);
+        }
+
+        else {
+          // 4️⃣ Regular worker: just load profile info
+          setWorker(workerData);
+        }
       } catch (err) {
-        setError(err.message || err);
+        console.error(err);
+        setError(err.message || "Failed to fetch worker profile");
       } finally {
         setLoading(false);
       }
@@ -43,102 +98,94 @@ const WorkerProfile = () => {
 
     if (id) fetchWorker();
   }, [id]);
-
-  // --- Build chart config dynamically ---
-//   const statsCharts = useMemo(() => {
-//     if (!student) return [];
-
-//     // Specs chart
-//     const specsDataChart = {
-//       title: "Performance Overview",
-//       Component: SpecsRadarChart,
-//       props: { student, user },
-//     };
-
-//     // Attendance chart
-//     const attendanceDataChart = {
-//       title: "Attendance Overview",
-//       Component: AttendanceBarChart,
-//       props: { student },
-//     };
-
-//     return [specsDataChart, attendanceDataChart];
-//   }, [student, user]);
+  useEffect(() => {
+    if (worker) {
+      document.title = `${worker.profile?.name || "Worker"} Profile`;
+    };
+  },[worker])
 
   useEffect(() => {
-    document.title = worker ? `${worker.name} - Profile` : "Worker Profile";
+    console.log("Worker profile loaded:", worker); 
   }, [worker]);
+  // Memoized charts (for learner-type workers)
+  const statsCharts = useMemo(() => {
+    if (!worker?.learner) return [];
+    return [
+      {
+        title: "Performance Overview",
+        Component: SpecsRadarChart,
+        props: { student: worker.learner, user },
+      },
+    ];
+  }, [worker, user]);
 
-  useEffect(()=>{
-    console.log("worker: ", worker)
-  })
-
-  if (loading) return <p>Loading worker data...</p>;
+  if (loading) return <p>Loading worker profile...</p>;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
   if (!worker) return <p>No worker found</p>;
 
+  const roleName = worker?.profile?.role?.name?.toLowerCase();
+
   return (
-    <>
+    <div className="worker-profile">
       <div className="profile-learner-print">
         <button className="btn btn-primary" onClick={() => window.history.back()}>
-          Back to Workers
+          Back
         </button>
         <button className="btn btn-secondary" onClick={() => window.print()}>
           Print Profile
         </button>
-      </div>
-
-      <div className="student-edit-section">
-        <Link to={`/dashboard/students/update/${id}`} className="btn btn-secondary">
-          Edit Profile
+        <Link to={`/dashboard/workers/update/${id}`} className="btn btn-secondary">
+            Edit Profile
         </Link>
-        {/* <button className="btn btn-success mb-2" onClick={() => setAttendanceMode("calendar")}>
-          Calendar Attendance
-        </button>
-        <button className="btn btn-success mb-2" onClick={() => setAttendanceMode("biometrics")}>
-          Biometric Attendance
-        </button> */}
       </div>
 
-      <div className="grid-layout">
-        <div className="profile-wrapper">
-          <Card className="profile-details-card-wrapper">
-            <ProfileInfoCard data={worker} bucketName="worker-uploads" folderName="workers" />
-          </Card>
-          <Card className="profile-details-count-card">
-            {/* <InfoCount label="Sessions Attended" count={student.academic_sessions?.length || 0} />
-            <InfoCount label="PE Sessions" count={student.pe_sessions?.length || 0} />
-            <InfoCount label="Assessments Taken" count={student.assessments?.length || 0} />
-            <InfoCount label="Meals Received" count={student.meal_distributions?.length || 0} /> */}
-          </Card>
-        </div>
+      <div className="profile-wrapper">
+        <Card className="profile-details-card-wrapper">
+          <ProfileInfoCard
+            data={worker}
+            bucketName="profile-avatars"
+            folderName="workers"
+          />
+        </Card>
 
-        {/* {attendanceMode && (
-          <div className="overlay">
-            <div className="overlay-content">
-              <button className="overlay-close" onClick={() => setAttendanceMode(null)}>
-                ✖
-              </button>
-              {attendanceMode === "calendar" ? (
-                <LearnerAttendance id={id} school_id={worker.school_id} restrictToMonth={true} />
-              ) : (
-                <BiometricsSignIn
-                  studentId={id}
-                  schoolId={student.school_id}
-                  bucketName="student-uploads"
-                  folderName="students"
-                />
-              )}
+        <Card className="profile-details-count-card">
+          <div className="info-count-card">
+            <div className="info-count-details">
+              <p className="info-count-label">Role</p>
+              <p className="info-count-number">
+                {worker?.roles?.name || "—"}
+              </p>
             </div>
           </div>
-        )} */}
-       
-        {/* Use reusable StatsDashboard */}
-        {/* <div className="grid-item stats-container profile-stats mt-6">
-          <StatsDashboard charts={statsCharts} loading={loading} layout="2col" />
-        </div> */}
+        </Card>
       </div>
-    </>
+
+      {/* 5️⃣ Tutor Session List */}
+      {(roleName === "tutor" || roleName === "head_tutor") && joinedSessions.length > 0 && (
+        <Card className="mt-4">
+          <h3>Assigned Academic Sessions</h3>
+          <ul className="app-list">
+            {joinedSessions.map((s) => (
+              <li key={s.id}>
+                <Link to={`/dashboard/sessions/${s.id}`}>
+                  <div className="app-list-item-details">
+                    <strong>{s.session_name}</strong>
+                    <span style={{ padding: "5px 12px" }}>{s.category}</span>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {/* 6️⃣ Learner-style charts (if worker is learner) */}
+      {worker?.learner && (
+        <div className="grid-item stats-container profile-stats mt-6">
+          <StatsDashboard charts={statsCharts} loading={loading} layout="2col" />
+        </div>
+      )}
+    </div>
   );
 };
 

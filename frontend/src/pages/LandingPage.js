@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "../styles/LandingPage.css"; 
 import backgroundImage from "../assets/education-bg.png";
@@ -9,6 +9,10 @@ const LandingPage = () => {
     navigate("/login");
   };
 
+  useEffect(() =>{
+    document.title = "GCU Schools";
+  },[])
+
   return (
     <div
       className="landing-container"
@@ -17,7 +21,7 @@ const LandingPage = () => {
       }}
     >
       <div className="overlay">
-        <div className="brand-title">EduTracker</div>
+        <div className="brand-title">GCU Schools</div>
         <div style={{display:"flex", justifyContent:"space-between"}}>
           <div className="tagline">
             Empowering educators and tracking learner growth with ease.
