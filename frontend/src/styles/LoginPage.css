@@ -3,8 +3,9 @@
   align-items: center;
   justify-content: center;
   height: 100vh;
-  background: linear-gradient(135deg, #4a90e2, #357ab7);
   font-family: "Segoe UI", sans-serif;
+  position: relative;
+  overflow: hidden;
 }
 
 .login-box {
@@ -14,8 +15,30 @@
   box-shadow: 0 0 25px rgba(0, 0, 0, 0.1);
   width: 100%;
   max-width: 400px;
+  position: relative;
+  color:white
 }
-
+.login-box::after{
+  position:absolute;
+  content:"";
+  top:30%;
+  height:80vh;
+  width:40vw;
+  z-index: -25;
+  background-image: radial-gradient(purple, transparent);
+  border-radius: 50%;
+}
+.login-box::before{
+  position:absolute;
+  content:"";
+  top:0%;
+  right:0;
+  height:80vh;
+  width:40vw;
+  z-index: -25;
+  background-image: radial-gradient(purple, transparent);
+  border-radius: 50%;
+}
 .brand-title {
   font-size: 2rem;
   margin-bottom: 30px;
@@ -23,14 +46,27 @@
   color: #357ab7;
 }
 
+.login-form {
+  display: flex;
+  flex-direction: column;
+  backdrop-filter: blur(12px) saturate(196%);
+    -webkit-backdrop-filter: blur(18px) saturate(106%);
+    background-color: rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    border: 1px solid rgba(209, 213, 219, 0.3);
+}
 .login-form input {
   width: 100%;
   padding: 12px;
   margin: 10px 0;
   font-size: 1rem;
-  border: 1px solid #ccc;
+  background-color: transparent;
+  border:none;
+  border-bottom: 1px solid #ccc;
   border-radius: 6px;
   box-sizing: border-box;
+  outline: none;
+  color:white
 }
 
 .login-form button {

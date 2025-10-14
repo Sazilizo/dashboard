@@ -19,7 +19,7 @@ const PieChartStats = ({ title, data, dataKey = "value", labelKey = "label", hei
 
 
   return (
-    <div className="rounded-chart">
+    <div className="graphs">
       <h3 className="chart-title">{title}</h3>
       <ResponsiveContainer width="100%" height={height}>
         <PieChart>

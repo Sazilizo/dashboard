@@ -6,6 +6,7 @@
   box-sizing: border-box;
 }
 
+
 .users-table-container {
   width: 100%;
   overflow-x: auto; /* horizontal scroll on small screens */
