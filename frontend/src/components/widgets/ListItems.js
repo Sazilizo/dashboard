@@ -4,12 +4,9 @@ import Photos from "../profiles/Photos";
 
 function FallbackImage({ bucketName, folderName, id, photoCount }) {
   const [hasError, setHasError] = useState(false);
-
-  // Simple validator: check if file extension looks like an image
   const validImageExtensions = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
   const isValid = (url) =>
     validImageExtensions.some((ext) => url?.toLowerCase().endsWith(ext));
-
   if (hasError) {
     return (
       <div className="w-full h-full bg-gray-300 rounded flex items-center justify-center">
@@ -17,7 +14,6 @@ function FallbackImage({ bucketName, folderName, id, photoCount }) {
       </div>
     );
   }
-
   return (
     <Photos
       bucketName={bucketName}
@@ -25,12 +21,15 @@ function FallbackImage({ bucketName, folderName, id, photoCount }) {
       id={id}
       photoCount={photoCount}
       onError={() => setHasError(true)}
-      isValidUrl={isValid} // pass validator down if your Photos supports it
+      isValidUrl={isValid}
     />
   );
 }
 
-export default function ListItems({ students }) {
+export default function ListItems({ students, onDelete, onUpdate }) {
+  const [editId, setEditId] = useState(null);
+  const [editName, setEditName] = useState("");
+
   if (!students || students.length === 0) return <p>No students found.</p>;
 
   return (
@@ -53,6 +52,55 @@ export default function ListItems({ students }) {
               <p>Grade: {s.grade}</p>
             </div>
           </Link>
+          {/* Delete button */}
+          {onDelete && (
+            <button
+              className="btn btn-danger"
+              onClick={() => onDelete(s.id)}
+              style={{ marginLeft: 8 }}
+            >
+              Delete
+            </button>
+          )}
+          {/* Simple inline edit for name */}
+          {onUpdate && (
+            <span style={{ marginLeft: 8 }}>
+              {editId === s.id ? (
+                <>
+                  <input
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    style={{ width: 120 }}
+                  />
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      onUpdate(s.id, { full_name: editName });
+                      setEditId(null);
+                    }}
+                  >
+                    Save
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setEditId(null)}
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setEditId(s.id);
+                    setEditName(s.full_name);
+                  }}
+                >
+                  Edit
+                </button>
+              )}
+            </span>
+          )}
         </li>
       ))}
     </ul>

@@ -5,7 +5,7 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import api from "../../api/client";
 import "../../styles/LearnerAttendance.css";
-
+import imageCompression from "browser-image-compression";
 
 export default function LearnerAttendanceCalendar() {
   const { id } = useParams(); 
