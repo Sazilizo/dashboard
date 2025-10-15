@@ -11,6 +11,7 @@ import { Link } from "react-router-dom";
 import useOfflineTable from "../../hooks/useOfflineTable";
 import SortDropdown from "../widgets/SortDropdown"
 import Pagination from "../widgets/Pagination";
+import QueuedList from "../widgets/QueuedList";
 const gradeOptions = [
   "R1", "R2", "R3",
   ...Array.from({ length: 7 }, (_, i) => {
@@ -128,6 +129,7 @@ export default function StudentList() {
                   loadMore={loadMore}
                   loading={loading}
                 />
+                <QueuedList table="students" />
               </>
             )}
           </div>

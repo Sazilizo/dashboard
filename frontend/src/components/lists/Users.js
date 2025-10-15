@@ -4,6 +4,8 @@ import EditProfile from "../profiles/EditUserProfile";
 import { useAuth } from "../../context/AuthProvider";
 import "../../styles/Users.css";
 import { Link } from "react-router-dom";
+import useOfflineTable from "../../hooks/useOfflineTable";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
 
 export default function Users() {
   const { user } = useAuth();
@@ -17,47 +19,10 @@ export default function Users() {
   const [currentPage, setCurrentPage] = useState(1);
   const USERS_PER_PAGE = 10;
 
-  const isPrivileged =
-    user?.profile?.roles?.name &&
-    ["superuser", "admin", "hr"].includes(
-      user.profile.roles.name.toLowerCase()
-    );
+  const { isOnline } = useOnlineStatus();
 
-  // Helper: generate signed URL for avatar
-  const getAvatarUrl = useCallback(async (path) => {
-    if (!path) return null;
-    try {
-      // Check if public URL exists (you can use public bucket to avoid flicker)
-      const { data: urlData, error: urlError } = await api.storage
-        .from("profile-avatars")
-        .createSignedUrl(path, 60 * 60); // 1 hour
-      if (urlError) return null;
-      return urlData?.signedUrl || null;
-    } catch (err) {
-      console.error("Error generating signed URL:", err);
-      return null;
-    }
-  }, []);
-
-  // Fetch roles
-  useEffect(() => {
-    async function fetchRoles() {
-      const { data, error } = await api.from("roles").select("id,name");
-      if (error) return setError(error.message);
-      setRoles(data || []);
-    }
-    fetchRoles();
-  }, []);
-
-  // Fetch profiles
-  useEffect(() => {
-    async function fetchProfiles() {
-      setLoading(true);
-      try {
-        const { data, error } = await api
-          .from("profiles")
-          .select(
-            `
+  // Use offline table for profiles and roles
+  const profilesSelect = `
             id,
             auth_uid,
             username,
@@ -67,30 +32,78 @@ export default function Users() {
             roles(id,name),
             school_id,
             schools(id,name)
-          `
-          )
-          .order("username", { ascending: true });
+          `;
+  const { rows: profileRows, loading: profilesLoading, error: profilesError } = useOfflineTable(
+    "profiles",
+    {},
+    profilesSelect,
+    1000,
+    "username",
+    "asc"
+  );
 
-        if (error) throw error;
+  const { rows: roleRows } = useOfflineTable("roles", {}, "id,name", 1000, "id", "asc");
 
-        // Generate signed URLs for each avatar
-        const profilesWithAvatars = await Promise.all(
-          (data || []).map(async (p) => {
-            const avatarPath = p.avatar_url; // should be "profile-avatars/{id}.ext"
-            const signedUrl = await getAvatarUrl(avatarPath);
-            return { ...p, avatar_url_signed: signedUrl || null };
-          })
-        );
+  const isPrivileged =
+    user?.profile?.roles?.name &&
+    ["superuser", "admin", "hr"].includes(
+      user.profile.roles.name.toLowerCase()
+    );
 
-        setProfiles(profilesWithAvatars);
+  // Helper: generate signed URL for avatar (only when online)
+  const getAvatarUrl = useCallback(async (path) => {
+    if (!path) return null;
+    if (!isOnline) return null;
+    try {
+      const { data: urlData, error: urlError } = await api.storage
+        .from("profile-avatars")
+        .createSignedUrl(path, 60 * 60); // 1 hour
+      if (urlError) return null;
+      return urlData?.signedUrl || null;
+    } catch (err) {
+      console.error("Error generating signed URL:", err);
+      return null;
+    }
+  }, [isOnline]);
+
+  // populate roles from offline table rows
+  useEffect(() => {
+    setRoles(roleRows || []);
+  }, [roleRows]);
+
+  // populate profiles from offline table rows and add signed urls when online
+  useEffect(() => {
+    async function applyProfiles() {
+      setLoading(true);
+      try {
+        const rows = profileRows || [];
+        if (!isPrivileged) {
+          setProfiles([]);
+          setLoading(false);
+          return;
+        }
+
+        if (isOnline) {
+          const profilesWithAvatars = await Promise.all(
+            (rows || []).map(async (p) => {
+              const avatarPath = p.avatar_url;
+              const signedUrl = await getAvatarUrl(avatarPath);
+              return { ...p, avatar_url_signed: signedUrl || null };
+            })
+          );
+          setProfiles(profilesWithAvatars);
+        } else {
+          // offline: use cached rows directly
+          setProfiles(rows.map((p) => ({ ...p, avatar_url_signed: null })));
+        }
       } catch (err) {
-        setError(err.message);
+        setError(err.message || String(err));
       }
       setLoading(false);
     }
 
-    if (isPrivileged) fetchProfiles();
-  }, [isPrivileged, getAvatarUrl]);
+    applyProfiles();
+  }, [profileRows, isPrivileged, isOnline, getAvatarUrl]);
 
   // Filter by role
   useEffect(() => {
@@ -112,8 +125,8 @@ export default function Users() {
   );
 
   if (!isPrivileged) return <div>Access denied</div>;
-  if (loading) return <div>Loading users...</div>;
-  if (error) return <div>Error: {error}</div>;
+  if (loading || profilesLoading) return <div>Loading users...</div>;
+  if (error || profilesError) return <div>Error: {error || profilesError?.message || String(profilesError)}</div>;
 
   return (
     <div className="users-container">

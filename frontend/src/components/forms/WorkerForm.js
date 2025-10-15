@@ -3,9 +3,12 @@ import { useSchools } from "../../context/SchoolsContext";
 import api from "../../api/client";
 import UploadFile from "../profiles/UploadHelper";
 import RoleSelect from "../../hooks/RoleSelect";
+import { queueMutation } from "../../utils/tableCache";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
 
 export default function WorkerForm() {
   const { schools } = useSchools();
+  const { isOnline } = useOnlineStatus();
   const [fields, setFields] = useState([]);
   const [formData, setFormData] = useState({});
   const [error, setError] = useState("");
@@ -84,45 +87,52 @@ export default function WorkerForm() {
     }
 
     try {
-      // Step 1: Insert worker without file URLs
+      // Build insert payload; keep files as blobs in the payload for queueing
       const insertData = {};
       fields.forEach((f) => {
         if (f.format !== "file") {
           insertData[f.name] =
             f.type === "number" ? Number(formData[f.name]) || null : formData[f.name] || null;
         } else {
-          insertData[f.name] = null;
+          insertData[f.name] = formData[f.name] || null; // file blob or null
         }
       });
 
-      const { data: insertedWorker, error: insertError } = await api
-        .from("workers")
-        .insert(insertData)
-        .select()
-        .single();
-
-      if (insertError) throw insertError;
-
-      const workerId = insertedWorker.id;
-
-      // Step 2: Upload files and update worker
-      const fileUpdates = {};
-      for (const f of fields) {
-        if (f.format === "file" && formData[f.name]) {
-          const url = await UploadFile(formData[f.name], "workers", workerId);
-          fileUpdates[f.name] = url;
-        }
-      }
-
-      if (Object.keys(fileUpdates).length > 0) {
-        const { error: updateError } = await api
+      if (isOnline) {
+        // Online: upload like before
+        const { data: insertedWorker, error: insertError } = await api
           .from("workers")
-          .update(fileUpdates)
-          .eq("id", workerId);
-        if (updateError) throw updateError;
-      }
+          .insert(insertData)
+          .select()
+          .single();
 
-      alert("Worker created successfully!");
+        if (insertError) throw insertError;
+
+        const workerId = insertedWorker.id;
+
+        // Upload files and update worker
+        const fileUpdates = {};
+        for (const f of fields) {
+          if (f.format === "file" && formData[f.name]) {
+            const url = await UploadFile(formData[f.name], "workers", workerId);
+            fileUpdates[f.name] = url;
+          }
+        }
+
+        if (Object.keys(fileUpdates).length > 0) {
+          const { error: updateError } = await api
+            .from("workers")
+            .update(fileUpdates)
+            .eq("id", workerId);
+          if (updateError) throw updateError;
+        }
+
+        alert("Worker created successfully!");
+      } else {
+        // Offline: queue mutation (queueMutation will extract file blobs into FILE_STORE)
+        await queueMutation("workers", "insert", insertData);
+        alert("You are offline. The worker has been queued and will sync when back online.");
+      }
 
       // Reset form
       const resetData = {};

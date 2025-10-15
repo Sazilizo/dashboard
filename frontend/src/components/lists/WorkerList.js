@@ -2,13 +2,16 @@ import React, { useEffect } from "react";
 import { useAuth } from "../../context/AuthProvider";
 import { useSchools } from "../../context/SchoolsContext";
 import FiltersPanel from "../filters/FiltersPanel";
-import { useSupabaseWorkers } from "../../hooks/useSupabaseWorkers";
+import useOfflineTable from "../../hooks/useOfflineTable";
 import { useFilters } from "../../context/FiltersContext";
 import StudentStats from "./StudentStats";
 import "../../styles/main.css"
 import Photos from "../profiles/Photos";
 import { Link } from "react-router-dom";
 import WorkerStats from "./WorkerStats";
+import Pagination from "../widgets/Pagination";
+import SortDropdown from "../widgets/SortDropdown";
+import QueuedList from "../widgets/QueuedList";
 
 const groupByOptions =["cleaners", "tutors","coaches", "head coaches", "head tutors"]
 
@@ -17,11 +20,50 @@ export default function WorkerList() {
   const { schools } = useSchools();
   const { filters, setFilters } = useFilters();
   const [showList, setShowList] = React.useState(true);
+  const [sortBy, setSortBy] = React.useState("id");
+  const [sortOrder, setSortOrder] = React.useState("asc");
 
-  const isAllSchoolRole = ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles.name);
-  const { workers, loading, error } = useSupabaseWorkers({
-    school_id: isAllSchoolRole ? schools.map((s) => s.id) : [user?.profile?.school_id],
-  });
+  const isAllSchoolRole = ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles?.name);
+
+  // Determine school IDs like StudentList so filters work consistently
+  const schoolIds = React.useMemo(() => {
+    const roleName = user?.profile?.roles?.name;
+    if (["superuser", "admin", "hr", "viewer"].includes(roleName)) {
+      if (Array.isArray(filters.school_id) && filters.school_id.length > 0) {
+        return filters.school_id.map(Number);
+      }
+      return schools.map((s) => s.id).filter(Boolean);
+    }
+    return user?.profile?.school_id ? [user.profile.school_id] : [];
+  }, [user?.profile?.roles?.name, user?.profile?.school_id, schools, filters.school_id]);
+
+  const normalizedFilters = React.useMemo(() => {
+    const f = { school_id: schoolIds };
+    if (Array.isArray(filters.group_by) && filters.group_by.length > 0) f.group_by = filters.group_by;
+    if (Array.isArray(filters.deleted) && filters.deleted.length > 0) f.deleted = filters.deleted;
+    return f;
+  }, [schoolIds, filters.group_by, filters.deleted]);
+
+  // Use the offline hook for workers. Include relation fields as needed (roles)
+  const {
+    rows: workers,
+    loading,
+    error,
+    addRow,
+    updateRow,
+    deleteRow,
+    isOnline,
+    page,
+    hasMore,
+    loadMore,
+  } = useOfflineTable(
+    "workers",
+    normalizedFilters,
+    `*, roles:roles(name)`,
+    50,
+    sortBy,
+    sortOrder
+  );
 
   return (
   <div className="app-list-container">
@@ -43,29 +85,58 @@ export default function WorkerList() {
 
         <div className={`split-container ${showList ? "expanded" : "collapsed"}`}>
           <div className={`app-list-panel ${showList ? "show" : "hide"}`}>
-            {isAllSchoolRole && (
-              <Link to="/dashboard/workers/create" className="app-btn app-btn-primary">Create worker</Link>
-            )}
+            <div style={{ marginBottom: 8 }}>
+              {isAllSchoolRole && (
+                <Link to="/dashboard/workers/create" className="app-btn app-btn-primary">Create worker</Link>
+              )}
+              <SortDropdown
+                options={[
+                  { value: "name", label: "Name" },
+                  { value: "roles.name", label: "Role" },
+                  { value: "id", label: "ID" },
+                ]}
+                value={sortBy}
+                order={sortOrder}
+                onChange={setSortBy}
+                onOrderChange={setSortOrder}
+              />
+            
+              <span>Status: </span>
+              <span className={isOnline ? "text-green-600" : "text-yellow-600"}>
+                {isOnline ? "Online" : "Offline (changes will sync when online)"}
+              </span>
+            </div>
+
             {loading && <div>Loading...</div>}
-            {error && <div style={{ color: "red" }}>{error}</div>}
+            {!loading && error && <div style={{ color: "red" }}>{error.message || error}</div>}
             {!loading && !error && (
-              <ul className="app-list">
-                {workers.map((s) => (
-                  <li key={s.id}>
-                    <Link to={`/dashboard/workers/${s.id}`}>
-                      <div className="app-profile-photo">
-                        <Photos bucketName="worker-uploads" folderName="workers" id={s.id} />
-                      </div>
-                      <div className="app-list-item-details">
-                        <p>
-                          <strong>{`${s.name} ${s.last_name}`}</strong>
-                        </p>
-                        <p>role:{s.roles.name}</p>
-                      </div>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <ul className="app-list">
+                  {workers.map((s) => (
+                    <li key={s.id}>
+                      <Link to={`/dashboard/workers/${s.id}`}>
+                        <div className="app-profile-photo">
+                          <Photos bucketName="worker-uploads" folderName="workers" id={s.id} />
+                        </div>
+                        <div className="app-list-item-details">
+                          <p>
+                            <strong>{`${s.name} ${s.last_name}`}</strong>
+                          </p>
+                          <p>role:{s?.roles?.name}</p>
+                        </div>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+
+                <Pagination
+                  page={page}
+                  hasMore={hasMore}
+                  loadMore={loadMore}
+                  loading={loading}
+                />
+                <QueuedList table="workers" />
+              </>
             )}
           </div>
 

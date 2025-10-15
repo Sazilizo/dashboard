@@ -7,6 +7,7 @@ import { SchoolsProvider } from "./context/SchoolsContext";
 import { FilterProvider } from "./context/FiltersContext";
 import "./styles/main.css";
 import "./styles/graphs.css";
+import "./styles/DashboardHome.css"
 
 function App() {
   return (

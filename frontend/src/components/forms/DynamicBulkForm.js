@@ -7,6 +7,8 @@ import EntityMultiSelect from "../../hooks/EntityMultiSelect";
 import UploadFile from "../profiles/UploadFile";
 import { useSchools } from "../../context/SchoolsContext";
 import { useAuth } from "../../context/AuthProvider";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
+import { getTable, cacheTable } from "../../utils/tableCache";
 
 export default function DynamicBulkForm({
   schema_name,
@@ -64,13 +66,65 @@ export default function DynamicBulkForm({
     return new Date(fullYear, month, day).toISOString().split("T")[0];
   };
 
+  const { isOnline } = useOnlineStatus();
+
   useEffect(() => {
     if (!schema_name) return;
 
     async function fetchSchema() {
+      // Offline: read schema from cache
+      if (!isOnline) {
+        try {
+          const cached = await getTable("form_schemas");
+          const entry = (cached || []).find((r) => r.model_name === schema_name);
+          const fields = entry?.schema?.fields || [];
+          if (!fields || fields.length === 0) {
+            // No cached schema available for this model
+            setSchema([]);
+            setError(
+              `No cached schema for ${schema_name} is available offline. Open this form while online once to cache the schema, or go online to load it now.`
+            );
+            return;
+          }
+          setSchema(fields);
+          // build defaults from fields
+          const defaults = {};
+          fields.forEach((f) => {
+            if (f.type === "json_object") {
+              const groupDefaults = {};
+              f.group.forEach((g) => {
+                groupDefaults[g.key] = g.default ?? 0;
+              });
+              defaults[f.name] = { ...groupDefaults };
+            } else if (f.type === "checkbox" || f.type === "boolean") {
+              defaults[f.name] = false;
+            } else if (f.type === "select" && f.multiple) {
+              defaults[f.name] = id ? [id] : [];
+            } else {
+              defaults[f.name] = "";
+            }
+          });
+          Object.keys(presetFields).forEach((k) => {
+            if (fields.some((f) => f.name === k)) {
+              defaults[k] = presetFields[k];
+            }
+          });
+          setFormData(defaults);
+          return;
+        } catch (err) {
+          console.warn("Failed to read cached form schema", err);
+          setSchema([]);
+          setError(
+            `Failed to load form schema (offline). Error reading local cache: ${err?.message || err}`
+          );
+          return;
+        }
+      }
+
+      // Online: fetch and cache schema
       const { data: schemaData, error: schemaError } = await api
         .from("form_schemas")
-        .select("schema")
+        .select("schema,model_name")
         .eq("model_name", schema_name)
         .single();
 
@@ -106,10 +160,19 @@ export default function DynamicBulkForm({
       });
 
       setFormData(defaults);
+
+      // Cache fetched schema for offline use
+      try {
+        const existing = await getTable("form_schemas");
+        const others = (existing || []).filter((r) => r.model_name !== schemaData.model_name);
+        await cacheTable("form_schemas", [...others, { model_name: schemaData.model_name, schema: schemaData.schema }]);
+      } catch (err) {
+        console.warn("Failed to cache form schema", err);
+      }
     }
 
     fetchSchema();
-  }, [schema_name, presetFields, id]);
+  }, [schema_name, presetFields, id, isOnline]);
 
   const handleChange = (name, value) => {
     let updated = { ...formData, [name]: value };

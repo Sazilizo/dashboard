@@ -96,3 +96,4 @@ export default function StackedCategoryGradeChart({ students, height = 300 }) {
     </div>
   );
 }
+

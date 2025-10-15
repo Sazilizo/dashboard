@@ -5,7 +5,7 @@ import FiltersPanel from "../filters/FiltersPanel";
 import { useAuth } from "../../context/AuthProvider"; 
 import { useSchools } from "../../context/SchoolsContext";
 import { useFilters } from "../../context/FiltersContext";
-import { useSupabaseSessions } from "../../hooks/useSupabaseSessions";
+import useOfflineTable from "../../hooks/useOfflineTable";
 
 const gradeOptions = [
   "R1", "R2", "R3", // Reception grades
@@ -28,11 +28,27 @@ export default function SessionList({deleted}) {
       ? ["PE"]
       : ["PE", "Academics"];
   
-  const { sessions, loading, error } = useSupabaseSessions({
+  const normalizedFilters = {
     school_id: ["superuser", "admin", "hr", "viewer"].includes(user && user?.profile?.roles.name)
-      ? schools.map(s => s.id) // all schools
-      : [user?.profile?.school_id],       // only user's school
-  });
+      ? schools.map(s => s.id)
+      : [user?.profile?.school_id],
+  };
+
+  const { rows: sessions, loading, error } = useOfflineTable(
+    "students",
+    normalizedFilters,
+    `
+            *,
+            academic_sessions:academic_sessions(*),
+            pe_sessions:pe_sessions(*),
+            assessments(*),
+            attendance:attendance_records(*),
+            school:schools(*)
+          `,
+    1000,
+    "id",
+    "asc"
+  );
 
   return (
     <div className="app-list-container">

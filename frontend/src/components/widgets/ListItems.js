@@ -30,6 +30,12 @@ export default function ListItems({ students, onDelete, onUpdate }) {
   const [editId, setEditId] = useState(null);
   const [editName, setEditName] = useState("");
 
+  React.useEffect(() => {
+    const bc = typeof window !== "undefined" && "BroadcastChannel" in window ? new BroadcastChannel("offline-sync") : null;
+    // refresh could be handled higher up; we just listen so badges update when sync completes
+    return () => { if (bc) bc.close(); };
+  }, []);
+
   if (!students || students.length === 0) return <p>No students found.</p>;
 
   return (
@@ -49,7 +55,7 @@ export default function ListItems({ students, onDelete, onUpdate }) {
               <p>
                 <strong>{s.full_name}</strong>
               </p>
-              <p>Grade: {s.grade}</p>
+              <p>Grade: {s.grade} {s.__queued && <span style={{ color: "orange", marginLeft: 8 }}>(Queued)</span>}</p>
             </div>
           </Link>
           {/* Delete button */}

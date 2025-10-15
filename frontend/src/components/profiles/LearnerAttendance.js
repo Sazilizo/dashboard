@@ -4,6 +4,9 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import api from "../../api/client";
+import { getTable, cacheTable } from "../../utils/tableCache";
+import useOfflineTable from "../../hooks/useOfflineTable";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
 import "../../styles/LearnerAttendance.css";
 import imageCompression from "browser-image-compression";
 
@@ -28,67 +31,86 @@ export default function LearnerAttendanceCalendar() {
   // Fetch attendance and sessions, auto-create attendance from sessions
   useEffect(() => {
     const fetchAttendanceAndSessions = async () => {
-      const { data: attData } = await api
-        .from("attendance_records")
-        .select("*")
-        .eq("student_id", id);
+      try {
+        const { data: attData } = await api
+          .from("attendance_records")
+          .select("*")
+          .eq("student_id", id);
 
-      const { data: academicSessions } = await api
-        .from("academic_sessions")
-        .select("date, session_name")
-        .eq("student_id", id);
+        const { data: academicSessions } = await api
+          .from("academic_sessions")
+          .select("date, session_name")
+          .eq("student_id", id);
 
-      const { data: peSessions } = await api
-        .from("pe_sessions")
-        .select("date, session_name")
-        .eq("student_id", id);
+        const { data: peSessions } = await api
+          .from("pe_sessions")
+          .select("date, session_name")
+          .eq("student_id", id);
 
-      let combinedAttendance = attData || [];
+        let combinedAttendance = attData || [];
 
-      // Merge sessions as attendance if missing
-      const allSessions = [...(academicSessions || []), ...(peSessions || [])];
-      for (const s of allSessions) {
-        if (!combinedAttendance.find((a) => a.date === s.date)) {
-          combinedAttendance.push({
-            student_id: id,
-            date: s.date,
-            status: "present",
-            note: s.session_name,
-          });
+        // Merge sessions as attendance if missing
+        const allSessions = [...(academicSessions || []), ...(peSessions || [])];
+        for (const s of allSessions) {
+          if (!combinedAttendance.find((a) => a.date === s.date)) {
+            combinedAttendance.push({
+              student_id: id,
+              date: s.date,
+              status: "present",
+              note: s.session_name,
+            });
+          }
+        }
+
+        setAttendance(combinedAttendance);
+
+        // Cache data for offline use
+        try { await cacheTable("attendance_records", combinedAttendance); } catch (err) { }
+        try { await cacheTable("academic_sessions", academicSessions || []); } catch (err) { }
+        try { await cacheTable("pe_sessions", peSessions || []); } catch (err) { }
+      } catch (err) {
+        // fallback to cached data when network fails
+        try {
+          const cachedAttendance = await getTable("attendance_records");
+          const cachedAcademic = await getTable("academic_sessions");
+          const cachedPe = await getTable("pe_sessions");
+          let combined = (cachedAttendance || []).filter(a => Number(a.student_id) === Number(id));
+          const allSessions = [...(cachedAcademic || []), ...(cachedPe || [])].filter(s => Number(s.student_id) === Number(id));
+          for (const s of allSessions) {
+            if (!combined.find((a) => a.date === s.date)) {
+              combined.push({ student_id: id, date: s.date, status: "present", note: s.session_name });
+            }
+          }
+          setAttendance(combined);
+        } catch (err2) {
+          console.error("Offline attendance read failed", err2);
         }
       }
-
-      setAttendance(combinedAttendance);
     };
 
     fetchAttendanceAndSessions();
   }, [id]);
 
   const school_id = attendance.length > 0 ? attendance[0].school_id : null;
+  const { addRow } = useOfflineTable("attendance_records");
+  const { isOnline } = useOnlineStatus();
   const handleSaveAttendance = async () => {
     if (!selectedDate) return;
 
     const existing = attendance.find((a) => a.date === selectedDate);
 
     if (existing) {
-      const { data, error } = await api
-        .from("attendance_records")
-        .update({ status, note })
-        .eq("id", existing.id);
-
-      if (!error && data) {
-        setAttendance(
-          attendance.map((a) =>
-            a.date === selectedDate ? { ...a, status, note } : a
-          )
-        );
-      }
+      // Use offline helper to update (it will queue if offline)
+      await addRow({ id: existing.id, status, note, _update: true });
+      setAttendance(
+        attendance.map((a) => (a.date === selectedDate ? { ...a, status, note } : a))
+      );
     } else {
-      const { data, error } = await api.from("attendance_records").insert([
-        { "student_id": id,"school_id":school_id, "date": selectedDate, "status":status,"note": note },
-      ]);
-
-      if (!error && data) setAttendance([...attendance, ...data]);
+      const res = await addRow({ student_id: id, school_id, date: selectedDate, status, note });
+      // If online the server will return and the list will refresh via hook; if queued, we add a temp row
+      if (res?.tempId) {
+        setAttendance([...attendance, { id: res.tempId, student_id: id, school_id, date: selectedDate, status, note, __queued: true }]);
+      }
     }
 
     setSelectedDate(null);

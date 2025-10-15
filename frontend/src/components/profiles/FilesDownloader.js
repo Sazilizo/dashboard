@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from "react";
 import api from "../../api/client";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 
 function FilesDownloader({ bucketName, folderName, id }) {
+  const { isOnline } = useOnlineStatus();
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     async function fetchFiles() {
+      if (!isOnline) return;
       try {
         const { data, error } = await api.storage
           .from(bucketName)
@@ -24,6 +27,7 @@ function FilesDownloader({ bucketName, folderName, id }) {
   }, [bucketName, folderName, id]);
 
   async function downloadAllFiles() {
+    if (!isOnline) return alert("You are offline. Please go online to download files.");
     if (!files.length) return alert("No files to download");
 
     setLoading(true);

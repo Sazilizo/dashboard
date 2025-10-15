@@ -15,6 +15,7 @@ import "../../styles/Profile.css"
 const LearnerProfile = () => {
   const { id } = useParams();
   const { user } = useAuth();
+  // const { isOnline } = useOnlineStatus();
   const [student, setStudent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);

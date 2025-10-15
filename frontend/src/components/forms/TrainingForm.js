@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from "react";
 import DynamicBulkForm from "./DynamicBulkForm";
-import api from "../../api/client";
+import useOfflineTable from "../../hooks/useOfflineTable";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { useParams } from "react-router-dom";
 import EntityMultiSelect from "../../hooks/EntityMultiSelect";
 import { useAuth } from "../../context/AuthProvider";
 import { useSupabaseWorkers } from "../../hooks/useSupabaseWorkers";
+import { cacheTable, getTable } from "../../utils/tableCache";
 import { useSchools } from "../../context/SchoolsContext";
 import UploadFile from "../profiles/UploadHelper";
 
@@ -15,6 +17,8 @@ export default function TrainingForm() {
   const {schools} = useSchools()
   const [selectedWorkers, setSelectedWorkers] = useState([]);
   const [loadingWorkers, setLoadingWorkers] = useState(true);
+  const { addRow } = useOfflineTable("training_records");
+  const { isOnline } = useOnlineStatus();
 
   // Fetch all workers for bulk mode
   const { workers, loading, error } = useSupabaseWorkers({
@@ -22,6 +26,34 @@ export default function TrainingForm() {
         ? schools.map(s => s.id) // all schools
         : [user?.profile?.school_id],       // only user's school
     });
+
+  const [displayedWorkers, setDisplayedWorkers] = useState([]);
+
+  // Keep a cached copy when online, and fall back to cached workers when offline
+  useEffect(() => {
+    let mounted = true;
+    async function ensureWorkers() {
+      try {
+        if (isOnline) {
+          if (Array.isArray(workers) && workers.length) {
+            if (mounted) setDisplayedWorkers(workers);
+            try {
+              await cacheTable("workers", workers);
+            } catch (err) {
+              console.warn("Failed to cache workers", err);
+            }
+          }
+        } else {
+          const cached = await getTable("workers");
+          if (mounted) setDisplayedWorkers(cached || []);
+        }
+      } catch (err) {
+        console.warn("ensureWorkers error", err);
+      }
+    }
+    ensureWorkers();
+    return () => { mounted = false; };
+  }, [workers, isOnline]);
 
   // Preset fields for DynamicBulkForm
   const presetFields = {
@@ -66,19 +98,23 @@ export default function TrainingForm() {
               worker_id: workerId,
             };
 
-            if (record.photo) {
-              const uploadedUrl = await UploadFile(
-                record.photo,
-                "training-uploads",
-                `${workerId}/${record.title || "training"}`
-              );
-              record.photo = uploadedUrl;
-            }
+              // remove logged_by if present
+              delete record.logged_by;
 
-            delete record.logged_by;
+              // If online, upload photo now; if offline, queueMutation will keep the File/blob
+              if (record.photo && isOnline) {
+                const uploadedUrl = await UploadFile(
+                  record.photo,
+                  "training-uploads",
+                  `${workerId}/${record.title || "training"}`
+                );
+                record.photo = uploadedUrl;
+              }
 
-            const { error } = await api.from("training_records").insert(record);
-            if (error) throw error;
+              const res = await addRow(record);
+              if (res?.mutationKey && !isOnline) {
+                // queued
+              }
           }
 
         }}

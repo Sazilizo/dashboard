@@ -3,25 +3,25 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/useAuth";
 import DynamicBulkForm from "../forms/DynamicBulkForm";
+import useOfflineTable from "../../hooks/useOfflineTable";  
 import api from "../../api/client";
 
 export default function MealForm() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { addRow } = useOfflineTable("meals");
   const [mealId, setMealId] = useState(null);
 
   const handleSubmit = async (payload) => {
     try {
-      // insert into meals table
-      const { data, error } = await api
-        .from("meals")
-        .insert(payload)
-        .select("id"); // return new meal id
-
-      if (error) throw error;
-
-      setMealId(data[0]?.id);
-      console.log("Meal created with ID:", data[0]?.id);
+      // Use offline helper (will queue when offline). If online and the
+      // backend returns a server id we rely on the list refresh to show it.
+      const res = await addRow(payload);
+      if (res?.tempId) {
+        setMealId(res.tempId);
+      } else {
+        setMealId(null);
+      }
     } catch (err) {
       console.error("Failed to create meal:", err);
       throw err;

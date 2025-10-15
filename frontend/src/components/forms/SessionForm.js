@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from "react";
 import DynamicBulkForm from "./DynamicBulkForm";
-import api from "../../api/client";
+import useOfflineTable from "../../hooks/useOfflineTable";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { useParams } from "react-router-dom";
 import EntityMultiSelect from "../../hooks/EntityMultiSelect";
 import { useAuth } from "../../context/AuthProvider";
 import { useSchools } from "../../context/SchoolsContext";
 import UploadFile from "../profiles/UploadHelper";
 import { useSupabaseStudents } from "../../hooks/useSupabaseStudents";
+import { cacheTable, getTable } from "../../utils/tableCache";
 import FiltersPanel from "../filters/FiltersPanel";
 import { useFilters } from "../../context/FiltersContext";
 
@@ -48,8 +50,39 @@ export default function SessionForm() {
     { value: "pe_sessions", label: "PE" },
   ];
 
+  const { addRow } = useOfflineTable(sessionType || "academic_sessions");
+  const { isOnline } = useOnlineStatus();
+
   // Filter students based on sessionType
-  const filteredStudents = students.filter(s => {
+  const [displayedStudents, setDisplayedStudents] = useState([]);
+
+  // Keep a cached copy when online, and fall back to cached students when offline
+  useEffect(() => {
+    let mounted = true;
+    async function ensureStudents() {
+      try {
+        if (isOnline) {
+          if (Array.isArray(students) && students.length) {
+            if (mounted) setDisplayedStudents(students);
+            try {
+              await cacheTable("students", students);
+            } catch (err) {
+              console.warn("Failed to cache students", err);
+            }
+          }
+        } else {
+          const cached = await getTable("students");
+          if (mounted) setDisplayedStudents(cached || []);
+        }
+      } catch (err) {
+        console.warn("ensureStudents error", err);
+      }
+    }
+    ensureStudents();
+    return () => { mounted = false; };
+  }, [students, isOnline]);
+
+  const filteredStudents = displayedStudents.filter(s => {
     if (sessionType === "pe_sessions") return s.physical_education; // only PE students
     return true; // all students for academics or no session type
   });
@@ -120,17 +153,16 @@ export default function SessionForm() {
             const tableName = sessionType;
             for (const studentId of studentsId) {
               const record = { ...formData, student_id: studentId, user_id: user && user.profile?.id};
-              if (record.photo) {
-                record.photo = await UploadFile(
-                  record.photo,
-                  "session-uploads",
-                  `${studentId}/${record.title || "session"}`
-                );
-              }
+                if (record.photo && isOnline) {
+                  record.photo = await UploadFile(
+                    record.photo,
+                    "session-uploads",
+                    `${studentId}/${record.title || "session"}`
+                  );
+                }
 
-              console.log(record)
-              const { error } = await api.from(tableName).insert(record);
-              if (error) throw error;
+                // queue or insert via offline helper
+                await addRow(record);
             }
           }}
         />

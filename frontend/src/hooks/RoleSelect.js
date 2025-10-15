@@ -1,11 +1,20 @@
 import React,{useEffect, useState} from "react";
 import api from "../api/client";
+import useOnlineStatus from "./useOnlineStatus";
 function RoleSelect({ name, value, onChange, required }) {
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const { isOnline } = useOnlineStatus();
 
   useEffect(() => {
     async function fetchRoles() {
+      if (!isOnline) {
+        // When offline, don't attempt network fetch — return empty list
+        setRoles([]);
+        setLoading(false);
+        return;
+      }
+
       const { data, error } = await api.from("roles").select("id, name");
       if (!error) setRoles(data || []);
       setLoading(false);

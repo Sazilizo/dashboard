@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import useOnlineStatus from "./useOnlineStatus";
 import { openDB } from "idb";
 import api from "../api/client";
 import { useFilters } from "../context/FiltersContext";
@@ -53,6 +54,8 @@ export function useOfflineSupabase(table, options = {}) {
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
 
+  const { isOnline } = useOnlineStatus();
+
   const normalizedFilters = useMemo(() => {
     const combined = { ...contextFilters, ...hookFilters };
     const normalized = {};
@@ -94,7 +97,7 @@ export function useOfflineSupabase(table, options = {}) {
     async ({ lazyRelations = [], reset = false, silent = false, overridePage } = {}) => {
       const currentPage = overridePage ?? page;
 
-      if (!navigator.onLine) {
+      if (!isOnline) {
         await fetchFromCache(currentPage);
         setLoading(false);
         setInitialLoading(false);

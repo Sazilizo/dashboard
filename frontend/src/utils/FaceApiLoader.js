@@ -14,6 +14,23 @@ export async function preloadFaceApiModels() {
 
     const BASE_URL = "https://pmvecwjomvyxpgzfweov.supabase.co/storage/v1/object/public/faceapi-models/";
 
+    // Prefetch model files into the Cache Storage so subsequent loads can be
+    // served from the browser cache when offline or on slow connections.
+    if (typeof caches !== "undefined") {
+      try {
+        const cache = await caches.open("faceapi-models");
+        await Promise.all(MODEL_FILES.map(async (f) => {
+          const url = BASE_URL + f;
+          const resp = await fetch(url, { mode: "cors" });
+          if (resp && resp.ok) await cache.put(url, resp.clone());
+        }));
+      } catch (err) {
+        // cache may be unavailable in some environments; continue anyway
+        console.warn("FaceAPI model caching failed:", err);
+      }
+    }
+
+    // Load networks (face-api will use the cached responses if available)
     await Promise.all([
       faceapi.nets.tinyFaceDetector.loadFromUri(BASE_URL),
       faceapi.nets.faceLandmark68Net.loadFromUri(BASE_URL),

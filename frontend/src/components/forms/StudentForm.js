@@ -1,15 +1,20 @@
 // src/components/students/StudentForm.js
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import api from "../../api/client";
+import { getTable, cacheTable } from "../../utils/tableCache";
+import useOfflineTable from "../../hooks/useOfflineTable";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
 import DynamicBulkForm from "../forms/DynamicBulkForm";
 import { useSchools } from "../../context/SchoolsContext";
 import { useAuth } from "../../context/AuthProvider";
+import api from "../../api/client";
 
 export default function StudentForm() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { schools } = useSchools();
+  const { isOnline } = useOnlineStatus();
+  const { addRow } = useOfflineTable("students");
   const [studentId, setStudentId] = useState();
   const [tutorOptions, setTutorOptions] = useState([]);
   const [coachOptions, setCoachOptions] = useState([]);
@@ -25,6 +30,27 @@ export default function StudentForm() {
     if (!schoolIds) return;
 
     async function fetchWorkers() {
+      // If offline, read cached workers list
+      if (!isOnline) {
+        try {
+          const cached = await getTable("workers");
+          const data = (cached || []).filter((w) => schoolIds.includes(w.school_id));
+          setTutorOptions(
+            data
+              .filter((w) => w.role?.name === "tutor")
+              .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id }))
+          );
+          setCoachOptions(
+            data
+              .filter((w) => w.role?.name === "coach")
+              .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id }))
+          );
+          return;
+        } catch (err) {
+          console.warn("Failed to read cached workers", err);
+        }
+      }
+
       const { data, error } = await api
         .from("workers")
         .select("id, name, last_name, role:roles(name),school_id")
@@ -34,7 +60,6 @@ export default function StudentForm() {
         console.error("Failed to fetch workers:", error);
         return;
       }
-      console.log("data",data)
 
       setTutorOptions(
         data
@@ -47,6 +72,13 @@ export default function StudentForm() {
           .filter((w) => w.role?.name === "coach")
           .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id }))
       );
+
+      // Cache workers for offline use
+      try {
+        await cacheTable("workers", data);
+      } catch (err) {
+        console.warn("Failed to cache workers", err);
+      }
     }
 
     fetchWorkers();
@@ -66,13 +98,18 @@ export default function StudentForm() {
   },[tutorOptions,coachOptions])
   const handleSubmit = async (payload) => {
     try {
-      const { data, error } = await api
-        .from("students")
-        .insert(payload)
-        .select("id");
-
-      if (error) throw error;
-      setStudentId(data[0]?.id);
+  // Use the offline table helper which will perform an online insert or
+  // queue the mutation when offline. It returns a temp id/mutation key
+  // when queued so the UI can reflect that state.
+  const res = await addRow(payload);
+      if (res && res.tempId) {
+        setStudentId(res.tempId);
+      } else {
+        // If addRow didn't return a tempId, we're online; fetch the students
+        // table to discover the created id (or the render will update from
+        // the list refresh triggered by the hook).
+        setStudentId(null);
+      }
     } catch (err) {
       console.error("Failed to create student:", err);
       throw err;

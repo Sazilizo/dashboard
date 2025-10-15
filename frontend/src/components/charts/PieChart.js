@@ -11,7 +11,8 @@ import {
 const COLORS = [
   "#ea333f", // red
   "#0077be", // blue
-  "#169a59"  // green
+  "#169a59", // green
+  "#f1c40f", // yellow
 ];
 
 const PieChartStats = ({ title, data, dataKey = "value", labelKey = "label", height = 300 }) => {

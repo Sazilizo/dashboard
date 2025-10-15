@@ -4,6 +4,7 @@ import Logout from "../pages/Logout";
 import EditProfile from "./profiles/EditUserProfile";
 import logo from "../assets/education-bg.png";
 import api from "../api/client";
+import useOnlineStatus from "../hooks/useOnlineStatus";
 
 export default function Topbar() {
   const { user } = useAuth();
@@ -14,9 +15,11 @@ export default function Topbar() {
 
   const toggleProfile = () => setShowProfile((prev) => !prev);
   const toggleDropdown = () => setDropdownOpen((prev) => !prev);
+  const { isOnline } = useOnlineStatus();
 
   const fetchAvatar = useCallback(async () => {
     if (!user?.profile?.id) return;
+    if (!isOnline) return; // don't try network requests when offline
     setLoading(true);
 
     const userId = user.profile.id;
@@ -46,7 +49,7 @@ export default function Topbar() {
 
     setAvatarUrl("");
     setLoading(false);
-  }, [user?.profile?.id]);
+  }, [user?.profile?.id, isOnline]);
 
   useEffect(() => {
     fetchAvatar();

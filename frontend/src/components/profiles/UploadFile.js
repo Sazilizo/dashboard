@@ -40,9 +40,11 @@ const UploadFile = ({ label, value, onChange, folder, id }) => {
     }
 
     if (!id) {
-      // no id yet → stash file until id is available
+      // no id yet → provide the raw file blob to parent so it can queue it
       setPendingFile(file);
       setError("Waiting for record ID before uploading...");
+      // send file blob to parent; parent hook/form should detect File and queue appropriately
+      onChange(file);
     } else {
       await tryUpload(file, id);
     }

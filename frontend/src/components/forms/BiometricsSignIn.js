@@ -3,6 +3,9 @@ import { useNavigate } from "react-router-dom";
 import api from "../../api/client";
 import * as faceapi from "face-api.js";
 import { preloadFaceApiModels } from "../../utils/FaceApiLoader";
+import { getTable, cacheTable } from "../../utils/tableCache";
+import useOfflineTable from "../../hooks/useOfflineTable";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
 import "../../styles/BiometricsSignIn.css";
 
 // Global caches so multiple mounts reuse them
@@ -48,6 +51,9 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
     localStorage.setItem("pendingSignIns", JSON.stringify(pendingSignIns));
   }, [pendingSignIns]);
 
+  const { addRow } = useOfflineTable("attendance_records");
+  const { isOnline } = useOnlineStatus();
+
   // Load face-api models (once globally)
   useEffect(() => {
     let cancelled = false;
@@ -69,26 +75,35 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
     return () => { cancelled = true; };
   }, []);
 
-  // Fetch student names
+  // Fetch student names: prefer cached students when offline
   useEffect(() => {
     const ids = Array.isArray(studentId) ? studentId : [studentId];
     if (!ids.length) return;
 
-    const fetchNames = async () => {
+    let mounted = true;
+    async function fetchNames() {
       try {
-        const { data, error } = await api.from("students").select("id, full_name").in("id", ids);
-        if (!error && data) {
+        if (isOnline) {
+          const { data, error } = await api.from("students").select("id, full_name").in("id", ids);
+          if (!error && data) {
+            const map = {};
+            data.forEach(s => { map[s.id] = s.full_name; });
+            if (mounted) setStudentNames(map);
+            try { await cacheTable("students", data); } catch (err) { /* ignore */ }
+          }
+        } else {
+          const cached = await getTable("students");
           const map = {};
-          data.forEach(s => { map[s.id] = s.full_name; });
-          setStudentNames(map);
+          (cached || []).forEach(s => { if (ids.includes(s.id) || ids.includes(Number(s.id))) map[s.id] = s.full_name; });
+          if (mounted) setStudentNames(map);
         }
       } catch (err) {
         console.error("Failed to fetch student names", err);
       }
-    };
-
+    }
     fetchNames();
-  }, [studentId]);
+    return () => { mounted = false; };
+  }, [studentId, isOnline]);
 
   // List available cameras
   useEffect(() => {
@@ -238,34 +253,37 @@ const BiometricsSignIn = ({ studentId, schoolId, bucketName, folderName, session
         if (match.label === "unknown") continue;
         const displayName = studentNames[match.label] || `ID ${match.label}`;
 
-        if (!pendingSignIns[match.label]) {
+            if (!pendingSignIns[match.label]) {
           const signInTime = new Date().toISOString();
-          const { data, error } = await api.from("attendance_records").insert([{
-            student_id: match.label,
-            school_id: schoolId,
-            status: "present",
-            note: "biometric sign in",
-            date,
-            sign_in_time: signInTime
-          }]).select("id").single();
+              // Use offline helper to queue when offline
+              const res = await addRow({
+                student_id: match.label,
+                school_id: schoolId,
+                status: "present",
+                note: "biometric sign in",
+                date,
+                sign_in_time: signInTime,
+              });
 
-          if (!error && data?.id) {
-            setPendingSignIns(prev => ({ ...prev, [match.label]: { id: data.id, signInTime } }));
-            setMessage(m => `${m}\n${displayName} signed in.`);
-          }
+              // If queued, res.tempId will be present so we can track pending sign-ins
+              const pendingId = res?.tempId || null;
+              setPendingSignIns(prev => ({ ...prev, [match.label]: { id: pendingId, signInTime } }));
+              setMessage(m => `${m}\n${displayName} signed in.`);
         } else {
           const pending = pendingSignIns[match.label];
           const signOutTime = new Date().toISOString();
           const durationMs = new Date(signOutTime) - new Date(pending.signInTime);
           const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(2);
 
-          await api.from("attendance_records").update({ sign_out_time: signOutTime }).eq("id", pending.id);
+              // Update the attendance record (queued if offline)
+              await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
 
-          if (sessionType === "academic") {
-            await api.from("academic_sessions").insert([{ student_id: match.label, duration_hours: durationHours, date }]);
-          } else if (sessionType === "pe") {
-            await api.from("pe_sessions").insert([{ student_id: match.label, duration_hours: durationHours, date }]);
-          }
+              // Create session records through addRow for offline queuing
+              if (sessionType === "academic") {
+                await addRow({ student_id: match.label, duration_hours: durationHours, date });
+              } else if (sessionType === "pe") {
+                await addRow({ student_id: match.label, duration_hours: durationHours, date });
+              }
 
           setPendingSignIns(prev => {
             const copy = { ...prev };

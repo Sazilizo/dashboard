@@ -7,7 +7,7 @@ import {
   syncMutations,
 } from "../utils/tableCache";
 
-export default function useOfflineTable(tableName, filter = {}, select = "*", pageSize = 20, sortBy= "id", sortOrder = "asc") {
+export default function useOfflineTable(tableName, filter = {}, select = "*", pageSize = 40, sortBy= "id", sortOrder = "asc") {
   const [rows, setRows] = useState([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [loading, setLoading] = useState(true);
@@ -27,9 +27,20 @@ export default function useOfflineTable(tableName, filter = {}, select = "*", pa
     function handleOffline() { setIsOnline(false); }
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
+    const bc = typeof window !== "undefined" && "BroadcastChannel" in window ? new BroadcastChannel("offline-sync") : null;
+    const onMsg = (ev) => {
+      if (!ev?.data) return;
+      if (ev.data.type === "synced") {
+        // refresh data after sync
+        setPage(1);
+        fetchTable(1, true);
+      }
+    };
+    if (bc) bc.addEventListener("message", onMsg);
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
+      if (bc) bc.removeEventListener("message", onMsg);
     };
   }, []);
 
@@ -99,9 +110,17 @@ export default function useOfflineTable(tableName, filter = {}, select = "*", pa
     if (isOnline) {
       await api.from(tableName).insert(payload);
       fetchTable();
+      return null;
     } else {
-      await queueMutation(tableName, "insert", payload);
-      setRows((prev) => [...prev, payload]);
+      // create a client temporary id to show immediately in the UI
+      const tempId = `__tmp_${Date.now()}`;
+      const payloadWithTemp = { ...payload, id: tempId };
+      // queue mutation and get back mutation key
+      const mutationKey = await queueMutation(tableName, "insert", payloadWithTemp);
+      // mark row as queued so UI can show status
+      const queuedRow = { ...payloadWithTemp, __queued: true, __mutationKey: mutationKey };
+      setRows((prev) => [...prev, queuedRow]);
+      return { tempId, mutationKey };
     }
   }
 
@@ -109,11 +128,13 @@ export default function useOfflineTable(tableName, filter = {}, select = "*", pa
     if (isOnline) {
       await api.from(tableName).update(data).eq("id", id);
       fetchTable();
+      return null;
     } else {
-      await queueMutation(tableName, "update", { id, data });
+      const mutationKey = await queueMutation(tableName, "update", { id, data });
       setRows((prev) =>
-        prev.map((row) => (row.id === id ? { ...row, ...data } : row))
+        prev.map((row) => (row.id === id ? { ...row, ...data, __queued: true, __mutationKey: mutationKey } : row))
       );
+      return { mutationKey };
     }
   }
 
@@ -121,9 +142,12 @@ export default function useOfflineTable(tableName, filter = {}, select = "*", pa
     if (isOnline) {
       await api.from(tableName).delete().eq("id", id);
       fetchTable();
+      return null;
     } else {
-      await queueMutation(tableName, "delete", { id });
+      const mutationKey = await queueMutation(tableName, "delete", { id });
+      // keep the row but mark as queued delete, or remove from UI — we'll remove
       setRows((prev) => prev.filter((row) => row.id !== id));
+      return { mutationKey };
     }
   }
 
