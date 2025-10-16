@@ -152,6 +152,13 @@
   z-index: 1000;
   padding: 1rem;
   overflow-y: auto;
+  color:red
+}
+.edit-profile-container{
+  width:90%;
+  height:90%;
+  border:1px solid red;
+  background-color: red;
 }
 
 /* Modal content */
@@ -159,8 +166,8 @@
   background: #fff;
   padding: 2rem;
   border-radius: 10px;
-  max-width: 500px;
-  width: 100%;
+  /* max-width: 500px; */
+  width: 800px;
   box-shadow: 0 5px 15px rgba(0,0,0,0.3);
 }
 

@@ -117,7 +117,7 @@ export default function EditProfile({ user,onAvatarUpdated }) {
   };
 
   return (
-    <>
+    <div className="edit-profile-container">
       <form onSubmit={handleSubmit} className="edit-profile-form">
         <label>Email:</label>
         <input
@@ -223,6 +223,6 @@ export default function EditProfile({ user,onAvatarUpdated }) {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
