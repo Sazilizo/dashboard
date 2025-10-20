@@ -498,6 +498,28 @@ img{
   grid-column-end: 6;
   grid-row: 2;
 }
+.dropdown-chart-filters{
+  position: relative;
+  display: inline-block;
+  text-align: left;
+  width: 100%;
+  font-size: clamp(1rem, 2rem, 2.2rem);
+  }
+
+.dropdown-chart-filters-list {
+  display:flex;
+  flex-direction: column;
+  background-color: white;
+}
+.dropdown-chart-filters-item{
+  display: inline-flex;
+  align-items: center;
+  padding: .2rem .5rem;
+  cursor: pointer;
+  flex-wrap: wrap;
+  background-color: white;
+  width:fit-content; 
+}
 .specs-filters{
   display: flex;
   justify-content: space-evenly;

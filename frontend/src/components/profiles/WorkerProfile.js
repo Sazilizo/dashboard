@@ -75,9 +75,9 @@ const WorkerProfile = () => {
             api.from("academic_session_participants").select("*")
           ]);
 
-          const userId = workerData.profile.user_id;
+          const userId =workerData.id || workerData.profile.user_id ;
           const joined = sessions.filter((s) =>
-            participants.some((p) => p.user_id === userId && p.session_id === s.id)
+            participants.some((p,w) => p.user_id || w.id === userId && p.session_id === s.id)
           );
 
           setWorker(workerData);

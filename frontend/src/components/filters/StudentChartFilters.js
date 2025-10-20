@@ -9,7 +9,7 @@ const StudentChartFilters = ({ filters, onChange }) => {
   const sessions = ["all", "academic", "pe"];
 
   return (
-    <div className="flex gap-4 flex-wrap mb-4 items-center">
+    <div className="dropdown-chart-filters">
       <MultiSelectDropdown
         label="Months"
         options={months}
@@ -78,9 +78,9 @@ const MultiSelectDropdown = ({ label, options, selected, onChange }) => {
 
       {/* Dropdown list */}
       {open && (
-        <div className="absolute z-10 mt-1 w-full max-h-64 overflow-y-auto border rounded-lg bg-white shadow-md p-2 flex flex-col gap-1">
+        <div className="dropdown-chart-filters-list absolute z-10">
           {options.map((option) => (
-            <label key={option} className="flex items-center gap-2 p-1 hover:bg-gray-50 cursor-pointer">
+            <label key={option} className="dropdown-chart-filters-item">
               <input
                 type="checkbox"
                 checked={selected?.includes(option)}

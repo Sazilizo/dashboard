@@ -89,14 +89,6 @@ export default function SessionMarkingForm() {
   };
 
   const filteredSessions = sessions && sessions.filter(s => Number(s.student_id) === Number(id))
-
-  useEffect(()=>{
-    console.log("Student school id: ", student)
-  },[student])
-  useEffect(()=>{
-    console.log("filteredSessions", filteredSessions)
-  },[filteredSessions])
-  console.log(sessionType.charAt(0).toUpperCase() + sessionType.slice(1,))
   return (
     <div className="p-6">
       <div className="student-edit-section">

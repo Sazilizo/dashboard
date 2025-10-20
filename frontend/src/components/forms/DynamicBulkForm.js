@@ -650,6 +650,19 @@ export default function DynamicBulkForm({
             onChange={(val) => handleChange(field.name, val)}
           />
         );
+      case field.format === "select" && field.foreign?.includes("roles") :
+          return (
+            <div key={field.name}>
+              <label>{field.label}</label>
+              <RoleSelect
+                name={field.name}
+                value={formData[field.name]}
+                onChange={handleChange}
+                required={field.required}
+              />
+            </div>
+          );
+
       case "json_object":
         const jsonValues = formData[field.name] || {};
         return (

@@ -61,7 +61,7 @@ export default function AttendanceBarChart({ student, className }) {
   }, [filteredData]);
 
   return (
-    <div  className="graphs">
+    <div className={`graphs ${className }`}>
       <h2 className="text-lg font-bold mb-2">Attendance Chart</h2>
       <StudentChartFilters filters={filters} onChange={setFilters} />
 
