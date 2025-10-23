@@ -99,14 +99,10 @@ export default function SessionMarkingForm() {
     }
   };
 
-<<<<<<< HEAD
   if (loading) return <p>Loading...</p>;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
   if (!student) return <p>No student found</p>;
 
-=======
-  const filteredSessions = sessions && sessions.filter(s => Number(s.student_id) === Number(id))
->>>>>>> 2232060392cc92ef0fe3d8794ba048858a3df85f
   return (
     <div className="p-6 space-y-4">
       <Link to="/dashboard/students" className="btn btn-primary">Back</Link>

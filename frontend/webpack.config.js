@@ -1,5 +1,6 @@
 const path = require("path");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
+const CopyWebpackPlugin = require("copy-webpack-plugin");
 const MiniCssExtractPlugin = require("mini-css-extract-plugin");
 const webpack = require("webpack");
 require("dotenv").config();
@@ -65,9 +66,15 @@ module.exports = {
     new MiniCssExtractPlugin({
       filename: isProd ? "css/[name].[contenthash].css" : "[name].css",
     }),
+    // copy public folder (including /models) to the output directory
+    new CopyWebpackPlugin({ patterns: [{ from: path.resolve(__dirname, "public"), to: path.resolve(__dirname, "dist") }] }),
   ],
   devServer: {
-    static: { directory: path.resolve(__dirname, "dist"), publicPath: "/" },
+    // serve static files from public during development, then fall back to dist
+    static: [
+      { directory: path.resolve(__dirname, "public"), publicPath: "/" },
+      { directory: path.resolve(__dirname, "dist"), publicPath: "/" },
+    ],
     port: 3000,
     historyApiFallback: true,
     hot: true,

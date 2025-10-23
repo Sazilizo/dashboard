@@ -61,13 +61,13 @@ export default function UpdateLearnerProfile() {
 
       setTutorOptions(
         data
-          .filter((w) => w.role?.name === "tutor")
+          .filter((w) => w.role?.name && /tutor/i.test(w.role.name))
           .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id}))
       );
 
       setCoachOptions(
         data
-          .filter((w) => w.role?.name === "coach")
+          .filter((w) => w.role?.name && /coach/i.test(w.role.name))
           .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id }))
       );
     }
@@ -97,6 +97,7 @@ export default function UpdateLearnerProfile() {
           tutorOptions={tutorOptions}
           coachOptions={coachOptions}
           id={id && id}
+          folder="students"
           onSubmit={async (formData) => {
             try {
               const record = { ...formData };

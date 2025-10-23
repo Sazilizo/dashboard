@@ -286,3 +286,4 @@ export async function syncMutations() {
   await clearFiles();
   notifyChannel({ type: "synced", timestamp: Date.now() });
 }
+

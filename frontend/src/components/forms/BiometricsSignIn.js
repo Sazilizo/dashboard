@@ -1,7 +1,18 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../../api/client";
 import * as faceapi from "face-api.js";
+import descriptorDB from "../../utils/descriptorDB";
+// worker path (webpack friendly) - descriptor worker runs face-api inside the worker
+let DescriptorWorker = null;
+try {
+  DescriptorWorker = new Worker(new URL("../../workers/descriptor.worker.js", import.meta.url), { type: "module" });
+} catch (err) {
+  console.warn("Descriptor worker not available, falling back to main-thread processing", err);
+  DescriptorWorker = null;
+}
+// models URL (can be configured via env var REACT_APP_MODELS_URL)
+const MODELS_URL = process.env.REACT_APP_MODELS_URL || "/models";
 import {
   preloadFaceApiModels,
   areFaceApiModelsLoaded,
@@ -31,6 +42,8 @@ const BiometricsSignIn = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [facingMode, setFacingMode] = useState("user");
   const [availableCameras, setAvailableCameras] = useState([]);
+  // mode: 'snapshot' = single capture; 'continuous' = process frames repeatedly (better for groups)
+  const [mode, setMode] = useState("snapshot");
   const [isSmallScreen, setIsSmallScreen] = useState(false);
 
   const webcamRef = useRef(null);
@@ -41,6 +54,12 @@ const BiometricsSignIn = ({
 
   const { addRow } = useOfflineTable("attendance_records");
   const { isOnline } = useOnlineStatus();
+  const processIntervalRef = useRef(null);
+  const captureCanvasRef = useRef(null); // offscreen canvas to downscale frames
+  const descriptorWorkerRef = useRef(DescriptorWorker);
+  const [workerError, setWorkerError] = useState(null);
+  const [workerAvailable, setWorkerAvailable] = useState(!!DescriptorWorker);
+  const [workerReloadKey, setWorkerReloadKey] = useState(0);
 
   // ✅ Detect screen size for camera switch visibility
   useEffect(() => {
@@ -169,6 +188,53 @@ const BiometricsSignIn = ({
     };
   }, [captureDone, facingMode]);
 
+  // create an offscreen canvas once for downscaled captures
+  useEffect(() => {
+    if (!captureCanvasRef.current) captureCanvasRef.current = document.createElement("canvas");
+    return () => {
+      // cleanup interval if still running
+      if (processIntervalRef.current) {
+        clearInterval(processIntervalRef.current);
+        processIntervalRef.current = null;
+      }
+      // release stream
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
+  // initialize descriptor worker inside component so we can retry on failure
+  useEffect(() => {
+    // Always attempt to recreate the worker when workerReloadKey changes.
+    // If an old worker exists, terminate it first so we create a fresh instance.
+    try {
+      if (descriptorWorkerRef.current) {
+        try {
+          descriptorWorkerRef.current.terminate();
+        } catch (e) {}
+        descriptorWorkerRef.current = null;
+      }
+
+      const w = new Worker(new URL("../../workers/descriptor.worker.js", import.meta.url), { type: "module" });
+      descriptorWorkerRef.current = w;
+      setWorkerAvailable(true);
+      setWorkerError(null);
+      w.onerror = (ev) => {
+        console.error("Descriptor worker error:", ev);
+        setWorkerError(ev?.message || "Descriptor worker failed");
+        setWorkerAvailable(false);
+      };
+    } catch (err) {
+      console.warn("Failed to create descriptor worker in component", err);
+      setWorkerAvailable(false);
+      setWorkerError(err?.message || String(err));
+    }
+    // keep worker alive; recreated via retry which bumps workerReloadKey
+    return () => {};
+  }, [workerReloadKey]);
+
   const handleSwitchCamera = () => {
     if (availableCameras.length < 2) return;
     setFacingMode((prev) => (prev === "user" ? "environment" : "user"));
@@ -178,67 +244,138 @@ const BiometricsSignIn = ({
   useEffect(() => {
     if (!studentId || !bucketName || !folderName) return;
     const ids = Array.isArray(studentId) ? studentId : [studentId];
-
+    // Load descriptors only for ids not already cached
     (async () => {
       try {
-        const labeledDescriptors = await Promise.all(
-          ids.map(async (id) => {
-            if (faceDescriptorCache[id]) return faceDescriptorCache[id];
-
-            const { data: files, error } = await api.storage
-              .from(bucketName)
-              .list(`${folderName}/${id}`);
-            if (error || !files?.length) return null;
-
-            const imageFiles = files.filter((f) =>
-              /\.(jpg|jpeg|png)$/i.test(f.name)
-            );
-            if (!imageFiles.length) return null;
-
-            const descriptors = await Promise.all(
-              imageFiles.map(async (file) => {
+            // first check persisted DB cache
+            const idsToLoad = [];
+            const loadedDescriptors = [];
+            for (const i of ids) {
+              const persisted = await descriptorDB.getDescriptor(i);
+              if (persisted && persisted.length) {
+                // persisted is expected to be array of arrays (Float32 arrays as number arrays)
                 try {
-                  const path = `${folderName}/${id}/${file.name}`;
-                  const { data: urlData } = await api.storage
-                    .from(bucketName)
-                    .createSignedUrl(path, 300);
-                  if (!urlData?.signedUrl) return null;
+                  const labeled = new faceapi.LabeledFaceDescriptors(
+                    i.toString(),
+                    persisted.map((arr) => new Float32Array(arr))
+                  );
+                  faceDescriptorCache[i] = labeled;
+                  loadedDescriptors.push(labeled);
+                } catch (err) {
+                  console.warn("Failed to hydrate persisted descriptors for", i, err);
+                  idsToLoad.push(i);
+                }
+              } else {
+                idsToLoad.push(i);
+              }
+            }
 
-                  const img = await faceapi.fetchImage(urlData.signedUrl);
+        for (const id of idsToLoad) {
+          try {
+            // list profile-picture images inside the id folder (small set expected)
+            const listPath = `${folderName}/${id}/profile-picture`;
+            const { data: files, error: listErr } = await api.storage
+              .from(bucketName)
+              .list(listPath);
+            if (listErr || !files?.length) continue;
+
+            const imageFiles = files.filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
+            if (!imageFiles.length) continue;
+
+            // limit descriptors per id to reduce memory/time
+            const limited = imageFiles.slice(0, 3);
+            const paths = limited.map((f) => `${folderName}/${id}/profile-picture/${f.name}`);
+
+            // batch create signed URLs
+            const { data: urlsData, error: urlErr } = await api.storage
+              .from(bucketName)
+              .createSignedUrls(paths, 300);
+            if (urlErr || !urlsData?.length) continue;
+
+            const descriptors = [];
+            // If worker available, ask it to compute descriptors (it will fetch & decode images and run face-api)
+            const worker = descriptorWorkerRef.current;
+            if (worker) {
+              const signedPaths = urlsData.map((u) => u.signedUrl || u.signed_url || u);
+              const workerResp = await new Promise((resolve) => {
+                const handler = (ev) => {
+                  const m = ev.data || {};
+                  if (m && m.id && String(m.id) === String(id)) {
+                    try {
+                      worker.removeEventListener("message", handler);
+                    } catch (e) {}
+                    resolve(m);
+                  }
+                };
+                worker.addEventListener("message", handler);
+                try {
+                  worker.postMessage({ id, signedUrls: signedPaths, modelsUrl: MODELS_URL, inputSize: 128, scoreThreshold: 0.45, maxDescriptors: limited.length });
+                } catch (err) {
+                  // worker may have been terminated or broken
+                  console.warn("Descriptor worker postMessage failed", err);
+                  setWorkerError(err?.message || String(err));
+                  setWorkerAvailable(false);
+                  resolve({ id, descriptors: [], error: err?.message || String(err) });
+                  return;
+                }
+                // fallback timeout
+                setTimeout(() => {
+                  try {
+                    worker.removeEventListener("message", handler);
+                  } catch (e) {}
+                  resolve({ id, descriptors: [] });
+                }, 8000);
+              });
+
+              if (workerResp?.error) {
+                setWorkerError(workerResp.error);
+                setWorkerAvailable(false);
+              }
+
+              if (workerResp?.descriptors?.length) {
+                for (const arr of workerResp.descriptors) {
+                  descriptors.push(new Float32Array(arr));
+                }
+              }
+            } else {
+              // no worker: use faceapi.fetchImage on main thread and detect sequentially
+              for (const u of urlsData) {
+                const signedUrl = u.signedUrl || u.signed_url || u;
+                try {
+                  const img = await faceapi.fetchImage(signedUrl);
                   const det = await faceapi
-                    .detectSingleFace(
-                      img,
-                      new faceapi.TinyFaceDetectorOptions({
-                        inputSize: 192,
-                        scoreThreshold: 0.5,
-                      })
-                    )
+                    .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 128, scoreThreshold: 0.45 }))
                     .withFaceLandmarks()
                     .withFaceDescriptor();
-
-                  return det?.descriptor || null;
+                  if (det && det.descriptor) descriptors.push(det.descriptor);
                 } catch (err) {
-                  console.warn(`Skipping file ${file.name} for ${id}`, err);
-                  return null;
+                  console.warn(`Skipping signed url for ${id}`, err);
                 }
-              })
-            );
+              }
+            }
 
-            const validDescriptors = descriptors.filter(Boolean);
-            if (!validDescriptors.length) return null;
+            if (descriptors.length) {
+              const labeled = new faceapi.LabeledFaceDescriptors(id.toString(), descriptors);
+              faceDescriptorCache[id] = labeled;
+              loadedDescriptors.push(labeled);
+                // persist to IndexedDB as simple number arrays to avoid structured clone issues
+                const persist = descriptors.map((d) => Array.from(d));
+                try {
+                  await descriptorDB.setDescriptor(id, persist);
+                } catch (err) {
+                  console.warn("Failed to persist descriptors", err);
+                }
+              }
+          } catch (err) {
+            console.warn(`Failed to load references for ${id}:`, err);
+          }
+        }
 
-            const labeled = new faceapi.LabeledFaceDescriptors(
-              id.toString(),
-              validDescriptors
-            );
-            faceDescriptorCache[id] = labeled;
-            return labeled;
-          })
-        );
-
-        const filtered = labeledDescriptors.filter(Boolean);
-        if (filtered.length) {
-          setFaceMatcher(new faceapi.FaceMatcher(filtered, threshold));
+        // include already-cached descriptors
+        const cached = ids.map((i) => faceDescriptorCache[i]).filter(Boolean);
+        const all = [...cached, ...loadedDescriptors];
+        if (all.length) {
+          setFaceMatcher(new faceapi.FaceMatcher(all, threshold));
           setReferencesReady(true);
         } else {
           setMessage("No valid face references found.");
@@ -266,10 +403,19 @@ const BiometricsSignIn = ({
     setMessage("Detecting face(s)...");
 
     try {
+      // draw a downscaled frame to an offscreen canvas to speed up detection
+      const canvas = captureCanvasRef.current || document.createElement("canvas");
+      const targetW = 320;
+      const targetH = Math.round((webcamRef.current.videoHeight / webcamRef.current.videoWidth) * targetW) || 240;
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(webcamRef.current, 0, 0, targetW, targetH);
+
       const detections = await faceapi
         .detectAllFaces(
-          webcamRef.current,
-          new faceapi.TinyFaceDetectorOptions({ inputSize: 192, scoreThreshold: 0.5 })
+          canvas,
+          new faceapi.TinyFaceDetectorOptions({ inputSize: 128, scoreThreshold: 0.45 })
         )
         .withFaceLandmarks()
         .withFaceDescriptors();
@@ -307,8 +453,7 @@ const BiometricsSignIn = ({
         } else {
           const pending = pendingSignIns[match.label];
           const signOutTime = new Date().toISOString();
-          const durationMs =
-            new Date(signOutTime) - new Date(pending.signInTime);
+          const durationMs = new Date(signOutTime) - new Date(pending.signInTime);
           const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(2);
 
           await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
@@ -317,20 +462,11 @@ const BiometricsSignIn = ({
             delete copy[match.label];
             return copy;
           });
-          setMessage(
-            (m) => `${m}\n${displayName} signed out. Duration: ${durationHours} hrs`
-          );
+          setMessage((m) => `${m}\n${displayName} signed out. Duration: ${durationHours} hrs`);
         }
       }
 
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext("2d");
-      const width = webcamRef.current.videoWidth || 320;
-      const height = webcamRef.current.videoHeight || 240;
-      canvas.width = width;
-      canvas.height = height;
-      ctx.drawImage(webcamRef.current, 0, 0, width, height);
-
+      // show a captured frame
       setCaptureDone(true);
     } catch (err) {
       console.error("handleCapture error:", err);
@@ -338,6 +474,81 @@ const BiometricsSignIn = ({
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  // Process a single frame (used by continuous mode)
+  const processFrame = useCallback(async () => {
+    if (isProcessing || !referencesReady || !faceMatcher || !webcamRef.current) return;
+    try {
+      setIsProcessing(true);
+      // draw downscaled frame
+      const canvas = captureCanvasRef.current || document.createElement("canvas");
+      const targetW = 320;
+      const targetH = Math.round((webcamRef.current.videoHeight / webcamRef.current.videoWidth) * targetW) || 240;
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(webcamRef.current, 0, 0, targetW, targetH);
+
+      const detections = await faceapi
+        .detectAllFaces(
+          canvas,
+          new faceapi.TinyFaceDetectorOptions({ inputSize: 128, scoreThreshold: 0.45 })
+        )
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+
+      if (!detections?.length) return;
+
+      const results = detections.map((d) => faceMatcher.findBestMatch(d.descriptor));
+      const date = new Date().toISOString().split("T")[0];
+
+      for (const match of results) {
+        if (match.label === "unknown") continue;
+        if (!pendingSignIns[match.label]) {
+          const signInTime = new Date().toISOString();
+          const res = await addRow({
+            student_id: match.label,
+            school_id: schoolId,
+            status: "present",
+            note: "biometric sign in",
+            date,
+            sign_in_time: signInTime,
+          });
+          const pendingId = res?.tempId || null;
+          setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime } }));
+          setMessage((m) => `${m}\nID ${match.label} signed in.`);
+        }
+      }
+    } catch (err) {
+      console.error("processFrame error:", err);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [isProcessing, referencesReady, faceMatcher, pendingSignIns, schoolId, addRow]);
+
+  // start/stop continuous processing
+  const startContinuous = () => {
+    if (processIntervalRef.current) return;
+    processIntervalRef.current = setInterval(() => {
+      processFrame();
+    }, 800); // ~1.25 FPS - tuneable for performance vs responsiveness
+    setMode("continuous");
+  };
+
+  const stopContinuous = () => {
+    if (processIntervalRef.current) {
+      clearInterval(processIntervalRef.current);
+      processIntervalRef.current = null;
+    }
+    setMode("snapshot");
+  };
+
+  const retryWorker = () => {
+    setWorkerError(null);
+    setWorkerAvailable(false);
+    // increment key to trigger worker recreation
+    setWorkerReloadKey((k) => k + 1);
   };
 
   return (
@@ -348,6 +559,36 @@ const BiometricsSignIn = ({
 
       {!loadingModels && (
         <>
+          {(workerError || !workerAvailable) && (
+            <div
+              style={{
+                background: "#fff4e5",
+                borderLeft: "4px solid #f59e0b",
+                padding: 12,
+                marginBottom: 12,
+              }}
+              role="alert"
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <strong style={{ color: "#92400e" }}>Worker notice:</strong>
+                  <div style={{ color: "#92400e" }}>{workerError || "Descriptor worker unavailable — using main-thread fallback."}</div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="submit-btn" onClick={retryWorker} style={{ background: "#2563eb", color: "white" }}>
+                    Retry Worker
+                  </button>
+                  <button
+                    className="submit-btn"
+                    onClick={() => setWorkerError(null)}
+                    style={{ background: "#e5e7eb", color: "#111" }}
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="video-container">
             <video
               ref={webcamRef}
@@ -379,17 +620,49 @@ const BiometricsSignIn = ({
             )}
           </div>
 
-          <button
-            className="submit-btn"
-            onClick={handleCapture}
-            disabled={!referencesReady || isProcessing}
-          >
-            {isProcessing
-              ? "Processing..."
-              : Object.keys(pendingSignIns).length === 0
-              ? "Sign In Snapshot"
-              : "Sign Out Snapshot"}
-          </button>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ marginBottom: 6 }}>
+              <strong>Mode:</strong> {mode === "continuous" ? "Continuous (recommended for groups)" : "Snapshot (single capture)"}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button
+                className="submit-btn"
+                onClick={handleCapture}
+                disabled={!referencesReady || isProcessing || mode === "continuous"}
+              >
+                {isProcessing
+                  ? "Processing..."
+                  : Object.keys(pendingSignIns).length === 0
+                  ? "Sign In Snapshot"
+                  : "Sign Out Snapshot"}
+              </button>
+
+              {mode === "snapshot" ? (
+                <button
+                  className="submit-btn"
+                  onClick={startContinuous}
+                  disabled={!referencesReady || isProcessing}
+                  title="Start continuous mode: processes frames repeatedly (better for groups)"
+                >
+                  Start Continuous (Video)
+                </button>
+              ) : (
+                <button
+                  className="submit-btn"
+                  onClick={stopContinuous}
+                  disabled={isProcessing}
+                  title="Stop continuous processing"
+                >
+                  Stop Continuous
+                </button>
+              )}
+            </div>
+
+            <div style={{ marginTop: 8, fontSize: 13, color: "#444" }}>
+              Tip: Use Continuous (video) mode for group sign-ins — it processes frames repeatedly and detects multiple faces.
+              For single students, Snapshot is faster and uses less CPU.
+            </div>
+          </div>
 
           {message && <pre className="message">{message}</pre>}
         </>

@@ -103,11 +103,13 @@ export default function StudentForm() {
   // when queued so the UI can reflect that state.
   const res = await addRow(payload);
       if (res && res.tempId) {
+        // queued (offline) — show temp id
         setStudentId(res.tempId);
+      } else if (res && res.id) {
+        // online insert returned created record — set the new id so UploadFile can upload
+        setStudentId(res.id);
       } else {
-        // If addRow didn't return a tempId, we're online; fetch the students
-        // table to discover the created id (or the render will update from
-        // the list refresh triggered by the hook).
+        // no id information available
         setStudentId(null);
       }
     } catch (err) {
@@ -130,6 +132,7 @@ export default function StudentForm() {
         coachOptions={coachOptions}
         onSubmit={handleSubmit}
         studentId={studentId}
+        folder="students"
       />
     </div>
   );

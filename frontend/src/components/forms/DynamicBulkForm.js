@@ -34,6 +34,11 @@ export default function DynamicBulkFormRHF({
   genderOptions = ["male", "female"],
   schoolIds = [],
   isOnline,
+  // accept externally-provided options so parent can control fetching
+  tutorOptions: externalTutorOptions = [],
+  coachOptions: externalCoachOptions = [],
+  studentId: externalRecordId,
+  folder: folderProp,
 }) {
   const { id } = useParams();
   const { schools } = useSchools();
@@ -134,6 +139,7 @@ export default function DynamicBulkFormRHF({
     setValue,
     trigger,
     watch,
+    getValues,
     formState: { errors },
   } = useForm({
     resolver: formSchema ? yupResolver(formSchema) : undefined,
@@ -153,6 +159,13 @@ export default function DynamicBulkFormRHF({
 
   // ---------------------- Fetch Tutors & Coaches ----------------------
   useEffect(() => {
+    // If parent passed tutor/coach options, use them and skip fetching
+    if (externalTutorOptions?.length || externalCoachOptions?.length) {
+      if (externalTutorOptions?.length) setTutorOptions(externalTutorOptions);
+      if (externalCoachOptions?.length) setCoachOptions(externalCoachOptions);
+      return;
+    }
+
     if (!schoolIds?.length) return;
 
     async function fetchWorkers() {
@@ -172,9 +185,11 @@ export default function DynamicBulkFormRHF({
           await cacheTable("workers", data);
         }
 
+        console.log("Fetched Workers:", data);
+        // Accept tutor/coach and head variants, case-insensitive
         setTutorOptions(
           data
-            .filter((w) => w.role?.name === "tutor")
+            .filter((w) => w.role?.name && /tutor/i.test(w.role.name))
             .map((w) => ({
               value: w.id,
               label: `${w.name} ${w.last_name}`,
@@ -184,7 +199,7 @@ export default function DynamicBulkFormRHF({
 
         setCoachOptions(
           data
-            .filter((w) => w.role?.name === "coach")
+            .filter((w) => w.role?.name && /coach/i.test(w.role.name))
             .map((w) => ({
               value: w.id,
               label: `${w.name} ${w.last_name}`,
@@ -205,11 +220,87 @@ export default function DynamicBulkFormRHF({
     setValue("coach_id", "");
   }, [selectedSchool]);
 
-  // ---------------------- SUBMIT ----------------------
+  // ---------------------- Conditional validation tweaks ----------------------
+  // If coach is not applicable (physical education not selected), make it optional
+  useEffect(() => {
+    if (!schema || !schema.length) return;
+
+    try {
+      const modified = schema.map((f) => {
+        if (f.name === "coach_id" && !physicalEdSelected) return { ...f, required: false };
+        return f;
+      });
+
+      const [, yupSchema] = buildDefaultsAndSchema(modified);
+      setFormSchema(yupSchema);
+    } catch (err) {
+      console.warn("Failed to update conditional validation schema:", err);
+    }
+  }, [schema, physicalEdSelected]);
+
+
   const submitForm = async (data) => {
     setLoading(true);
     try {
-      await onSubmit(data, id);
+      console.log("DynamicBulkForm: submitting", { schema_name, id, data });
+      // Normalize payload: ensure every field from schema is present; empty values -> null
+      const normalizeItem = (item) => {
+        const out = { ...item };
+        (schema || []).forEach((f) => {
+          const name = f.name;
+          const val = out[name];
+
+          // keep explicit falsy booleans
+          if (typeof val === "boolean") return;
+
+          // coerce number-like fields to numbers when present
+          if (f.type === "number" && val != null && val !== "") {
+            const n = Number(val);
+            out[name] = Number.isNaN(n) ? null : n;
+            return;
+          }
+
+          // treat empty string, undefined, empty array, or empty object as NULL
+          if (
+            val === undefined ||
+            val === "" ||
+            (Array.isArray(val) && val.length === 0) ||
+            (f.type === "json_object" && val && Object.keys(val).length === 0)
+          ) {
+            out[name] = null;
+          }
+        });
+        return out;
+      };
+
+      let payload = Array.isArray(data) ? data.map(normalizeItem) : [normalizeItem(data)];
+
+      console.log("DynamicBulkForm: prepared payload", payload);
+
+      // Sanity-check: warn about keys present in payload that are not in the schema
+      try {
+        const schemaNames = (schema || []).map((f) => f.name);
+        const payloadKeys = Object.keys(payload[0] || {});
+        const extraKeys = payloadKeys.filter((k) => !schemaNames.includes(k) && k !== "id");
+        if (extraKeys.length) console.warn("Payload contains keys not defined in form schema:", extraKeys);
+      } catch (err) {
+        /* ignore */
+      }
+
+      if (typeof onSubmit === "function") {
+        const res = await onSubmit(Array.isArray(data) ? payload : payload[0], id);
+        console.log("DynamicBulkForm: onSubmit returned", res);
+      } else {
+        // Fallback behaviour: if parent didn't provide onSubmit, insert into schema_name
+        try {
+          const { data: inserted, error } = await api.from(schema_name).insert(payload).select();
+          if (error) throw error;
+          console.log("DynamicBulkForm: inserted records:", inserted);
+        } catch (err) {
+          console.error("DynamicBulkForm fallback insert failed:", err);
+          throw err;
+        }
+      }
       const [defaults] = buildDefaultsAndSchema(schema);
       reset({ ...defaults, ...presetFields });
     } catch (err) {
@@ -219,31 +310,35 @@ export default function DynamicBulkFormRHF({
     }
   };
 
-  // ---------------------- RENDER FIELD ----------------------
   const renderField = (field) => {
     if (field.name === "coach_id" && !physicalEdSelected) return null;
+
+    // Determine whether the field should be marked required in the UI.
+    const isRequired = !!field.required && !(field.name === "coach_id" && !physicalEdSelected);
 
     let options = field.options || [];
     if (field.name === "school_id") options = schools;
     if (field.name === "role") options = roles;
     if (field.name === "category") options = catOptions;
     if (field.name === "tutor_id")
-      options = tutorOptions
-        .filter((t) => t.school_id === selectedSchool)
-        .map((w) => ({ value: w.id, label: `${w.label}`, school_id: w.school_id }));
+      // tutorOptions already has { value, label, school_id }
+      // allow loose equality because selectedSchool may be string/number
+      options = tutorOptions.filter((t) => t.school_id == selectedSchool);
     if (field.name === "coach_id")
-      options = coachOptions.filter((c) => c.school_id === selectedSchool);
+      options = coachOptions.filter((c) => c.school_id == selectedSchool);
+    
     if (field.name === "race") options = raceOptions;
     if (field.name === "gender") options = genderOptions;
 
-    // ------------------ GRADE DROPDOWN ------------------
     if (field.name === "grade") {
       options = ["R1", "R2", "R3", "R4"];
       for (let i = 1; i <= 7; i++) ["A", "B", "C", "D"].forEach((l) => options.push(`${i}${l}`));
 
       return (
         <div key={field.name} className="mb-3">
-          <label className="block mb-1 font-semibold">{field.label}</label>
+          <label className="block mb-1 font-semibold">
+            {field.label} {isRequired && <span className="text-red-600 ml-1">*</span>}
+          </label>
           <Controller
             control={control}
             name={field.name}
@@ -260,8 +355,6 @@ export default function DynamicBulkFormRHF({
         </div>
       );
     }
-
-    // ------------------ YEAR DROPDOWN ------------------
     if (field.name === "year") {
       const currentYear = new Date().getFullYear();
       options = [];
@@ -269,7 +362,9 @@ export default function DynamicBulkFormRHF({
 
       return (
         <div key={field.name} className="mb-3">
-          <label className="block mb-1 font-semibold">{field.label}</label>
+          <label className="block mb-1 font-semibold">
+            {field.label} {isRequired && <span className="text-red-600 ml-1">*</span>}
+          </label>
           <Controller
             control={control}
             name={field.name}
@@ -286,17 +381,25 @@ export default function DynamicBulkFormRHF({
         </div>
       );
     }
-
-    // ------------------ DEFAULT HANDLING ------------------
     switch (field.type) {
       case "file":
         return (
           <div key={field.name} className="mb-3">
-            <label className="block mb-1 font-semibold">{field.label}</label>
+            <label className="block mb-1 font-semibold">
+              {field.label} {isRequired && <span className="text-red-600 ml-1">*</span>}
+            </label>
             <Controller
               control={control}
               name={field.name}
-              render={({ field: f }) => <UploadFile {...f} />}
+              render={({ field: f }) => (
+                <UploadFile
+                  {...f}
+                  label={field.label}
+                  // prefer explicit field.group, then parent's folderProp, then field.name, then pluralized schema_name
+                  folder={field.group || folderProp || field.name || `${String(schema_name).toLowerCase()}s`}
+                  id={externalRecordId || id}
+                />
+              )}
             />
             {errors[field.name]?.message && <p className="text-red-600 text-sm">{errors[field.name]?.message}</p>}
           </div>
@@ -312,7 +415,9 @@ export default function DynamicBulkFormRHF({
               render={({ field: f }) => (
                 <label className="flex items-center gap-2">
                   <input type="checkbox" {...f} />
-                  <span>{field.label}</span>
+                  <span>
+                    {field.label} {isRequired && <span className="text-red-600 ml-1">*</span>}
+                  </span>
                 </label>
               )}
             />
@@ -323,7 +428,9 @@ export default function DynamicBulkFormRHF({
       case "json_object":
         return (
           <div key={field.name} className="mb-3">
-            <label className="block mb-1 font-semibold">{field.label}</label>
+            <label className="block mb-1 font-semibold">
+              {field.label} {isRequired && <span className="text-red-600 ml-1">*</span>}
+            </label>
             <Controller
               control={control}
               name={field.name}
@@ -343,7 +450,9 @@ export default function DynamicBulkFormRHF({
       case "select":
         return (
           <div key={field.name} className="mb-3">
-            <label className="block mb-1 font-semibold">{field.label}</label>
+            <label className="block mb-1 font-semibold">
+              {field.label} {isRequired && <span className="text-red-600 ml-1">*</span>}
+            </label>
             <Controller
               control={control}
               name={field.name}
@@ -368,7 +477,9 @@ export default function DynamicBulkFormRHF({
       default:
         return (
           <div key={field.name} className="mb-3">
-            <label className="block mb-1 font-semibold">{field.label}</label>
+            <label className="block mb-1 font-semibold">
+              {field.label} {isRequired && <span className="text-red-600 ml-1">*</span>}
+            </label>
             <Controller
               control={control}
               name={field.name}
@@ -392,13 +503,39 @@ export default function DynamicBulkFormRHF({
   };
 
   // ---------------------- FORM ----------------------
+  useEffect(() => {
+    console.log("DynamicBulkForm mounted", { schema_name, id });
+  }, []);
+
+  useEffect(() => {
+    console.log("DynamicBulkForm loading state:", loading);
+  }, [loading]);
+
   return (
     <form onSubmit={rhfSubmit(submitForm)} className="space-y-4">
       {schema.map(renderField)}
       <button
         type="submit"
-        disabled={loading}
+        disabled={!!loading}
         className="px-4 py-2 bg-blue-600 text-white rounded"
+        onClick={(e) => {
+          console.log("Submit clicked", { loading, schema_name, id });
+          try {
+            const vals = getValues();
+            console.log("DynamicBulkForm current values before submit:", vals);
+          } catch (err) {
+            console.warn("getValues failed:", err);
+          }
+          // trigger RHF submit programmatically and log validation errors if any
+          try {
+            rhfSubmit(submitForm, (validationErrors) => {
+              console.log("DynamicBulkForm validation errors:", validationErrors);
+            })();
+          } catch (err) {
+            console.error("rhfSubmit call failed:", err);
+          }
+        }}
+        aria-disabled={!!loading}
       >
         {loading ? "Submitting..." : id ? "Update" : "Create"}
       </button>

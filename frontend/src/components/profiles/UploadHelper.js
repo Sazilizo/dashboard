@@ -42,16 +42,34 @@ export const UploadFileHelper = async (file, folder, id) => {
 
     if (folder === "students") {
       bucketName = "student-uploads";
-      filePath = `${folder}/${id}/${uniqueName}`;
+      // images should go into profile-picture subfolder so there is only one main profile image
+      if (file.type.startsWith("image/")) {
+        // place profile-picture as a child of the record id folder: <folder>/<id>/profile-picture/<file>
+        filePath = `${folder}/${id}/profile-picture/${uniqueName}`;
+      } else {
+        filePath = `${folder}/${id}/${uniqueName}`;
+      }
     } else if (folder === "workers") {
       bucketName = "worker-uploads";
-      filePath = `${folder}/${id}/${uniqueName}`;
+      if (file.type.startsWith("image/")) {
+        filePath = `${folder}/${id}/profile-picture/${uniqueName}`;
+      } else {
+        filePath = `${folder}/${id}/${uniqueName}`;
+      }
     } else if (folder === "sessions") {
       bucketName = "session-uploads";
-      filePath = `${folder}/${id}/${uniqueName}`;
+      if (file.type.startsWith("image/")) {
+        filePath = `${folder}/${id}/profile-picture/${uniqueName}`;
+      } else {
+        filePath = `${folder}/${id}/${uniqueName}`;
+      }
     } else if (folder === "meals") {
       bucketName = "meal-uploads";
-      filePath = `${folder}/${id}/${uniqueName}`;
+      if (file.type.startsWith("image/")) {
+        filePath = `${folder}/${id}/profile-picture/${uniqueName}`;
+      } else {
+        filePath = `${folder}/${id}/${uniqueName}`;
+      }
     }else if (folder === "profile-avatars") {
       bucketName = "profile-avatars";
       const ext = file.name.split(".").pop().toLowerCase();
@@ -68,7 +86,28 @@ export const UploadFileHelper = async (file, folder, id) => {
     } else {
       // custom folder (fallback)
       bucketName = "student-uploads";
-      filePath = id ? `${folder}/${id}/${uniqueName}` : `${folder}/${uniqueName}`;
+      if (file.type.startsWith("image/")) {
+        filePath = id ? `${folder}/${id}/profile-picture/${uniqueName}` : `${folder}/profile-picture/${uniqueName}`;
+      } else {
+        filePath = id ? `${folder}/${id}/${uniqueName}` : `${folder}/${uniqueName}`;
+      }
+    }
+
+    // For images, ensure there is only one main profile-picture for this id: remove existing files in that folder
+    if (file.type.startsWith("image/") && id) {
+      try {
+        // list files under <folder>/<id>/profile-picture
+        const listPath = `${folder}/${id}/profile-picture`;
+        const { data: existing, error: listErr } = await api.storage.from(bucketName).list(listPath);
+        if (!listErr && existing && existing.length) {
+          const toRemove = existing.map((f) => `${listPath}/${f.name}`);
+          if (toRemove.length) {
+            await api.storage.from(bucketName).remove(toRemove);
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to cleanup existing profile-picture files:", err);
+      }
     }
 
     // upload file (✅ allow overwrite)
