@@ -86,10 +86,6 @@ export default function UpdateWorkerProfile() {
     fetchWorkers();
   }, [schoolIds]);
 
-  useEffect(() => {
-    console.log("Worker to update:", worker);
-  }, [worker]);
-
   if (loading) return <p>Loading worker data...</p>;
 
   return (
