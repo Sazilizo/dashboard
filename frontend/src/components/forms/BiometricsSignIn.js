@@ -1,4 +1,3 @@
-// src/components/biometrics/BiometricsSignIn.jsx
 import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../../api/client";
