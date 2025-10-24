@@ -1,3 +1,4 @@
+// src/utils/FaceApiLoader.js
 import { getFaceApi } from './faceApiShim';
 
 let modelsLoaded = false;
@@ -12,10 +13,50 @@ export async function preloadFaceApiModels() {
       "face_recognition_model-weights_manifest.json"
     ];
 
-    const BASE_URL = process.env.REACT_APP_MODELS_URL || "/models/";
+    let BASE_URL = process.env.REACT_APP_MODELS_URL || "/models/";
+    // Ensure BASE_URL ends with a slash
+    if (!BASE_URL.endsWith('/')) {
+      BASE_URL += '/';
+    }
 
-    // Prefetch model files into the Cache Storage so subsequent loads can be
-    // served from the browser cache when offline or on slow connections.
+    // First verify that at least one model file is accessible
+    try {
+      const testUrl = BASE_URL + MODEL_FILES[0];
+      const testResp = await fetch(testUrl, { mode: "cors" });
+      if (!testResp.ok) {
+        throw new Error(`Model file not accessible at ${testUrl}`);
+      }
+    } catch (err) {
+      console.error('Failed to access model file, checking alternative paths...', err);
+      
+      // Try alternative paths
+      const alternativePaths = [
+        '/models/',
+        '/public/models/',
+        'models/',
+        './models/'
+      ];
+
+      let modelFound = false;
+      for (const path of alternativePaths) {
+        try {
+          const testUrl = path + MODEL_FILES[0];
+          const testResp = await fetch(testUrl, { mode: "cors" });
+          if (testResp.ok) {
+            BASE_URL = path;
+            modelFound = true;
+            console.log(`Found working model path at: ${BASE_URL}`);
+            break;
+          }
+        } catch {}
+      }
+
+      if (!modelFound) {
+        throw new Error('Could not find accessible model files in any location');
+      }
+    }
+
+    // Prefetch model files into the Cache Storage
     if (typeof caches !== "undefined") {
       try {
         const cache = await caches.open("faceapi-models");
@@ -25,7 +66,6 @@ export async function preloadFaceApiModels() {
           if (resp && resp.ok) await cache.put(url, resp.clone());
         }));
       } catch (err) {
-        // cache may be unavailable in some environments; continue anyway
         console.warn("FaceAPI model caching failed:", err);
       }
     }

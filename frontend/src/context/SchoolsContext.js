@@ -96,7 +96,9 @@ export function SchoolsProvider({ children }) {
       const { data, error } = await query;
       if (error) throw error;
 
-      const schoolsWithCounts = data.map((school) => ({
+      const dataArr = data || [];
+
+      const schoolsWithCounts = dataArr.map((school) => ({
         ...school,
         workers_count: school.workers?.[0]?.count ?? 0,
         students_count: school.students?.[0]?.count ?? 0,

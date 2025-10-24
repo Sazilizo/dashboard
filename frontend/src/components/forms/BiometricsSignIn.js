@@ -39,6 +39,7 @@ const BiometricsSignIn = ({
   folderName,
   sessionType,
 }) => {
+  // Essential states with defaults
   const [loadingModels, setLoadingModels] = useState(!areFaceApiModelsLoaded());
   const [message, setMessage] = useState("");
   const [faceMatcher, setFaceMatcher] = useState(null);
@@ -46,15 +47,12 @@ const BiometricsSignIn = ({
   const [captureDone, setCaptureDone] = useState(false);
   const [referencesReady, setReferencesReady] = useState(false);
   const [loadingReferences, setLoadingReferences] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
-  const maxRetries = 3; // Maximum number of automatic retries
   const [studentNames, setStudentNames] = useState({});
   const [isProcessing, setIsProcessing] = useState(false);
   const [facingMode, setFacingMode] = useState("user");
   const [availableCameras, setAvailableCameras] = useState([]);
-  // mode: 'snapshot' = single capture; 'continuous' = process frames repeatedly (better for groups)
   const [mode, setMode] = useState("snapshot");
-  const [isSmallScreen, setIsSmallScreen] = useState(false);
+  const [isSmallScreen, setIsSmallScreen] = useState(window.innerWidth <= 900);
 
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
@@ -322,7 +320,7 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
   const ids = Array.isArray(studentId) ? studentId : [studentId];
   
   setLoadingReferences(true);
-  setMessage(attempt > 0 ? `Retrying face references (attempt ${attempt + 1}/${maxRetries})...` : "Loading face references...");
+  setMessage("Loading face references...");
   
   try {
     // Determine the correct storage path generator based on the bucket name
@@ -398,10 +396,7 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
           }
         }
         
-        if (urlErr || !urlsData.filter(Boolean).length) {
-          setMessage(m => `${m}\nFailed to get signed URLs for ID ${id}`);
-          continue;
-        }
+        if (urlErr || !urlsData.filter(Boolean).length) continue;
 
         const descriptors = [];
         // Try worker first, fall back to main thread
@@ -657,11 +652,13 @@ useEffect(() => {
           });
           const pendingId = res?.tempId || null;
           setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime } }));
-          setMessage((m) => `${m}\nID ${match.label} signed in.`);
+          const displayName = studentNames[match.label] || `Student ${match.label}`;
+          setMessage(`${displayName} signed in successfully.`);
         }
       }
     } catch (err) {
       console.error("processFrame error:", err);
+      setMessage("Unable to process faces. Please try again.");
     } finally {
       setIsProcessing(false);
     }
@@ -709,99 +706,9 @@ useEffect(() => {
               }}
               role="alert"
             >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <strong style={{ color: "#92400e" }}>Worker notice:</strong>
-                  <div style={{ color: "#92400e" }}>{workerError || "Descriptor worker unavailable — using main-thread fallback."}</div>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className="submit-btn" onClick={retryWorker} style={{ background: "#2563eb", color: "white" }}>
-                    Retry Worker
-                  </button>
-                  <button
-                    className="submit-btn"
-                    onClick={async () => {
-                      // run quick diagnostics: model manifest + sample storage list
-                      try {
-                        setMessage('Running diagnostics...');
-                        const modelUrl = `${MODELS_URL.replace(/\/$/, '')}/tiny_face_detector_model-weights_manifest.json`;
-                        const r = await fetch(modelUrl, { cache: 'no-cache' });
-                        if (!r.ok) {
-                          setMessage((m) => `${m}\nModel manifest fetch failed: ${r.status} ${r.statusText} (${modelUrl})`);
-                        } else {
-                          setMessage((m) => `${m}\nModel manifest OK: ${modelUrl}`);
-                        }
-
-                        if (bucketName && studentId) {
-                          const id = Array.isArray(studentId) ? studentId[0] : studentId;
-                          const getPath = STORAGE_PATHS[bucketName] || STORAGE_PATHS['student-uploads'];
-                          const listPath = getPath(id);
-                          setMessage((m) => `${m}\nListing ${bucketName}:${listPath} ...`);
-                          const { data: files, error: listErr } = await api.storage.from(bucketName).list(listPath);
-                          if (listErr) {
-                            setMessage((m) => `${m}\nStorage list error: ${listErr.message || listErr}`);
-                          } else {
-                            setMessage((m) => `${m}\nFound ${files.length} files`);
-                            if (files.length) {
-                              const f = files[0];
-                              const p = `${listPath}/${f.name}`;
-                              setMessage((m) => `${m}\nRequesting signed url for ${p}`);
-                              const { data: urlData, error: urlErr } = await api.storage.from(bucketName).createSignedUrl(p, 60);
-                              if (urlErr) {
-                                setMessage((m) => `${m}\nSigned URL error: ${urlErr.message || urlErr}`);
-                              } else {
-                                const signedUrl = urlData?.signedUrl;
-                                setMessage((m) => `${m}\nSigned URL generated successfully`);
-                                
-                                // Test face detection on the image
-                                try {
-                                  const faceapi = faceapiRef.current;
-                                  if (!faceapi) {
-                                    setMessage((m) => `${m}\nFace API not available yet`);
-                                    return;
-                                  }
-                                  
-                                  setMessage((m) => `${m}\nTesting face detection...`);
-                                  const img = await faceapi.fetchImage(signedUrl);
-                                  setMessage((m) => `${m}\nImage loaded: ${img.width}x${img.height}`);
-                                  
-                                  const detection = await faceapi
-                                    .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 128, scoreThreshold: 0.45 }))
-                                    .withFaceLandmarks()
-                                    .withFaceDescriptor();
-                                    
-                                  if (!detection) {
-                                    setMessage((m) => `${m}\n❌ No face detected in the image. Please ensure the image shows a clear, well-lit face.`);
-                                  } else {
-                                    setMessage((m) => `${m}\n✅ Face detected! Detection score: ${detection.detection.score.toFixed(2)}`);
-                                    setMessage((m) => `${m}\n✅ Face landmarks extracted`);
-                                    setMessage((m) => `${m}\n✅ Face descriptor generated`);
-                                  }
-                                } catch (err) {
-                                  setMessage((m) => `${m}\n❌ Face detection failed: ${err.message || err}`);
-                                  console.error('Face detection error:', err);
-                                }
-                              }
-                            }
-                          }
-                        }
-                      } catch (err) {
-                        console.error('Diagnostics failed', err);
-                        setMessage((m) => `${m}\nDiagnostics failed: ${err?.message || err}`);
-                      }
-                    }}
-                    style={{ background: '#10b981', color: 'white' }}
-                  >
-                    Run diagnostics
-                  </button>
-                  <button
-                    className="submit-btn"
-                    onClick={() => setWorkerError(null)}
-                    style={{ background: "#e5e7eb", color: "#111" }}
-                  >
-                    Dismiss
-                  </button>
-                </div>
+              <div>
+                <strong style={{ color: "#92400e" }}>Processing Notice:</strong>
+                <div style={{ color: "#92400e" }}>Face recognition temporarily using fallback mode. This may be slower but will not affect functionality.</div>
               </div>
             </div>
           )}
@@ -860,7 +767,7 @@ useEffect(() => {
                   disabled={!referencesReady || isProcessing}
                   title="Start continuous mode: processes frames repeatedly (better for groups)"
                 >
-                  Start Continuous (Video)
+                  Start group(Video)
                 </button>
               ) : (
                 <button
@@ -869,30 +776,13 @@ useEffect(() => {
                   disabled={isProcessing}
                   title="Stop continuous processing"
                 >
-                  Stop Continuous
+                  Stop group
                 </button>
               )}
-            </div>
-
-            <div style={{ marginTop: 8, fontSize: 13, color: "#444" }}>
-              Tip: Use Continuous (video) mode for group sign-ins — it processes frames repeatedly and detects multiple faces.
-              For single students, Snapshot is faster and uses less CPU.
             </div>
           </div>
 
           {message && <pre className="message">{message}</pre>}
-          {!referencesReady && !loadingReferences && (
-            <button
-              className="submit-btn"
-              onClick={() => loadFaceReferences(0, true)}
-              style={{ 
-                background: '#3b82f6',
-                marginBottom: '12px'
-              }}
-            >
-              🔄 Retry Loading Face References
-            </button>
-          )}
         </>
       )}
     </div>
