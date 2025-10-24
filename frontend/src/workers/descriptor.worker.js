@@ -15,6 +15,30 @@ globalThis.document = {          // Basic document shim
     }
 };
 
+// Provide minimal browser-like globals so face-api's isBrowser() returns true
+// inside the worker. These are lightweight stubs; we intentionally keep them
+// minimal because the worker environment uses OffscreenCanvas/ImageBitmap.
+if (typeof globalThis.HTMLCanvasElement === 'undefined') {
+  globalThis.HTMLCanvasElement = globalThis.OffscreenCanvas || function HTMLCanvasElement() {};
+}
+if (typeof globalThis.HTMLImageElement === 'undefined') {
+  // Minimal Image stub (not used for actual decoding in worker since we use createImageBitmap)
+  globalThis.HTMLImageElement = function HTMLImageElement() {};
+}
+if (typeof globalThis.HTMLVideoElement === 'undefined') {
+  globalThis.HTMLVideoElement = function HTMLVideoElement() {};
+}
+if (typeof globalThis.ImageData === 'undefined') {
+  globalThis.ImageData = globalThis.ImageData || function ImageData() {};
+}
+if (typeof globalThis.CanvasRenderingContext2D === 'undefined') {
+  globalThis.CanvasRenderingContext2D = function CanvasRenderingContext2D() {};
+}
+// Provide a lightweight Image constructor so some libs checking `typeof Image` pass
+if (typeof globalThis.Image === 'undefined') {
+  globalThis.Image = function Image() { this.onload = null; this.onerror = null; this.src = undefined; };
+}
+
 // Lazy-import face-api inside the worker to avoid top-level evaluation that
 // may assume a DOM/window exists. Also provide a minimal `process.env` shim
 // because some libraries check it during initialization.
@@ -58,6 +82,32 @@ async function ensureFaceApi() {
     }
 
     faceapi = globalThis.faceapi;
+    // Try to initialize face-api environment so getEnv() / isBrowser() work
+    try {
+      if (faceapi && faceapi.env) {
+        if (typeof faceapi.env.initialize === 'function') {
+          faceapi.env.initialize();
+        } else if (typeof faceapi.env.setEnv === 'function' && typeof faceapi.env.createBrowserEnv === 'function') {
+          faceapi.env.setEnv(faceapi.env.createBrowserEnv());
+        }
+        // monkeyPatch to use OffscreenCanvas for canvas creation if available
+        if (typeof faceapi.env.monkeyPatch === 'function') {
+          try {
+            faceapi.env.monkeyPatch({
+              createCanvasElement: () => (typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(1, 1) : null),
+              createImageElement: () => null,
+              Canvas: typeof OffscreenCanvas !== 'undefined' ? OffscreenCanvas : undefined,
+              Image: typeof Image !== 'undefined' ? Image : undefined,
+            });
+          } catch (e) {
+            // non-fatal
+            console.warn('[descriptor.worker] env.monkeyPatch failed', e);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[descriptor.worker] faceapi.env initialization warning', e);
+    }
     return faceapi;
   } catch (err) {
     console.error('[descriptor.worker] failed to import face-api.js', err);
