@@ -1,65 +1,69 @@
-import { openDB } from "idb";
+import { openDB, deleteDB } from "idb";
 import api from "../api/client";
 import UploadFileHelper from "../components/profiles/UploadHelper";
 
 const DB_NAME = "GCU_Schools_offline";
-const DB_VERSION = 2;
-const TABLE_STORE = "tables";
-const MUTATION_STORE = "mutations";
-const FILE_STORE = "files";
+const BASE_VERSION = 1;
+const CORE_STORES = ["tables", "mutations", "files"];
 
-export async function getDB() {
-  // Attempt to open at our target version. If the existing DB is at a higher
-  // version this will throw; in that case fall back to opening the DB at its
-  // current version (no upgrade). After we have a DB handle we check for any
-  // missing stores and perform a controlled version bump (+1) to create them.
+/**
+ * Opens the IndexedDB safely with automatic version detection and rebuild.
+ */
+export async function getDB(extraStores = []) {
+  const requiredStores = [...new Set([...CORE_STORES, ...extraStores])];
   let db;
+
   try {
-    db = await openDB(DB_NAME, DB_VERSION, {
+    db = await openDB(DB_NAME, undefined, {
       upgrade(upgradeDb) {
-        if (!upgradeDb.objectStoreNames.contains(TABLE_STORE)) {
-          upgradeDb.createObjectStore(TABLE_STORE, { keyPath: "name" });
-        }
-        if (!upgradeDb.objectStoreNames.contains(MUTATION_STORE)) {
-          upgradeDb.createObjectStore(MUTATION_STORE, { autoIncrement: true });
-        }
-        if (!upgradeDb.objectStoreNames.contains(FILE_STORE)) {
-          upgradeDb.createObjectStore(FILE_STORE, { autoIncrement: true });
-        }
+        requiredStores.forEach((store) => {
+          if (!upgradeDb.objectStoreNames.contains(store)) {
+            const opts =
+              store === "tables"
+                ? { keyPath: "name" }
+                : store === "mutations" || store === "files"
+                ? { autoIncrement: true }
+                : { keyPath: "id" };
+            upgradeDb.createObjectStore(store, opts);
+          }
+        });
       },
     });
   } catch (err) {
-    // If the error is due to requesting a lower version than the existing DB,
-    // fall back to opening without specifying a version so we can inspect the
-    // current DB and decide whether an upgrade is actually necessary.
-    try {
-      db = await openDB(DB_NAME);
-    } catch (err2) {
-      // Re-throw the original error if we can't open the DB.
-      throw err2 || err;
-    }
+    console.warn("[offlineDB] open failed — resetting DB:", err);
+    await deleteDB(DB_NAME);
+    db = await openDB(DB_NAME, BASE_VERSION, {
+      upgrade(upgradeDb) {
+        requiredStores.forEach((store) => {
+          const opts =
+            store === "tables"
+              ? { keyPath: "name" }
+              : store === "mutations" || store === "files"
+              ? { autoIncrement: true }
+              : { keyPath: "id" };
+          upgradeDb.createObjectStore(store, opts);
+        });
+      },
+    });
   }
 
-  // If some stores are missing (possible when the DB was created elsewhere
-  // with a higher version that didn't include our stores), bump the version
-  // by one and create only the missing stores.
-  const requiredStores = [TABLE_STORE, MUTATION_STORE, FILE_STORE];
+  // 🔹 Check for missing stores again
   const missing = requiredStores.filter((s) => !db.objectStoreNames.contains(s));
   if (missing.length) {
-    const newVersion = db.version + 1;
-    console.info(`[tableCache] DB missing stores ${missing.join(",")}, bumping version ${db.version} -> ${newVersion}`);
+    console.warn(`[offlineDB] Missing stores (${missing.join(", ")}), rebuilding DB...`);
     db.close();
-    db = await openDB(DB_NAME, newVersion, {
+    await deleteDB(DB_NAME);
+    db = await openDB(DB_NAME, BASE_VERSION, {
       upgrade(upgradeDb) {
-        if (!upgradeDb.objectStoreNames.contains(TABLE_STORE)) {
-          upgradeDb.createObjectStore(TABLE_STORE, { keyPath: "name" });
-        }
-        if (!upgradeDb.objectStoreNames.contains(MUTATION_STORE)) {
-          upgradeDb.createObjectStore(MUTATION_STORE, { autoIncrement: true });
-        }
-        if (!upgradeDb.objectStoreNames.contains(FILE_STORE)) {
-          upgradeDb.createObjectStore(FILE_STORE, { autoIncrement: true });
-        }
+        requiredStores.forEach((store) => {
+          const opts =
+            store === "tables"
+              ? { keyPath: "name" }
+              : store === "mutations" || store === "files"
+              ? { autoIncrement: true }
+              : { keyPath: "id" };
+          upgradeDb.createObjectStore(store, opts);
+        });
       },
     });
   }
@@ -67,52 +71,57 @@ export async function getDB() {
   return db;
 }
 
-// Cache table data
+
+/** Cache any table’s rows */
 export async function cacheTable(name, rows) {
-  const db = await getDB();
-  await db.put(TABLE_STORE, { name, rows });
+  const db = await getDB([name]);
+  await db.put("tables", { name, rows });
 }
 
-// Get cached table data
+/** Get cached table data (any table) */
 export async function getTable(name) {
-  const db = await getDB();
-  const entry = await db.get(TABLE_STORE, name);
+  const db = await getDB([name]);
+  const entry = await db.get("tables", name);
   return entry?.rows || [];
 }
 
-// Queue mutation (insert/update/delete)
+/** Queue a mutation for later sync (insert/update/delete) */
 export async function queueMutation(table, type, payload) {
-  const db = await getDB();
+  const db = await getDB([table]);
 
-  // Separate file/blob fields and store them in FILE_STORE, keep placeholders in payload
   const fileFields = [];
-  const cleanedPayload = Array.isArray(payload) ? [...payload] : { ...payload };
+  const cleanedPayload = Array.isArray(payload)
+    ? [...payload]
+    : { ...payload };
 
   Object.entries(payload || {}).forEach(([key, value]) => {
-    // Detect File/Blob (File inherits from Blob in browsers)
-    if (value instanceof Blob || (value && value instanceof File)) {
-      // replace with placeholder; actual blob stored separately
+    if (value instanceof Blob || value instanceof File) {
       cleanedPayload[key] = { __file_pending: true };
       fileFields.push({ fieldName: key, file: value });
     }
   });
 
   const timestamp = Date.now();
-  const key = await db.add(MUTATION_STORE, { table, type, payload: cleanedPayload, timestamp });
+  const key = await db.add("mutations", {
+    table,
+    type,
+    payload: cleanedPayload,
+    timestamp,
+  });
 
-  // store files referencing the mutation key
   for (const f of fileFields) {
-    await db.add(FILE_STORE, { mutationId: key, fieldName: f.fieldName, file: f.file });
+    await db.add("files", { mutationId: key, fieldName: f.fieldName, file: f.file });
   }
 
-  // return the mutation key so callers can reference it if needed
-  // notify UI about new queued mutation
   notifyChannel({ type: "queued", table, mutationKey: key, timestamp });
   return key;
 }
 
-// Broadcast channel for notifying UI about queue/sync changes
-const bc = typeof window !== "undefined" && "BroadcastChannel" in window ? new BroadcastChannel("offline-sync") : null;
+/** Broadcast channel for queue/sync updates */
+const bc =
+  typeof window !== "undefined" && "BroadcastChannel" in window
+    ? new BroadcastChannel("offline-sync")
+    : null;
 
 function notifyChannel(msg) {
   try {
@@ -122,10 +131,10 @@ function notifyChannel(msg) {
   }
 }
 
-// Get all queued mutations
+/** Utilities for mutation + file handling */
 export async function getMutations() {
   const db = await getDB();
-  const tx = db.transaction(MUTATION_STORE);
+  const tx = db.transaction("mutations");
   const values = await tx.store.getAll();
   const keys = await tx.store.getAllKeys();
   return values.map((v, i) => ({ id: keys[i], ...v }));
@@ -133,43 +142,44 @@ export async function getMutations() {
 
 export async function getFiles() {
   const db = await getDB();
-  const tx = db.transaction(FILE_STORE);
+  const tx = db.transaction("files");
   const values = await tx.store.getAll();
   const keys = await tx.store.getAllKeys();
   return values.map((v, i) => ({ id: keys[i], ...v }));
 }
 
-// Clear mutations after sync
 export async function clearMutations() {
   const db = await getDB();
-  const tx = db.transaction(MUTATION_STORE, "readwrite");
+  const tx = db.transaction("mutations", "readwrite");
   await tx.store.clear();
   await tx.done;
 }
 
 export async function clearFiles() {
   const db = await getDB();
-  const tx = db.transaction(FILE_STORE, "readwrite");
+  const tx = db.transaction("files", "readwrite");
   await tx.store.clear();
   await tx.done;
 }
 
-// Sync queued mutations to Supabase
+/** Full sync with Supabase */
 export async function syncMutations() {
   const mutations = await getMutations();
   const files = await getFiles();
-  // Process mutations in chronological order and keep a map of client-temp ids
-  // to server ids so subsequent queued mutations referencing temp ids are
-  // rewritten to the real ids before being sent to the server.
+
   mutations.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   const idMap = {};
 
   function replaceTempIds(obj) {
     if (!obj || typeof obj !== "object") return obj;
     if (Array.isArray(obj)) {
-      return obj.map((v) => (typeof v === "string" && v.startsWith("__tmp_") ? idMap[v] ?? v : replaceTempIds(v)));
+      return obj.map((v) =>
+        typeof v === "string" && v.startsWith("__tmp_")
+          ? idMap[v] ?? v
+          : replaceTempIds(v)
+      );
     }
-    const out = Array.isArray(obj) ? [] : {};
+    const out = {};
     Object.entries(obj).forEach(([k, v]) => {
       if (typeof v === "string" && v.startsWith("__tmp_")) {
         out[k] = idMap[v] ?? v;
@@ -184,105 +194,62 @@ export async function syncMutations() {
 
   for (const m of mutations) {
     try {
-      // find files linked to this mutation
       const fileEntries = files.filter((f) => f.mutationId === m.id);
+
       if (m.type === "insert") {
-        // remove file placeholders from payload for initial insert
-        let payload = { ...m.payload };
-        // Replace any temp ids in payload with mapped ids if known
-        payload = replaceTempIds(payload);
-        // If the payload contains a client-temp id, delete it so the server
-        // will generate a numeric id (and avoid sending a string to an int column).
-        if (payload.id && typeof payload.id === "string" && payload.id.startsWith("__tmp_")) {
-          const origTemp = payload.id;
-          delete payload.id;
+        let payload = replaceTempIds(m.payload);
+        if (payload.id?.startsWith("__tmp_")) delete payload.id;
+        const { data, error } = await api
+          .from(m.table)
+          .insert(payload)
+          .select()
+          .single();
+        if (error) throw error;
 
-          const { data, error } = await api.from(m.table).insert(payload).select().single();
-          if (error) throw error;
-          const newId = data?.id;
-          if (newId !== undefined && origTemp) {
-            idMap[origTemp] = newId;
-          }
-
-          // upload files and then update record with URLs
-          const fileUpdates = {};
-          for (const fe of fileEntries) {
-            try {
-              const url = await UploadFileHelper(fe.file, m.table, newId);
-              fileUpdates[fe.fieldName] = url;
-            } catch (err) {
-              console.error("File upload during sync failed:", err);
-            }
-          }
-          if (Object.keys(fileUpdates).length) {
-            await api.from(m.table).update(fileUpdates).eq("id", newId);
-          }
-        } else {
-          // No temp id present: normal insert
-          const payloadNoFiles = { ...replaceTempIds(m.payload) };
-          fileEntries.forEach((fe) => delete payloadNoFiles[fe.fieldName]);
-          const { data, error } = await api.from(m.table).insert(payloadNoFiles).select().single();
-          if (error) throw error;
-          const newId = data?.id;
-          const fileUpdates = {};
-          for (const fe of fileEntries) {
-            try {
-              const url = await UploadFileHelper(fe.file, m.table, newId);
-              fileUpdates[fe.fieldName] = url;
-            } catch (err) {
-              console.error("File upload during sync failed:", err);
-            }
-          }
-          if (Object.keys(fileUpdates).length) {
-            await api.from(m.table).update(fileUpdates).eq("id", newId);
-          }
-        }
-      } else if (m.type === "update") {
-        // m.payload may be { id, data } or plain object
-        // Replace temp ids in payload first
-        const resolvedPayload = replaceTempIds(m.payload);
-        const id = resolvedPayload.id || resolvedPayload?.data?.id;
-        const updateData = resolvedPayload.data ? { ...resolvedPayload.data } : { ...resolvedPayload };
-
+        const newId = data?.id;
+        const fileUpdates = {};
         for (const fe of fileEntries) {
           try {
-            // upload files; if id is still a temp id (shouldn't be if inserts processed before updates), this will error
-            const actualId = id && typeof id === "string" && id.startsWith("__tmp_") ? idMap[id] : id;
-            const url = await UploadFileHelper(fe.file, m.table, actualId);
-            updateData[fe.fieldName] = url;
+            const url = await UploadFileHelper(fe.file, m.table, newId);
+            fileUpdates[fe.fieldName] = url;
           } catch (err) {
-            console.error("File upload during sync failed:", err);
+            console.error("File upload failed:", err);
           }
         }
-
-        if (id) {
-          const actualId = typeof id === "string" && id.startsWith("__tmp_") ? idMap[id] : id;
-          if (actualId === undefined || actualId === null) {
-            throw new Error(`Missing mapping for temp id ${id} while processing update`);
-          }
-          await api.from(m.table).update(updateData).eq("id", actualId);
-        } else {
-          // fallback: try update with whatever is in payload
-          await api.from(m.table).update(updateData);
+        if (Object.keys(fileUpdates).length) {
+          await api.from(m.table).update(fileUpdates).eq("id", newId);
         }
+      } else if (m.type === "update") {
+        const resolved = replaceTempIds(m.payload);
+        const id = resolved.id;
+        const updateData = resolved.data ?? resolved;
+        for (const fe of fileEntries) {
+          const url = await UploadFileHelper(fe.file, m.table, id);
+          updateData[fe.fieldName] = url;
+        }
+        await api.from(m.table).update(updateData).eq("id", id);
       } else if (m.type === "delete") {
         const resolved = replaceTempIds(m.payload);
-        const idToDelete = resolved.id;
-        const actualId = typeof idToDelete === "string" && idToDelete.startsWith("__tmp_") ? idMap[idToDelete] : idToDelete;
-        if (actualId === undefined || actualId === null) {
-          throw new Error(`Missing mapping for temp id ${idToDelete} while processing delete`);
-        }
-        await api.from(m.table).delete().eq("id", actualId);
+        await api.from(m.table).delete().eq("id", resolved.id);
       }
     } catch (err) {
-      // Optionally handle sync errors per-mutation
       console.error("Sync error:", err);
-      notifyChannel({ type: "sync-error", table: m.table, mutationKey: m.id, error: String(err) });
+      notifyChannel({
+        type: "sync-error",
+        table: m.table,
+        mutationKey: m.id,
+        error: String(err),
+      });
     }
   }
 
-  // clear both mutations and file entries after attempting sync
   await clearMutations();
   await clearFiles();
   notifyChannel({ type: "synced", timestamp: Date.now() });
+}
+
+/** Manual reset: clears the entire offline DB */
+export async function resetOfflineDB() {
+  await deleteDB(DB_NAME);
+  console.warn("[offlineDB] Database cleared. Will rebuild on next use.");
 }

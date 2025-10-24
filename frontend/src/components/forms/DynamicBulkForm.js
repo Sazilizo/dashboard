@@ -1,4 +1,3 @@
-// src/components/forms/DynamicBulkForm.js
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import api from "../../api/client";
@@ -39,12 +38,6 @@ export default function DynamicBulkForm({
     { value: "academic", label: "Academic Session" },
     { value: "pe", label: "PE Session" },
   ];
-
-  // useEffect(() => {
-  //   if (students.length) {
-  //     setFilteredStudents(students.filter((s) => s.active));
-  //   }
-  // }, [students]);
 
   const calculateAge = (dobStr) => {
     if (!dobStr) return "";
@@ -88,27 +81,7 @@ export default function DynamicBulkForm({
           }
           setSchema(fields);
           // build defaults from fields
-          const defaults = {};
-          fields.forEach((f) => {
-            if (f.type === "json_object") {
-              const groupDefaults = {};
-              f.group.forEach((g) => {
-                groupDefaults[g.key] = g.default ?? 0;
-              });
-              defaults[f.name] = { ...groupDefaults };
-            } else if (f.type === "checkbox" || f.type === "boolean") {
-              defaults[f.name] = false;
-            } else if (f.type === "select" && f.multiple) {
-              defaults[f.name] = id ? [id] : [];
-            } else {
-              defaults[f.name] = "";
-            }
-          });
-          Object.keys(presetFields).forEach((k) => {
-            if (fields.some((f) => f.name === k)) {
-              defaults[k] = presetFields[k];
-            }
-          });
+          const defaults = buildDefaultsFromFields(fields, presetFields, id);
           setFormData(defaults);
           return;
         } catch (err) {
@@ -136,29 +109,7 @@ export default function DynamicBulkForm({
       const fields = schemaData.schema?.fields || [];
       setSchema(fields);
 
-      const defaults = {};
-      fields.forEach((f) => {
-        if (f.type === "json_object") {
-          const groupDefaults = {};
-          f.group.forEach((g) => {
-            groupDefaults[g.key] = g.default ?? 0;
-          });
-          defaults[f.name] = { ...groupDefaults };
-        } else if (f.type === "checkbox" || f.type === "boolean") {
-          defaults[f.name] = false;
-        } else if (f.type === "select" && f.multiple) {
-          defaults[f.name] = id ? [id] : [];
-        } else {
-          defaults[f.name] = "";
-        }
-      });
-
-      Object.keys(presetFields).forEach((k) => {
-        if (fields.some((f) => f.name === k)) {
-          defaults[k] = presetFields[k];
-        }
-      });
-
+      const defaults = buildDefaultsFromFields(fields, presetFields, id);
       setFormData(defaults);
 
       // Cache fetched schema for offline use
@@ -173,6 +124,47 @@ export default function DynamicBulkForm({
 
     fetchSchema();
   }, [schema_name, presetFields, id, isOnline]);
+
+  // Utility: build defaults from fields (robust to missing group/options)
+  function buildDefaultsFromFields(fields, presetFieldsObj = {}, routeId) {
+    const defaults = {};
+    fields.forEach((f) => {
+      if (f.type === "json_object") {
+        // If this is the special 'sections' field, initialize nested structure
+        if (f.name === "sections") {
+          // ensure nested sections structure: { sections: [] }
+          defaults[f.name] = { sections: [] };
+        } else {
+          // fallback: create defaults based on group (if provided)
+          const groupDefaults = {};
+          const groupArr = Array.isArray(f.group) ? f.group : [];
+          groupArr.forEach((g) => {
+            const key = g.name ?? g.key;
+            if (key) {
+              // repeater -> default to empty array
+              groupDefaults[key] = g.type === "repeater" ? [] : (g.default ?? "");
+            }
+          });
+          defaults[f.name] = groupDefaults;
+        }
+      } else if (f.type === "checkbox" || f.type === "boolean") {
+        defaults[f.name] = false;
+      } else if (f.type === "select" && f.multiple) {
+        defaults[f.name] = routeId ? [routeId] : [];
+      } else {
+        defaults[f.name] = "";
+      }
+    });
+
+    // apply presetFields if the field exists in the schema
+    Object.keys(presetFieldsObj).forEach((k) => {
+      if (fields.some((f) => f.name === k)) {
+        defaults[k] = presetFieldsObj[k];
+      }
+    });
+
+    return defaults;
+  }
 
   const handleChange = (name, value) => {
     let updated = { ...formData, [name]: value };
@@ -208,68 +200,127 @@ export default function DynamicBulkForm({
   const handleJsonObjectChange = (fieldName, key, value) => {
     setFormData((prev) => ({
       ...prev,
-      [fieldName]: { ...prev[fieldName], [key]: Number(value) },
+      [fieldName]: { ...(prev[fieldName] || {}), [key]: Number(value) },
     }));
+  };
+
+  // Helpers to safely access nested sections
+  const ensureSectionsPath = (prev) => {
+    const prevSectionsObj = prev.sections || {};
+    const sectionsArr = Array.isArray(prevSectionsObj.sections) ? [...prevSectionsObj.sections] : [];
+    return { prevSectionsObj, sectionsArr };
   };
 
   const handleSectionChange = (sectionIndex, key, value) => {
     setFormData((prev) => {
-      const sectionsData = prev.sections.sections || [];
-      sectionsData[sectionIndex] = {
-        ...sectionsData[sectionIndex],
+      const { prevSectionsObj, sectionsArr } = ensureSectionsPath(prev);
+      const section = sectionsArr[sectionIndex] || {
+        section_title: "",
+        section_image: null,
+        number_of_questions: 0,
+        questions: [],
+      };
+      const updatedSection = {
+        ...section,
         [key]: key === "number_of_questions" ? Number(value) : value,
       };
+      sectionsArr[sectionIndex] = updatedSection;
       return {
         ...prev,
-        sections: { ...prev.sections, sections: sectionsData },
+        sections: { ...prevSectionsObj, sections: sectionsArr },
       };
     });
   };
 
   const handleQuestionChange = (sectionIndex, questionIndex, key, value) => {
     setFormData((prev) => {
-      const sectionsData = prev.sections.sections || [];
-      const questionsData = sectionsData[sectionIndex].questions || [];
-      questionsData[questionIndex] = {
-        ...questionsData[questionIndex],
-        [key]: value,
+      const { prevSectionsObj, sectionsArr } = ensureSectionsPath(prev);
+      const section = sectionsArr[sectionIndex] || {
+        section_title: "",
+        section_image: null,
+        number_of_questions: 0,
+        questions: [],
       };
-      sectionsData[sectionIndex].questions = questionsData;
+      const questionsArr = Array.isArray(section.questions) ? [...section.questions] : [];
+      const question = questionsArr[questionIndex] || { question: "", type: "text", options: [], correct_answer: "" };
+      const updatedQuestion = { ...question, [key]: value };
+      questionsArr[questionIndex] = updatedQuestion;
+      sectionsArr[sectionIndex] = { ...section, questions: questionsArr };
       return {
         ...prev,
-        sections: { ...prev.sections, sections: sectionsData },
+        sections: { ...prevSectionsObj, sections: sectionsArr },
       };
     });
   };
 
   const handleAddSection = () => {
     setFormData((prev) => {
-      const sectionsData = prev.sections.sections || [];
-      sectionsData.push({
+      const { prevSectionsObj, sectionsArr } = ensureSectionsPath(prev);
+      const newSections = [...sectionsArr, {
         section_title: "",
         section_image: null,
         number_of_questions: 0,
         questions: [],
-      });
-      return {
-        ...prev,
-        sections: { ...prev.sections, sections: sectionsData },
-      };
+      }];
+      return { ...prev, sections: { ...prevSectionsObj, sections: newSections } };
     });
   };
 
   const handleAddQuestion = (sectionIndex) => {
     setFormData((prev) => {
-      const sectionsData = prev.sections.sections || [];
-      const questionsData = sectionsData[sectionIndex].questions || [];
-      questionsData.push({ question: "", type: "text", options: [], correct_answer: "" });
-      sectionsData[sectionIndex].questions = questionsData;
-      return {
-        ...prev,
-        sections: { ...prev.sections, sections: sectionsData },
+      const { prevSectionsObj, sectionsArr } = ensureSectionsPath(prev);
+      const section = sectionsArr[sectionIndex] || {
+        section_title: "",
+        section_image: null,
+        number_of_questions: 0,
+        questions: [],
       };
+      const questionsArr = Array.isArray(section.questions) ? [...section.questions] : [];
+      questionsArr.push({ question: "", type: "text", options: [], correct_answer: "" });
+      sectionsArr[sectionIndex] = { ...section, questions: questionsArr };
+      return { ...prev, sections: { ...prevSectionsObj, sections: sectionsArr } };
     });
   };
+
+  useEffect(() => {
+    async function loadSessionQuestions() {
+      if (!formData.session_id) return;
+
+      try {
+        // Fetch the academic session to get its sections_builder
+        const { data: session, error } = await api
+          .from("academic_sessions")
+          .select("sections_builder")
+          .eq("id", formData.session_id)
+          .single();
+
+        if (error) throw error;
+
+        if (session?.sections_builder) {
+          const generatedAnswers = {};
+          session.sections_builder.sections.forEach((section) => {
+            console.log("Processing section:", section);
+            if (section.questions && Array.isArray(section.questions)) {
+              section.questions.forEach((q, i) => {
+                // create unique key for each question
+                const qKey = `${section.section_title}_${i}`;
+                generatedAnswers[qKey] = "";
+              });
+            }
+          });
+
+          setFormData((prev) => ({
+            ...prev,
+            answers: generatedAnswers,
+          }));
+        }
+      } catch (err) {
+        console.error("Error loading session questions:", err);
+      }
+    }
+
+    loadSessionQuestions();
+  }, [formData.session_id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -280,18 +331,20 @@ export default function DynamicBulkForm({
       // Validate sections & questions
       const sections = formData.sections?.sections || [];
       for (const [sIndex, sec] of sections.entries()) {
-        if (!sec.section_title) throw new Error(`Section ${sIndex + 1} title is required.`);
-        if (sec.number_of_questions !== sec.questions.length) {
+        if (!sec?.section_title) throw new Error(`Section ${sIndex + 1} title is required.`);
+        const questions = Array.isArray(sec.questions) ? sec.questions : [];
+        if ((sec.number_of_questions ?? 0) !== questions.length) {
           throw new Error(`Section ${sIndex + 1} must have ${sec.number_of_questions} questions.`);
         }
-        sec.questions.forEach((q, qIndex) => {
-          if (!q.question) throw new Error(`Question ${qIndex + 1} in Section ${sIndex + 1} is required.`);
-          if (!q.type) throw new Error(`Question ${qIndex + 1} in Section ${sIndex + 1} type is required.`);
+        questions.forEach((q, qIndex) => {
+          if (!q?.question) throw new Error(`Question ${qIndex + 1} in Section ${sIndex + 1} is required.`);
+          if (!q?.type) throw new Error(`Question ${qIndex + 1} in Section ${sIndex + 1} type is required.`);
         });
       }
 
       const payload = { ...formData };
 
+      // Normalize fields according to schema
       schema.forEach((f) => {
         let val = formData[f.name];
         if (f.type === "checkbox" || f.type === "boolean") val = !!val;
@@ -331,11 +384,24 @@ export default function DynamicBulkForm({
       const resetData = {};
       schema.forEach((f) => {
         if (f.type === "json_object") {
+          // group may be undefined; handle gracefully
+          const groupArr = Array.isArray(f.group) ? f.group : [];
           const groupDefaults = {};
-          f.group.forEach((g) => {
-            groupDefaults[g.name] = g.type === "repeater" ? [] : g.default ?? 0;
+          groupArr.forEach((g) => {
+            const key = g.name ?? g.key;
+            if (!key) return;
+            if (g.type === "repeater") {
+              groupDefaults[key] = [];
+            } else {
+              groupDefaults[key] = g.default ?? "";
+            }
           });
-          resetData[f.name] = { ...groupDefaults };
+          // special-case sections field to keep nested shape
+          if (f.name === "sections") {
+            resetData[f.name] = { sections: [] };
+          } else {
+            resetData[f.name] = groupDefaults;
+          }
         } else if (f.type === "checkbox" || f.type === "boolean") {
           resetData[f.name] = false;
         } else if (f.type === "select" && f.multiple) {
@@ -355,6 +421,9 @@ export default function DynamicBulkForm({
   };
 
   const renderField = (field) => {
+    if (field.name === "answers"){
+      console.log("Rendering answers field with data:", formData.answers);
+    }
     if (field.name === "student_id") return null;
     if (field.name === "school_id" && !schools?.length) return null;
 
@@ -434,7 +503,6 @@ export default function DynamicBulkForm({
       );
     }
 
-
     if (field.readOnly) {
       return (
         <div key={field.name} className="mb-4">
@@ -499,8 +567,16 @@ export default function DynamicBulkForm({
       );
     }
 
-    if (field.type === "json_object" && field.group.some(g => g.type === "repeater")) {
-      const sectionsData = formData[field.name]?.sections || [];
+    // Detect json_object that contains a repeater (sections/ questions)
+    const groupArr = Array.isArray(field.group) ? field.group : [];
+    const hasRepeater = groupArr.some((g) => g?.type === "repeater");
+
+    if (field.type === "json_object" && hasRepeater) {
+      // support old nested structure: formData.sections.sections
+      const sectionsData = (formData[field.name] && Array.isArray(formData[field.name].sections))
+        ? formData[field.name].sections
+        : [];
+
       return (
         <div key={field.name} className="mb-4 border p-2 rounded">
           <label className="font-medium">{field.label}</label>
@@ -514,7 +590,7 @@ export default function DynamicBulkForm({
               <input
                 type="text"
                 placeholder={`Section ${sIndex + 1} Title`}
-                value={section.section_title}
+                value={section.section_title || ""}
                 onChange={(e) => handleSectionChange(sIndex, "section_title", e.target.value)}
                 className="w-full mb-2 p-2 border rounded"
                 required
@@ -524,7 +600,7 @@ export default function DynamicBulkForm({
                 placeholder="Number of Questions"
                 min={0}
                 max={20}
-                value={section.number_of_questions}
+                value={section.number_of_questions ?? 0}
                 onChange={(e) => handleSectionChange(sIndex, "number_of_questions", e.target.value)}
                 className="w-full mb-2 p-2 border rounded"
                 required
@@ -534,18 +610,18 @@ export default function DynamicBulkForm({
                   + Add Question
                 </button>
               </div>
-              {section.questions?.map((q, qIndex) => (
+              {(Array.isArray(section.questions) ? section.questions : []).map((q, qIndex) => (
                 <div key={qIndex} className="mb-2 p-2 border rounded bg-white">
                   <input
                     type="text"
                     placeholder={`Question ${qIndex + 1}`}
-                    value={q.question}
+                    value={q.question || ""}
                     onChange={(e) => handleQuestionChange(sIndex, qIndex, "question", e.target.value)}
                     className="w-full mb-1 p-2 border rounded"
                     required
                   />
                   <select
-                    value={q.type}
+                    value={q.type || ""}
                     onChange={(e) => handleQuestionChange(sIndex, qIndex, "type", e.target.value)}
                     className="w-full mb-1 p-2 border rounded"
                     required
@@ -560,8 +636,8 @@ export default function DynamicBulkForm({
                     <input
                       type="text"
                       placeholder="Options (comma separated)"
-                      value={q.options?.join(",") || ""}
-                      onChange={(e) => handleQuestionChange(sIndex, qIndex, "options", e.target.value.split(","))}
+                      value={Array.isArray(q.options) ? q.options.join(",") : (q.options || "")}
+                      onChange={(e) => handleQuestionChange(sIndex, qIndex, "options", e.target.value.split(",").map(o => o.trim()))}
                       className="w-full mb-1 p-2 border rounded"
                     />
                   )}
@@ -579,6 +655,7 @@ export default function DynamicBulkForm({
         </div>
       );
     }
+
     if (field.name === "is_fruit") {
       return (
         <div key={field.name} className="mb-4">
@@ -638,116 +715,156 @@ export default function DynamicBulkForm({
       );
     }
 
+    // fallback: handle other types with safer checks
+    if (field.type === "multi_select" && field.label === "Students") {
+      return (
+        <EntityMultiSelect
+          key={field.name}
+          label={field.label}
+          value={formData[field.name]}
+          options={field.options || []}
+          onChange={(val) => handleChange(field.name, val)}
+        />
+      );
+    }
 
-    switch (field.type) {
-      case "multi_select" && field.label ==="Students":
-        return (
-          <EntityMultiSelect
-            key={field.name}
-            label={field.label}
+    if (field.format === "select" && Array.isArray(field.foreign) && field.foreign.includes("roles")) {
+      return (
+        <div key={field.name}>
+          <label>{field.label}</label>
+          <RoleSelect
+            name={field.name}
             value={formData[field.name]}
-            options={field.options || []}
-            onChange={(val) => handleChange(field.name, val)}
+            onChange={handleChange}
+            required={field.required}
           />
-        );
-      case field.format === "select" && field.foreign?.includes("roles") :
-          return (
-            <div key={field.name}>
-              <label>{field.label}</label>
-              <RoleSelect
-                name={field.name}
-                value={formData[field.name]}
-                onChange={handleChange}
-                required={field.required}
+        </div>
+      );
+    }
+
+    if (field.type === "json_object" && !hasRepeater) {
+      const jsonValues = formData[field.name] || {};
+      const grp = Array.isArray(field.group) ? field.group : [];
+      return (
+        <div key={field.name}>
+          <label>{field.label}</label>
+          {grp.map((g) => (
+            <div key={g.name || g.key}>
+              <label>{g.label}</label>
+              <input
+                type="number"
+                min={g.min ?? 0}
+                max={g.max ?? 100}
+                value={jsonValues[g.name ?? g.key] ?? ""}
+                onChange={(e) =>
+                  handleJsonObjectChange(field.name, g.name ?? g.key, e.target.value)
+                }
+                required={g.required}
+                className="w-full p-2 border rounded mb-2"
               />
             </div>
-          );
-
-      case "json_object":
-        const jsonValues = formData[field.name] || {};
-        return (
-          <div key={field.name}>
-            <label>{field.label}</label>
-            {field.group.map((g) => (
-              <div key={g.name}>
-                <label>{g.label}</label>
-                <input
-                  type="number"
-                  min={g.min ?? 0}
-                  max={g.max ?? 100}
-                  value={jsonValues[g.name]}
-                  onChange={(e) =>
-                    handleJsonObjectChange(field.name, g.name, e.target.value)
-                  }
-                  required
-                />
-              </div>
-            ))}
-          </div>
-        );
-      case "file":
-        return (
-          <UploadFile
-            key={field.name}
-            label={field.label}
-            value={formData[field.name]}
-            onChange={(val) => handleChange(field.name, val)}
-            folder="students"
-            id={studentId || id}
-            accept="image/*,.pdf"
-          />
-        );
-      case "select":
-        return (
-          <div key={field.name} className="mb-4">
-            <label className="block font-medium">{field.label}</label>
-            <select
-              multiple={field.multiple}
-              value={formData[field.name] || (field.multiple ? [] : "")}
-              onChange={(e) =>
-                handleChange(
-                  field.name,
-                  field.multiple
-                    ? Array.from(e.target.selectedOptions, (opt) => opt.value)
-                    : e.target.value
-                )
-              }
-              className="w-full p-2 border rounded"
-            >
-              <option value="">Select...</option>
-              {field.options?.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label || opt}
-                </option>
-              ))}
-            </select>
-          </div>
-        );
-      case "checkbox":
-        return (
-          <div key={field.name} className="mb-4 flex items-center">
-            <input
-              type="checkbox"
-              checked={!!formData[field.name]}
-              onChange={(e) => handleChange(field.name, e.target.checked)}
-              className="mr-2"
-            />
-            <label>{field.label}</label>
-          </div>
-        );
-      default:
-        return (
-          <div key={field.name} className="mb-4">
-            <label className="block text-sm font-medium">{field.label}</label>
-            <input
-              type={field.type || "text"}
-              value={formData[field.name] || ""}
-              onChange={(e) => handleChange(field.name, e.target.value)}
-              className="w-full p-2 border rounded"
-            />
-          </div>
-        );
+          ))}
+        </div>
+      );
     }
+
+    if (field.type === "file") {
+      return (
+        <UploadFile
+          key={field.name}
+          label={field.label}
+          value={formData[field.name]}
+          onChange={(val) => handleChange(field.name, val)}
+          folder="students"
+          id={studentId || id}
+          accept="image/*,.pdf"
+        />
+      );
+    }
+
+    if (field.name === "answers" && formData.answers) {
+      console.log("Rendering answers field with data:", formData.answers);
+      return (
+        <div key={field.name} className="mb-4">
+          <h3 className="text-lg font-semibold mb-2">{field.label}</h3>
+
+          {Object.entries(formData.answers).map(([qid, value]) => (
+            <div key={qid} className="mb-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {qid.replace(/_/g, " ")}
+              </label>
+              <input
+                type="text"
+                value={value}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    answers: { ...prev.answers, [qid]: e.target.value },
+                  }))
+                }
+                className="w-full border rounded-md p-2 focus:ring focus:ring-blue-300"
+                placeholder="Enter answer"
+              />
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    if (field.type === "select") {
+      return (
+        <div key={field.name} className="mb-4">
+          <label className="block font-medium">{field.label}</label>
+          <select
+            multiple={field.multiple}
+            value={formData[field.name] || (field.multiple ? [] : "")}
+            onChange={(e) =>
+              handleChange(
+                field.name,
+                field.multiple
+                  ? Array.from(e.target.selectedOptions, (opt) => opt.value)
+                  : e.target.value
+              )
+            }
+            className="w-full p-2 border rounded"
+          >
+            <option value="">Select...</option>
+            {(Array.isArray(field.options) ? field.options : []).map((opt) => (
+              <option key={opt.value ?? opt} value={opt.value ?? opt}>
+                {opt.label ?? opt}
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+
+    if (field.type === "checkbox") {
+      return (
+        <div key={field.name} className="mb-4 flex items-center">
+          <input
+            type="checkbox"
+            checked={!!formData[field.name]}
+            onChange={(e) => handleChange(field.name, e.target.checked)}
+            className="mr-2"
+          />
+          <label>{field.label}</label>
+        </div>
+      );
+    }
+
+    // default text/number/etc.
+    return (
+      <div key={field.name} className="mb-4">
+        <label className="block text-sm font-medium">{field.label}</label>
+        <input
+          type={field.type || "text"}
+          value={formData[field.name] ?? ""}
+          onChange={(e) => handleChange(field.name, e.target.value)}
+          className="w-full p-2 border rounded"
+        />
+      </div>
+    );
   };
 
 
@@ -777,7 +894,6 @@ export default function DynamicBulkForm({
       {!id && (
         <div className="mb-4">
           <EntityMultiSelect
-            // label="Select Workers"
             options={filteredData || []}
             value={selectedData}
             onChange={valueChange}
