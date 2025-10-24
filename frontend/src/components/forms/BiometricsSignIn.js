@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../../api/client";
-import * as faceapi from "face-api.js";
+import { getFaceApi } from "../../utils/faceApiShim";
 import descriptorDB from "../../utils/descriptorDB";
 // worker path (webpack friendly) - descriptor worker runs face-api inside the worker
 let DescriptorWorker = null;
@@ -67,6 +67,7 @@ const BiometricsSignIn = ({
   const [workerError, setWorkerError] = useState(null);
   const [workerAvailable, setWorkerAvailable] = useState(!!DescriptorWorker);
   const [workerReloadKey, setWorkerReloadKey] = useState(0);
+  const faceapiRef = useRef(null);
 
   // ✅ Detect screen size for camera switch visibility
   useEffect(() => {
@@ -92,11 +93,22 @@ const BiometricsSignIn = ({
     let cancelled = false;
     const ensureModelsReady = async () => {
       if (areFaceApiModelsLoaded()) {
+        // ensure faceapi module is available
+        try {
+          faceapiRef.current = await getFaceApi();
+        } catch (e) {
+          console.warn('Failed to get faceapi module after models loaded', e);
+        }
         setLoadingModels(false);
         return;
       }
       try {
         await preloadFaceApiModels();
+        try {
+          faceapiRef.current = await getFaceApi();
+        } catch (e) {
+          console.warn('Failed to import faceapi after preloading models', e);
+        }
         if (!cancelled) setLoadingModels(false);
       } catch (err) {
         console.error("Failed to load face-api models:", err);
@@ -226,13 +238,66 @@ const BiometricsSignIn = ({
 
       const w = new Worker(new URL("../../workers/descriptor.worker.js", import.meta.url), { type: "module" });
       descriptorWorkerRef.current = w;
-      setWorkerAvailable(true);
+      setWorkerAvailable(false); // mark pending until init completes
       setWorkerError(null);
+
+      // Listen for structured messages from the worker (init handshake + errors)
+      const onMessage = (ev) => {
+        const m = ev.data || {};
+        // init handshake
+        if (m && m.id === 'init') {
+          if (m.success) {
+            setWorkerAvailable(true);
+            setWorkerError(null);
+            console.log('[BiometricsSignIn] descriptor worker initialized');
+          } else {
+            const errMsg = m.error || 'Worker init failed';
+            console.error('[BiometricsSignIn] worker init error:', errMsg);
+            setWorkerError(`Worker init failed: ${errMsg}`);
+            setWorkerAvailable(false);
+          }
+          return;
+        }
+
+        // generic error message from worker
+        if (m && m.error) {
+          console.error('[BiometricsSignIn] worker error message:', m.error, m);
+          setWorkerError(m.error);
+          setWorkerAvailable(false);
+        }
+      };
+
+      w.addEventListener('message', onMessage);
+
       w.onerror = (ev) => {
-        console.error("Descriptor worker error:", ev);
-        setWorkerError(ev?.message || "Descriptor worker failed");
+        // worker-level syntax/load errors often surface here (e.g. Unexpected token '<')
+        const msg = ev?.message || (ev && ev.toString()) || 'Worker failure';
+        const filename = ev?.filename || ev?.fileName || '';
+        const lineno = ev?.lineno || ev?.lineno || '';
+        const colno = ev?.colno || ev?.colno || '';
+        const full = `Worker error: ${msg} ${filename ? `at ${filename}:${lineno}:${colno}` : ''}`;
+        console.error('Descriptor worker error:', ev);
+        setWorkerError(full);
         setWorkerAvailable(false);
       };
+
+      // try to initialize the worker (asks it to load models); if init doesn't respond we fall back
+      try {
+        w.postMessage({ id: 'init', modelsUrl: MODELS_URL });
+      } catch (err) {
+        console.warn('Failed to post init to descriptor worker', err);
+      }
+
+      // fallback if init doesn't complete within timeout
+      const initTimeout = setTimeout(() => {
+        if (!descriptorWorkerRef.current) return;
+        if (!workerAvailable) {
+          const note = 'Descriptor worker did not initialize in time; falling back to main-thread processing.';
+          console.warn(note);
+          setWorkerError(note);
+          setWorkerAvailable(false);
+        }
+      }, 8000);
     } catch (err) {
       console.warn("Failed to create descriptor worker in component", err);
       setWorkerAvailable(false);
@@ -254,8 +319,8 @@ const BiometricsSignIn = ({
     // Load descriptors only for ids not already cached
     (async () => {
       try {
-        // Determine the correct storage path based on the bucket name
-        const getPath = STORAGE_PATHS[bucketName.split('-')[0]] || STORAGE_PATHS.students;
+  // Determine the correct storage path generator based on the bucket name
+  const getPath = STORAGE_PATHS[bucketName] || STORAGE_PATHS['student-uploads'];
         setMessage("Loading face references...");
             // first check persisted DB cache
             const idsToLoad = [];
@@ -265,6 +330,7 @@ const BiometricsSignIn = ({
               if (persisted && persisted.length) {
                 // persisted is expected to be array of arrays (Float32 arrays as number arrays)
                 try {
+                  const faceapi = faceapiRef.current;
                   const labeled = new faceapi.LabeledFaceDescriptors(
                     i.toString(),
                     persisted.map((arr) => new Float32Array(arr))
@@ -283,7 +349,7 @@ const BiometricsSignIn = ({
         for (const id of idsToLoad) {
           try {
             // list profile-picture images inside the id folder (small set expected)
-            const listPath = `${folderName}/${id}/profile-picture`;
+            const listPath = getPath(id);
             const { data: files, error: listErr } = await api.storage
               .from(bucketName)
               .list(listPath);
@@ -294,19 +360,28 @@ const BiometricsSignIn = ({
 
             // limit descriptors per id to reduce memory/time
             const limited = imageFiles.slice(0, 3);
-            const paths = limited.map((f) => `${folderName}/${id}/profile-picture/${f.name}`);
+            const paths = limited.map((f) => `${listPath}/${f.name}`);
 
             // batch create signed URLs
-            const { data: urlsData, error: urlErr } = await api.storage
-              .from(bucketName)
-              .createSignedUrls(paths, 300);
-            if (urlErr || !urlsData?.length) continue;
+            // create signed URLs per path (supabase v2 uses createSignedUrl)
+            const signedResults = await Promise.all(paths.map((p) => api.storage.from(bucketName).createSignedUrl(p, 300)));
+            const urlsData = [];
+            let urlErr = null;
+            for (const r of signedResults) {
+              if (r.error) {
+                urlErr = r.error;
+                urlsData.push(null);
+              } else {
+                urlsData.push(r.data?.signedUrl || null);
+              }
+            }
+            if (urlErr || !urlsData.filter(Boolean).length) continue;
 
             const descriptors = [];
             // If worker available, ask it to compute descriptors (it will fetch & decode images and run face-api)
             const worker = descriptorWorkerRef.current;
             if (worker) {
-              const signedPaths = urlsData.map((u) => u.signedUrl || u.signed_url || u);
+              const signedPaths = urlsData.map((u) => u);
               const workerResp = await new Promise((resolve) => {
                 const handler = (ev) => {
                   const m = ev.data || {};
@@ -352,6 +427,7 @@ const BiometricsSignIn = ({
               for (const u of urlsData) {
                 const signedUrl = u.signedUrl || u.signed_url || u;
                 try {
+                  const faceapi = faceapiRef.current;
                   const img = await faceapi.fetchImage(signedUrl);
                   const det = await faceapi
                     .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 128, scoreThreshold: 0.45 }))
@@ -365,6 +441,7 @@ const BiometricsSignIn = ({
             }
 
             if (descriptors.length) {
+              const faceapi = faceapiRef.current;
               const labeled = new faceapi.LabeledFaceDescriptors(id.toString(), descriptors);
               faceDescriptorCache[id] = labeled;
               loadedDescriptors.push(labeled);
@@ -385,6 +462,7 @@ const BiometricsSignIn = ({
         const cached = ids.map((i) => faceDescriptorCache[i]).filter(Boolean);
         const all = [...cached, ...loadedDescriptors];
         if (all.length) {
+          const faceapi = faceapiRef.current;
           setFaceMatcher(new faceapi.FaceMatcher(all, threshold));
           setReferencesReady(true);
         } else {
@@ -422,6 +500,7 @@ const BiometricsSignIn = ({
       const ctx = canvas.getContext("2d");
       ctx.drawImage(webcamRef.current, 0, 0, targetW, targetH);
 
+      const faceapi = faceapiRef.current;
       const detections = await faceapi
         .detectAllFaces(
           canvas,
@@ -500,6 +579,7 @@ const BiometricsSignIn = ({
       const ctx = canvas.getContext("2d");
       ctx.drawImage(webcamRef.current, 0, 0, targetW, targetH);
 
+      const faceapi = faceapiRef.current;
       const detections = await faceapi
         .detectAllFaces(
           canvas,
@@ -587,6 +667,49 @@ const BiometricsSignIn = ({
                 <div style={{ display: "flex", gap: 8 }}>
                   <button className="submit-btn" onClick={retryWorker} style={{ background: "#2563eb", color: "white" }}>
                     Retry Worker
+                  </button>
+                  <button
+                    className="submit-btn"
+                    onClick={async () => {
+                      // run quick diagnostics: model manifest + sample storage list
+                      try {
+                        setMessage('Running diagnostics...');
+                        const modelUrl = `${MODELS_URL.replace(/\/$/, '')}/tiny_face_detector_model-weights_manifest.json`;
+                        const r = await fetch(modelUrl, { cache: 'no-cache' });
+                        if (!r.ok) {
+                          setMessage((m) => `${m}\nModel manifest fetch failed: ${r.status} ${r.statusText} (${modelUrl})`);
+                        } else {
+                          setMessage((m) => `${m}\nModel manifest OK: ${modelUrl}`);
+                        }
+
+                        if (bucketName && studentId) {
+                          const id = Array.isArray(studentId) ? studentId[0] : studentId;
+                          const getPath = STORAGE_PATHS[bucketName] || STORAGE_PATHS['student-uploads'];
+                          const listPath = getPath(id);
+                          setMessage((m) => `${m}\nListing ${bucketName}:${listPath} ...`);
+                          const { data: files, error: listErr } = await api.storage.from(bucketName).list(listPath);
+                          if (listErr) {
+                            setMessage((m) => `${m}\nStorage list error: ${listErr.message || listErr}`);
+                          } else {
+                            setMessage((m) => `${m}\nFound ${files.length} files`);
+                            if (files.length) {
+                              const f = files[0];
+                              const p = `${listPath}/${f.name}`;
+                              setMessage((m) => `${m}\nRequesting signed url for ${p}`);
+                              const { data: urlData, error: urlErr } = await api.storage.from(bucketName).createSignedUrl(p, 60);
+                              if (urlErr) setMessage((m) => `${m}\nSigned URL error: ${urlErr.message || urlErr}`);
+                              else setMessage((m) => `${m}\nSigned URL OK: ${urlData?.signedUrl || JSON.stringify(urlData)}`);
+                            }
+                          }
+                        }
+                      } catch (err) {
+                        console.error('Diagnostics failed', err);
+                        setMessage((m) => `${m}\nDiagnostics failed: ${err?.message || err}`);
+                      }
+                    }}
+                    style={{ background: '#10b981', color: 'white' }}
+                  >
+                    Run diagnostics
                   </button>
                   <button
                     className="submit-btn"

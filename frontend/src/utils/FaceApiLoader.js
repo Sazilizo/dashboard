@@ -1,4 +1,4 @@
-import * as faceapi from "face-api.js";
+import { getFaceApi } from './faceApiShim';
 
 let modelsLoaded = false;
 
@@ -29,6 +29,9 @@ export async function preloadFaceApiModels() {
         console.warn("FaceAPI model caching failed:", err);
       }
     }
+
+    // dynamic import of face-api through the shim
+    const faceapi = await getFaceApi();
 
     // Load networks (face-api will use the cached responses if available)
     await Promise.all([

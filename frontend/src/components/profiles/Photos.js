@@ -28,17 +28,12 @@ function Photos({ id, bucketName, folderName, photoCount = 5 }) {
         setFiles(sortedFiles);
 
         // Batch signed URLs for efficiency
-    const paths = sortedFiles.map((f) => `${folderName}/${id}/profile-picture/${f.name}`);
-        const { data: urlsData, error: urlError } = await api.storage
-          .from(bucketName)
-          .createSignedUrls(paths, 60);
-
-        if (urlError) throw urlError;
-
-        // Map file names to signed URLs
+        const paths = sortedFiles.map((f) => `${folderName}/${id}/profile-picture/${f.name}`);
+        // create signed URLs per-file (supabase-js v2)
+        const signedResults = await Promise.all(paths.map((p) => api.storage.from(bucketName).createSignedUrl(p, 60)));
         const urls = {};
-        urlsData.forEach((u, idx) => {
-          urls[sortedFiles[idx].name] = u.signedUrl;
+        signedResults.forEach((r, idx) => {
+          if (!r.error) urls[sortedFiles[idx].name] = r.data?.signedUrl || null;
         });
         setSignedUrls(urls);
       } catch (err) {
