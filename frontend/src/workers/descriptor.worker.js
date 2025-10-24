@@ -37,40 +37,33 @@ async function ensureFaceApi() {
       } catch (e) {}
     }
 
-    // Try dynamic import first (modern bundlers). If that fails (syntax errors,
-    // module not found, or server returning HTML), fall back to loading the UMD
-    // bundle via importScripts (CDN). The fallback keeps the worker usable across
-    // environments where dynamic import can't resolve modules.
+    // Skip dynamic import and go straight to UMD bundle
+    console.log('[descriptor.worker] loading face-api.js from CDN');
+    
+    // Try jsdelivr first (primary CDN)
     try {
-      const mod = await import('face-api.js');
-      // Ensure environment checks work by setting up additional browser checks
-      globalThis.isBrowser = true;
-      globalThis.isNodejs = false;
-      faceapi = mod;
-      return faceapi;
+      importScripts('https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js');
     } catch (err) {
-      console.warn('[descriptor.worker] dynamic import(face-api.js) failed, attempting importScripts UMD fallback', err);
-      // Attempt to load UMD bundle from unpkg as a fallback
-      try {
-        // unpkg UMD URL pinned to the installed version used in package.json
-        importScripts('https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js');
-        // UMD exposes `faceapi` on global scope
-        if (globalThis.faceapi) {
-          faceapi = globalThis.faceapi;
-          return faceapi;
-        }
-        throw new Error('UMD face-api did not expose global faceapi');
-      } catch (err2) {
-        console.error('[descriptor.worker] importScripts fallback failed', err2);
-        throw err2;
-      }
+      console.warn('[descriptor.worker] jsdelivr failed, trying unpkg fallback');
+      // Fallback to unpkg if jsdelivr fails
+      importScripts('https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js');
     }
+
+    // Ensure environment is properly set up
+    globalThis.isBrowser = true;
+    globalThis.isNodejs = false;
+
+    if (!globalThis.faceapi) {
+      throw new Error('UMD bundle did not expose faceapi global');
+    }
+
+    faceapi = globalThis.faceapi;
+    return faceapi;
   } catch (err) {
     console.error('[descriptor.worker] failed to import face-api.js', err);
     throw err;
   }
 }
-
 async function loadModels(modelsUrl = '/models') {
   try {
     await ensureFaceApi();
