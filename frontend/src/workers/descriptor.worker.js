@@ -190,8 +190,20 @@ self.onmessage = async (e) => {
           continue;
         }
         const blob = await resp.blob();
+        // Create options to handle EXIF orientation in mobile photos
+        const createImageOptions = {
+          imageOrientation: 'flipY',  // needed for proper orientation on mobile
+          premultiplyAlpha: 'none',  // preserve image quality
+        };
+        
         // createImageBitmap available in module workers in modern browsers
-        const bitmap = await createImageBitmap(blob);
+        const bitmap = await createImageBitmap(blob, createImageOptions).catch(async err => {
+          console.warn('[descriptor.worker] createImageBitmap with options failed, retrying without:', err);
+          return createImageBitmap(blob); // fallback without options
+        });
+
+        // Log image dimensions for debugging
+        console.log(`[descriptor.worker] loaded image: ${bitmap.width}x${bitmap.height}`);
 
         // face-api expects HTMLImageElement | HTMLVideoElement | HTMLCanvasElement | tf.Tensor3D
         // Convert ImageBitmap -> OffscreenCanvas so face-api can process it in the worker
@@ -200,8 +212,14 @@ self.onmessage = async (e) => {
           try {
             const canvas = new OffscreenCanvas(bitmap.width || 1, bitmap.height || 1);
             const ctx = canvas.getContext('2d');
+            // Try to preserve image quality
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            
+            // Draw maintaining orientation
             ctx.drawImage(bitmap, 0, 0);
             inputForFaceApi = canvas;
+            console.log('[descriptor.worker] successfully created OffscreenCanvas');
           } catch (e) {
             console.warn('[descriptor.worker] failed to draw bitmap to OffscreenCanvas', e);
             // fall back to bitmap (may fail in toNetInput)
@@ -209,14 +227,71 @@ self.onmessage = async (e) => {
           }
         }
 
-        const det = await faceapi
-          .detectSingleFace(inputForFaceApi, new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold }))
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-        if (det && det.descriptor) {
-          // convert Float32Array to plain array for structured cloning
-          descriptors.push(Array.from(det.descriptor));
+        // Add more detailed diagnostic logging
+        console.log('[descriptor.worker] attempting face detection...');
+        
+        const detection = await faceapi
+          .detectSingleFace(inputForFaceApi, new faceapi.TinyFaceDetectorOptions({ 
+            inputSize, 
+            scoreThreshold 
+          }));
+          
+        if (!detection) {
+          console.warn('[descriptor.worker] no face detected in image');
+          self.postMessage({ 
+            id, 
+            diagnostic: { 
+              status: 'no-face-detected',
+              imageSize: { width: bitmap.width, height: bitmap.height }
+            }
+          });
+          continue;
         }
+        
+        console.log(`[descriptor.worker] face detected! score: ${detection.score}`);
+        
+        // Extract landmarks and descriptor
+        const withLandmarks = await detection.withFaceLandmarks();
+        if (!withLandmarks) {
+          console.warn('[descriptor.worker] failed to extract face landmarks');
+          self.postMessage({ 
+            id, 
+            diagnostic: { 
+              status: 'landmark-extraction-failed',
+              score: detection.score,
+              imageSize: { width: bitmap.width, height: bitmap.height }
+            }
+          });
+          continue;
+        }
+        
+        const fullDet = await withLandmarks.withFaceDescriptor();
+        if (!fullDet || !fullDet.descriptor) {
+          console.warn('[descriptor.worker] failed to generate face descriptor');
+          self.postMessage({ 
+            id, 
+            diagnostic: { 
+              status: 'descriptor-generation-failed',
+              score: detection.score,
+              imageSize: { width: bitmap.width, height: bitmap.height }
+            }
+          });
+          continue;
+        }
+        
+        // Successfully generated descriptor
+        console.log('[descriptor.worker] successfully generated face descriptor');
+        descriptors.push(Array.from(fullDet.descriptor));
+        
+        // Send back success diagnostic
+        self.postMessage({ 
+          id, 
+          diagnostic: { 
+            status: 'success',
+            score: detection.score,
+            imageSize: { width: bitmap.width, height: bitmap.height }
+          }
+        });
       } catch (err) {
         console.warn('[descriptor.worker] skipped url', url, err);
       }
