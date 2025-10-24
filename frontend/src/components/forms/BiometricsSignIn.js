@@ -45,6 +45,9 @@ const BiometricsSignIn = ({
   const [pendingSignIns, setPendingSignIns] = useState({});
   const [captureDone, setCaptureDone] = useState(false);
   const [referencesReady, setReferencesReady] = useState(false);
+  const [loadingReferences, setLoadingReferences] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const maxRetries = 3; // Maximum number of automatic retries
   const [studentNames, setStudentNames] = useState({});
   const [isProcessing, setIsProcessing] = useState(false);
   const [facingMode, setFacingMode] = useState("user");
@@ -312,174 +315,215 @@ const BiometricsSignIn = ({
     setFacingMode((prev) => (prev === "user" ? "environment" : "user"));
   };
 
-  // ✅ Load reference face descriptors
-  useEffect(() => {
-    if (!studentId || !bucketName) return;
-    const ids = Array.isArray(studentId) ? studentId : [studentId];
-    // Load descriptors only for ids not already cached
-    (async () => {
+  // Load face references with retry logic
+  // Load face references with retry mechanism
+const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
+  if (!studentId || !bucketName) return false;
+  const ids = Array.isArray(studentId) ? studentId : [studentId];
+  
+  setLoadingReferences(true);
+  setMessage(attempt > 0 ? `Retrying face references (attempt ${attempt + 1}/${maxRetries})...` : "Loading face references...");
+  
+  try {
+    // Determine the correct storage path generator based on the bucket name
+    const getPath = STORAGE_PATHS[bucketName] || STORAGE_PATHS['student-uploads'];
+    
+    // Clear existing state for retry
+    setFaceMatcher(null);
+    setReferencesReady(false);
+
+    // first check persisted DB cache
+    const idsToLoad = [];
+    const loadedDescriptors = [];
+    for (const i of ids) {
+      const persisted = await descriptorDB.getDescriptor(i);
+      if (persisted && persisted.length) {
+        try {
+          const faceapi = faceapiRef.current;
+          const labeled = new faceapi.LabeledFaceDescriptors(
+            i.toString(),
+            persisted.map((arr) => new Float32Array(arr))
+          );
+          faceDescriptorCache[i] = labeled;
+          loadedDescriptors.push(labeled);
+        } catch (err) {
+          console.warn("Failed to hydrate persisted descriptors for", i, err);
+          idsToLoad.push(i);
+        }
+      } else {
+        idsToLoad.push(i);
+      }
+    }
+
+    for (const id of idsToLoad) {
       try {
-  // Determine the correct storage path generator based on the bucket name
-  const getPath = STORAGE_PATHS[bucketName] || STORAGE_PATHS['student-uploads'];
-        setMessage("Loading face references...");
-            // first check persisted DB cache
-            const idsToLoad = [];
-            const loadedDescriptors = [];
-            for (const i of ids) {
-              const persisted = await descriptorDB.getDescriptor(i);
-              if (persisted && persisted.length) {
-                // persisted is expected to be array of arrays (Float32 arrays as number arrays)
+        const listPath = getPath(id);
+        const { data: files, error: listErr } = await api.storage
+          .from(bucketName)
+          .list(listPath);
+        
+        if (listErr) {
+          console.warn(`Failed to list files for ID ${id}:`, listErr);
+          continue;
+        }
+        
+        if (!files?.length) {
+          setMessage(m => `${m}\nNo profile images found for ID ${id}`);
+          continue;
+        }
+
+        const imageFiles = files.filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
+        if (!imageFiles.length) {
+          setMessage(m => `${m}\nNo valid image files found for ID ${id}`);
+          continue;
+        }
+
+        // limit descriptors per id to reduce memory/time
+        const limited = imageFiles.slice(0, 3);
+        const paths = limited.map((f) => `${listPath}/${f.name}`);
+
+        // batch create signed URLs
+        const signedResults = await Promise.all(
+          paths.map((p) => api.storage.from(bucketName).createSignedUrl(p, 300))
+        );
+        
+        const urlsData = [];
+        let urlErr = null;
+        for (const r of signedResults) {
+          if (r.error) {
+            urlErr = r.error;
+            urlsData.push(null);
+          } else {
+            urlsData.push(r.data?.signedUrl || null);
+          }
+        }
+        
+        if (urlErr || !urlsData.filter(Boolean).length) {
+          setMessage(m => `${m}\nFailed to get signed URLs for ID ${id}`);
+          continue;
+        }
+
+        const descriptors = [];
+        // Try worker first, fall back to main thread
+        const worker = descriptorWorkerRef.current;
+        if (worker && workerAvailable) {
+          const signedPaths = urlsData.filter(Boolean);
+          const workerResp = await new Promise((resolve) => {
+            const handler = (ev) => {
+              const m = ev.data || {};
+              if (m && m.id && String(m.id) === String(id)) {
                 try {
-                  const faceapi = faceapiRef.current;
-                  const labeled = new faceapi.LabeledFaceDescriptors(
-                    i.toString(),
-                    persisted.map((arr) => new Float32Array(arr))
-                  );
-                  faceDescriptorCache[i] = labeled;
-                  loadedDescriptors.push(labeled);
-                } catch (err) {
-                  console.warn("Failed to hydrate persisted descriptors for", i, err);
-                  idsToLoad.push(i);
-                }
-              } else {
-                idsToLoad.push(i);
+                  worker.removeEventListener("message", handler);
+                } catch (e) {}
+                resolve(m);
               }
-            }
-
-        for (const id of idsToLoad) {
-          try {
-            // list profile-picture images inside the id folder (small set expected)
-            const listPath = getPath(id);
-            const { data: files, error: listErr } = await api.storage
-              .from(bucketName)
-              .list(listPath);
-            if (listErr || !files?.length) continue;
-
-            const imageFiles = files.filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
-            if (!imageFiles.length) continue;
-
-            // limit descriptors per id to reduce memory/time
-            const limited = imageFiles.slice(0, 3);
-            const paths = limited.map((f) => `${listPath}/${f.name}`);
-
-            // batch create signed URLs
-            // create signed URLs per path (supabase v2 uses createSignedUrl)
-              const signedResults = await Promise.all(paths.map((p) => api.storage.from(bucketName).createSignedUrl(p, 300)));
-            const urlsData = [];
-            let urlErr = null;
-            for (const r of signedResults) {
-              if (r.error) {
-                urlErr = r.error;
-                urlsData.push(null);
-              } else {
-                // Validate and fix signed URL if needed
-                let signedUrl = r.data?.signedUrl || null;
-                if (signedUrl?.startsWith('htpps://')) {
-                  signedUrl = 'https://' + signedUrl.slice(7);
-                  console.warn('Fixed malformed signed URL protocol');
-                }
-                urlsData.push(signedUrl);
-              }
-            }
-            if (urlErr || !urlsData.filter(Boolean).length) continue;
-
-            const descriptors = [];
-            // If worker available, ask it to compute descriptors (it will fetch & decode images and run face-api)
-            const worker = descriptorWorkerRef.current;
-            if (worker) {
-              const signedPaths = urlsData.map((u) => u);
-              const workerResp = await new Promise((resolve) => {
-                const handler = (ev) => {
-                  const m = ev.data || {};
-                  if (m && m.id && String(m.id) === String(id)) {
-                    try {
-                      worker.removeEventListener("message", handler);
-                    } catch (e) {}
-                    resolve(m);
-                  }
-                };
-                worker.addEventListener("message", handler);
-                try {
-                  worker.postMessage({ id, signedUrls: signedPaths, modelsUrl: MODELS_URL, inputSize: 128, scoreThreshold: 0.45, maxDescriptors: limited.length });
-                } catch (err) {
-                  // worker may have been terminated or broken
-                  console.warn("Descriptor worker postMessage failed", err);
-                  setWorkerError(err?.message || String(err));
-                  setWorkerAvailable(false);
-                  resolve({ id, descriptors: [], error: err?.message || String(err) });
-                  return;
-                }
-                // fallback timeout
-                setTimeout(() => {
-                  try {
-                    worker.removeEventListener("message", handler);
-                  } catch (e) {}
-                  resolve({ id, descriptors: [] });
-                }, 8000);
+            };
+            worker.addEventListener("message", handler);
+            try {
+              worker.postMessage({
+                id,
+                signedUrls: signedPaths,
+                modelsUrl: MODELS_URL,
+                inputSize: 128,
+                scoreThreshold: 0.45,
+                maxDescriptors: limited.length
               });
-
-              if (workerResp?.error) {
-                setWorkerError(workerResp.error);
-                setWorkerAvailable(false);
-              }
-
-              if (workerResp?.descriptors?.length) {
-                for (const arr of workerResp.descriptors) {
-                  descriptors.push(new Float32Array(arr));
-                }
-              }
-            } else {
-              // no worker: use faceapi.fetchImage on main thread and detect sequentially
-              for (const u of urlsData) {
-                const signedUrl = u.signedUrl || u.signed_url || u;
-                try {
-                  const faceapi = faceapiRef.current;
-                  const img = await faceapi.fetchImage(signedUrl);
-                  const det = await faceapi
-                    .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 128, scoreThreshold: 0.45 }))
-                    .withFaceLandmarks()
-                    .withFaceDescriptor();
-                  if (det && det.descriptor) descriptors.push(det.descriptor);
-                } catch (err) {
-                  console.warn(`Skipping signed url for ${id}`, err);
-                }
-              }
+            } catch (err) {
+              console.warn("Worker postMessage failed", err);
+              resolve({ id, descriptors: [], error: err?.message || String(err) });
             }
+          });
 
-            if (descriptors.length) {
-              const faceapi = faceapiRef.current;
-              const labeled = new faceapi.LabeledFaceDescriptors(id.toString(), descriptors);
-              faceDescriptorCache[id] = labeled;
-              loadedDescriptors.push(labeled);
-                // persist to IndexedDB as simple number arrays to avoid structured clone issues
-                const persist = descriptors.map((d) => Array.from(d));
-                try {
-                  await descriptorDB.setDescriptor(id, persist);
-                } catch (err) {
-                  console.warn("Failed to persist descriptors", err);
-                }
-              }
-          } catch (err) {
-            console.warn(`Failed to load references for ${id}:`, err);
+          if (workerResp?.descriptors?.length) {
+            for (const arr of workerResp.descriptors) {
+              descriptors.push(new Float32Array(arr));
+            }
           }
         }
 
-        // include already-cached descriptors
-        const cached = ids.map((i) => faceDescriptorCache[i]).filter(Boolean);
-        const all = [...cached, ...loadedDescriptors];
-        if (all.length) {
+        // Fall back to main thread if worker failed or is unavailable
+        if (!descriptors.length) {
+          for (const u of urlsData) {
+            if (!u) continue;
+            try {
+              const faceapi = faceapiRef.current;
+              const img = await faceapi.fetchImage(u);
+              const det = await faceapi
+                .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({
+                  inputSize: 128,
+                  scoreThreshold: 0.45
+                }))
+                .withFaceLandmarks()
+                .withFaceDescriptor();
+              
+              if (det?.descriptor) {
+                descriptors.push(det.descriptor);
+                setMessage(m => `${m}\n✓ Generated descriptor for ID ${id}`);
+              }
+            } catch (err) {
+              console.warn(`Failed to process image for ${id}:`, err);
+              setMessage(m => `${m}\n⚠️ Failed to process an image for ID ${id}`);
+            }
+          }
+        }
+
+        if (descriptors.length) {
           const faceapi = faceapiRef.current;
-          setFaceMatcher(new faceapi.FaceMatcher(all, threshold));
-          setReferencesReady(true);
-        } else {
-          setMessage("No valid face references found.");
+          const labeled = new faceapi.LabeledFaceDescriptors(id.toString(), descriptors);
+          faceDescriptorCache[id] = labeled;
+          loadedDescriptors.push(labeled);
+          
+          // Persist to IndexedDB
+          const persist = descriptors.map((d) => Array.from(d));
+          try {
+            await descriptorDB.setDescriptor(id, persist);
+          } catch (err) {
+            console.warn("Failed to persist descriptors", err);
+          }
         }
       } catch (err) {
-        console.error("Error loading face references", err);
-        setMessage("Failed to load face reference images.");
+        console.warn(`Failed to load references for ${id}:`, err);
+        setMessage(m => `${m}\n❌ Failed to load references for ID ${id}`);
       }
-    })();
-  }, [studentId, bucketName, folderName, threshold]);
+    }
+
+    // Set up face matcher with all available descriptors
+    const cached = ids.map((i) => faceDescriptorCache[i]).filter(Boolean);
+    const all = [...cached, ...loadedDescriptors];
+    
+    if (all.length) {
+      const faceapi = faceapiRef.current;
+      setFaceMatcher(new faceapi.FaceMatcher(all, threshold));
+      setReferencesReady(true);
+      setLoadingReferences(false);
+      setMessage(m => `${m}\n✅ Face references loaded successfully!`);
+      return true;
+    } else {
+      throw new Error("No valid face descriptors generated");
+    }
+  } catch (err) {
+    console.error("Error loading face references", err);
+    setMessage(m => `${m}\n❌ Failed to load face references: ${err.message}`);
+    
+    // Retry logic
+    if (attempt < maxRetries && !isManualRetry) {
+      const timeout = retryTimeouts[attempt] || 2000;
+      setMessage(m => `${m}\n⏳ Retrying in ${timeout/1000} seconds...`);
+      
+      setTimeout(() => {
+        loadFaceReferences(attempt + 1);
+      }, timeout);
+    }
+    
+    setLoadingReferences(false);
+    return false;
+  }
+};
+
+// Effect to trigger initial load
+useEffect(() => {
+  loadFaceReferences(0);
+}, [studentId, bucketName, threshold]);
 
   // ✅ Face capture handler
   const handleCapture = async () => {
@@ -837,6 +881,18 @@ const BiometricsSignIn = ({
           </div>
 
           {message && <pre className="message">{message}</pre>}
+          {!referencesReady && !loadingReferences && (
+            <button
+              className="submit-btn"
+              onClick={() => loadFaceReferences(0, true)}
+              style={{ 
+                background: '#3b82f6',
+                marginBottom: '12px'
+              }}
+            >
+              🔄 Retry Loading Face References
+            </button>
+          )}
         </>
       )}
     </div>

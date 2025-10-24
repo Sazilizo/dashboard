@@ -230,13 +230,16 @@ self.onmessage = async (e) => {
         // Add more detailed diagnostic logging
         console.log('[descriptor.worker] attempting face detection...');
         
-        const detection = await faceapi
+        // Use all-in-one detection chain to ensure proper method availability
+        const fullDetection = await faceapi
           .detectSingleFace(inputForFaceApi, new faceapi.TinyFaceDetectorOptions({ 
             inputSize, 
             scoreThreshold 
-          }));
+          }))
+          .withFaceLandmarks()
+          .withFaceDescriptor();
           
-        if (!detection) {
+        if (!fullDetection) {
           console.warn('[descriptor.worker] no face detected in image');
           self.postMessage({ 
             id, 
@@ -248,40 +251,36 @@ self.onmessage = async (e) => {
           continue;
         }
         
-        console.log(`[descriptor.worker] face detected! score: ${detection.score}`);
+        console.log(`[descriptor.worker] face detected! score: ${fullDetection.detection.score}`);
         
-        // Extract landmarks and descriptor
-        const withLandmarks = await detection.withFaceLandmarks();
-        if (!withLandmarks) {
-          console.warn('[descriptor.worker] failed to extract face landmarks');
-          self.postMessage({ 
-            id, 
-            diagnostic: { 
-              status: 'landmark-extraction-failed',
-              score: detection.score,
-              imageSize: { width: bitmap.width, height: bitmap.height }
-            }
-          });
-          continue;
-        }
-        
-        const fullDet = await withLandmarks.withFaceDescriptor();
-        if (!fullDet || !fullDet.descriptor) {
-          console.warn('[descriptor.worker] failed to generate face descriptor');
+        // Since we used the all-in-one chain, we already have landmarks and descriptor
+        if (!fullDetection.descriptor) {
+          console.warn('[descriptor.worker] missing descriptor in full detection result');
           self.postMessage({ 
             id, 
             diagnostic: { 
               status: 'descriptor-generation-failed',
-              score: detection.score,
+              score: fullDetection.detection.score,
               imageSize: { width: bitmap.width, height: bitmap.height }
             }
           });
           continue;
         }
-        
         // Successfully generated descriptor
         console.log('[descriptor.worker] successfully generated face descriptor');
-        descriptors.push(Array.from(fullDet.descriptor));
+        descriptors.push(Array.from(fullDetection.descriptor));
+        
+        // Send back success diagnostic with detection details
+        self.postMessage({ 
+          id, 
+          diagnostic: { 
+            status: 'success',
+            score: fullDetection.detection.score,
+            landmarks: fullDetection.landmarks.positions.length,
+            imageSize: { width: bitmap.width, height: bitmap.height },
+            descriptor: fullDetection.descriptor.length
+          }
+        });
         
         // Send back success diagnostic
         self.postMessage({ 
