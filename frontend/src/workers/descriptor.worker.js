@@ -193,11 +193,26 @@ self.onmessage = async (e) => {
         // createImageBitmap available in module workers in modern browsers
         const bitmap = await createImageBitmap(blob);
 
+        // face-api expects HTMLImageElement | HTMLVideoElement | HTMLCanvasElement | tf.Tensor3D
+        // Convert ImageBitmap -> OffscreenCanvas so face-api can process it in the worker
+        let inputForFaceApi = bitmap;
+        if (typeof OffscreenCanvas !== 'undefined') {
+          try {
+            const canvas = new OffscreenCanvas(bitmap.width || 1, bitmap.height || 1);
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(bitmap, 0, 0);
+            inputForFaceApi = canvas;
+          } catch (e) {
+            console.warn('[descriptor.worker] failed to draw bitmap to OffscreenCanvas', e);
+            // fall back to bitmap (may fail in toNetInput)
+            inputForFaceApi = bitmap;
+          }
+        }
+
         const det = await faceapi
-          .detectSingleFace(bitmap, new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold }))
+          .detectSingleFace(inputForFaceApi, new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold }))
           .withFaceLandmarks()
           .withFaceDescriptor();
-
         if (det && det.descriptor) {
           // convert Float32Array to plain array for structured cloning
           descriptors.push(Array.from(det.descriptor));
