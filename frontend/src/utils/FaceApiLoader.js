@@ -12,7 +12,7 @@ export async function preloadFaceApiModels() {
       "face_recognition_model-weights_manifest.json"
     ];
 
-    const BASE_URL = "https://pmvecwjomvyxpgzfweov.supabase.co/storage/v1/object/public/faceapi-models/";
+    const BASE_URL = process.env.REACT_APP_MODELS_URL || "/models/";
 
     // Prefetch model files into the Cache Storage so subsequent loads can be
     // served from the browser cache when offline or on slow connections.

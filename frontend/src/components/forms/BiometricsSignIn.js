@@ -13,6 +13,13 @@ try {
 }
 // models URL (can be configured via env var REACT_APP_MODELS_URL)
 const MODELS_URL = process.env.REACT_APP_MODELS_URL || "/models";
+
+// Bucket/folder mapping for different entity types
+const STORAGE_PATHS = {
+  'student-uploads': (id) => `students/${id}/profile-picture`,
+  'worker-uploads': (id) => `workers/${id}/profile-picture`,
+  'profile-avatars': (id) => `${id}`  // For users, the bucket itself is profile-avatars
+};
 import {
   preloadFaceApiModels,
   areFaceApiModelsLoaded,
@@ -242,11 +249,14 @@ const BiometricsSignIn = ({
 
   // ✅ Load reference face descriptors
   useEffect(() => {
-    if (!studentId || !bucketName || !folderName) return;
+    if (!studentId || !bucketName) return;
     const ids = Array.isArray(studentId) ? studentId : [studentId];
     // Load descriptors only for ids not already cached
     (async () => {
       try {
+        // Determine the correct storage path based on the bucket name
+        const getPath = STORAGE_PATHS[bucketName.split('-')[0]] || STORAGE_PATHS.students;
+        setMessage("Loading face references...");
             // first check persisted DB cache
             const idsToLoad = [];
             const loadedDescriptors = [];

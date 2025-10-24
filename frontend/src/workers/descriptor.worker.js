@@ -1,6 +1,10 @@
 let faceapi = null;
 let modelsLoaded = false;
 
+// Set up the environment for face-api.js
+globalThis.process = { env: {} };
+globalThis.navigator = { userAgent: "worker" };
+
 // Lazy-import face-api inside the worker to avoid top-level evaluation that
 // may assume a DOM/window exists. Also provide a minimal `process.env` shim
 // because some libraries check it during initialization.
@@ -34,10 +38,14 @@ async function ensureFaceApi() {
 async function loadModels(modelsUrl = '/models') {
   try {
     await ensureFaceApi();
+    
+    // Clean up the models URL to ensure proper path construction
+    const baseUrl = modelsUrl.replace(/\/$/, '');
+    
     // Validate modelsUrl quickly by attempting to fetch the tiny detector manifest
     // This gives a fast, clear failure mode if models aren't reachable.
-    const tinyManifest = `${modelsUrl.replace(/\/$/, '')}/tiny_face_detector_model-weights_manifest.json`;
-    const mResp = await fetch(tinyManifest, { cache: 'no-cache' });
+    const tinyManifest = `${baseUrl}/tiny_face_detector_model-weights_manifest.json`;
+    const mResp = await fetch(tinyManifest, { cache: 'force-cache' });
     if (!mResp.ok) {
       throw new Error(`Failed to fetch tiny_face_detector manifest (${mResp.status}) from ${tinyManifest}`);
     }
@@ -57,6 +65,19 @@ async function loadModels(modelsUrl = '/models') {
 self.onmessage = async (e) => {
   const msg = e.data || {};
   const { id, signedUrls, modelsUrl, inputSize = 128, scoreThreshold = 0.45, maxDescriptors = 3 } = msg;
+  
+  // Handle initialization message
+  if (id === 'init') {
+    try {
+      await loadModels(modelsUrl);
+      self.postMessage({ id: 'init', success: true });
+    } catch (err) {
+      self.postMessage({ id: 'init', success: false, error: err?.message || String(err) });
+    }
+    return;
+  }
+  
+  // Handle descriptor generation
   if (!signedUrls || !signedUrls.length) {
     self.postMessage({ id, descriptors: [] });
     return;
