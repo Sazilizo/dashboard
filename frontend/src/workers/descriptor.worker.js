@@ -2,8 +2,18 @@ let faceapi = null;
 let modelsLoaded = false;
 
 // Set up the environment for face-api.js
+// More complete environment shims to handle isNodejs() and isBrowser() checks
 globalThis.process = { env: {} };
 globalThis.navigator = { userAgent: "worker" };
+globalThis.window = globalThis;  // Make window available
+globalThis.document = {          // Basic document shim
+    createElement: (tag) => {
+        if (tag === 'canvas') {
+            return new OffscreenCanvas(1, 1);
+        }
+        throw new Error('Only canvas creation supported');
+    }
+};
 
 // Lazy-import face-api inside the worker to avoid top-level evaluation that
 // may assume a DOM/window exists. Also provide a minimal `process.env` shim
@@ -33,6 +43,9 @@ async function ensureFaceApi() {
     // environments where dynamic import can't resolve modules.
     try {
       const mod = await import('face-api.js');
+      // Ensure environment checks work by setting up additional browser checks
+      globalThis.isBrowser = true;
+      globalThis.isNodejs = false;
       faceapi = mod;
       return faceapi;
     } catch (err) {
