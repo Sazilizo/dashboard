@@ -31,7 +31,7 @@ const LearnerProfile = () => {
           .select(`
             *,
             school:school_id(*),
-            academic_sessions:academic_sessions(student_id, *),
+            academic_sessions:academic_session_participants(student_id, *),
             attendance_records:attendance_records(student_id, *),
             assessments:assessments(student_id, *),
             pe_sessions:pe_sessions(student_id, *),
@@ -169,8 +169,20 @@ const LearnerProfile = () => {
             <div className="info-count-card">
               {/* {icon && <div className="info-count-icon">{icon}</div>} */}
               <div className="info-count-details">
-                <p className="info-count-label">Sessions Attended</p>
+                <p className="info-count-label">Academic Sessions</p>
                 <p className="info-count-number">{student.academic_sessions?.length || 0}</p>
+              </div>
+            </div>
+            <div className="info-count-card">
+              <div className="info-count-details">
+                <p className="info-count-label">Meals Received</p>
+                <p className="info-count-number">{student.meal_distribution?.length || 0}</p>
+              </div>
+            </div>
+            <div className="info-count-card">
+              <div className="info-count-details">
+                <p className="info-count-label">Days Attended</p>
+                <p className="info-count-number">{student.attendance_records?.length || 0}</p>
               </div>
             </div>
             {/* <InfoCount label="Sessions Attended" count={student.academic_sessions?.length || 0} />

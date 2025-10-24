@@ -9,9 +9,11 @@ function Photos({ id, bucketName, folderName, photoCount = 5 }) {
   useEffect(() => {
     async function fetchFilesAndUrls() {
       try {
+        // List images from profile-picture subfolder inside the record id folder
+        const listPath = `${folderName}/${id}/profile-picture`;
         const { data, error } = await api.storage
           .from(bucketName)
-          .list(`${folderName}/${id}`);
+          .list(listPath);
 
         if (error) {
           setError(error.message);
@@ -26,7 +28,7 @@ function Photos({ id, bucketName, folderName, photoCount = 5 }) {
         setFiles(sortedFiles);
 
         // Batch signed URLs for efficiency
-        const paths = sortedFiles.map((f) => `${folderName}/${id}/${f.name}`);
+    const paths = sortedFiles.map((f) => `${folderName}/${id}/profile-picture/${f.name}`);
         const { data: urlsData, error: urlError } = await api.storage
           .from(bucketName)
           .createSignedUrls(paths, 60);

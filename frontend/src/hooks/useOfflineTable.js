@@ -108,9 +108,16 @@ export default function useOfflineTable(tableName, filter = {}, select = "*", pa
   // Mutations
   async function addRow(payload) {
     if (isOnline) {
-      await api.from(tableName).insert(payload);
+      // When online, perform insert and return the created record so callers can access the new id
+      const { data, error } = await api.from(tableName).insert(payload).select();
+      if (error) {
+        setError(error);
+        return null;
+      }
+      // refresh table
       fetchTable();
-      return null;
+      // return first inserted record (most APIs return array)
+      return Array.isArray(data) && data.length ? data[0] : null;
     } else {
       // create a client temporary id to show immediately in the UI
       const tempId = `__tmp_${Date.now()}`;

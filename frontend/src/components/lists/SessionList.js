@@ -34,21 +34,21 @@ export default function SessionList({deleted}) {
       : [user?.profile?.school_id],
   };
 
-  const { rows: sessions, loading, error } = useOfflineTable(
-    "students",
-    normalizedFilters,
-    `
-            *,
-            academic_sessions:academic_sessions(*),
-            pe_sessions:pe_sessions(*),
-            assessments(*),
-            attendance:attendance_records(*),
-            school:schools(*)
-          `,
-    1000,
-    "id",
-    "asc"
-  );
+  // const { rows: sessions, loading, error } = useOfflineTable(
+  //   "students",
+  //   normalizedFilters,
+  //   `
+  //           *,
+  //           academic_sessions:academic_sessions(*),
+  //           pe_sessions:pe_sessions(*),
+  //           assessments(*),
+  //           attendance:attendance_records(*),
+  //           school:schools(*)
+  //         `,
+  //   10,
+  //   "id",
+  //   "asc"
+  // );
 
   return (
     <div className="app-list-container">
@@ -69,9 +69,11 @@ export default function SessionList({deleted}) {
         </div>
       </div>
       <Link to="/dashboard/sessions/create" className="app-btn app-btn-primary">Create Session</Link>
-      {loading && <div>Loading...</div>}
-      {error && <div style={{ color: "red" }}>{error}</div>}
-      {!loading && !error && (
+
+      <Link to="/dashboard/sessions/mark" className="app-btn app-btn-primary">Distribute Session</Link>
+      {/* {loading && <div>Loading...</div>} */}
+      {/* {error && <div style={{ color: "red" }}>{error}</div>} */}
+      {/* {!loading && !error && (
         <ul className="app-list">
           {sessions && sessions.map(s => {
             console.log()
@@ -90,7 +92,7 @@ export default function SessionList({deleted}) {
             );
           })}
         </ul>
-      )}
+      )} */}
       <Outlet/>
     </div>
   );

@@ -64,7 +64,7 @@ export default function UpdateWorkerProfile() {
 
       setTutorOptions(
         data
-          ?.filter((w) => w.role?.name === "tutor")
+          ?.filter((w) => w.role?.name && /tutor/i.test(w.role.name))
           ?.map((w) => ({
             value: w.id,
             label: `${w.name} ${w.last_name}`,
@@ -74,7 +74,7 @@ export default function UpdateWorkerProfile() {
 
       setCoachOptions(
         data
-          ?.filter((w) => w.role?.name === "coach")
+          ?.filter((w) => w.role?.name && /coach/i.test(w.role.name))
           ?.map((w) => ({
             value: w.id,
             label: `${w.name} ${w.last_name}`,

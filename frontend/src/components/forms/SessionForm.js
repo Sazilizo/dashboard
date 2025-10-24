@@ -30,12 +30,12 @@ export default function SessionForm() {
   const { filters, setFilters } = useFilters();
   const [sessionType, setSessionType] = useState("");
 
-  const { students } = useSupabaseStudents({
-    school_id: ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles.name)
-      ? schools.map(s => s.id)
-      : [user?.profile?.school_id],
-    filters,
-  });
+  // const { students } = useSupabaseStudents({
+  //   school_id: ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles.name)
+  //     ? schools.map(s => s.id)
+  //     : [user?.profile?.school_id],
+  //   filters,
+  // });
 
   // Role-based session type default
   useEffect(() => {
@@ -53,51 +53,51 @@ export default function SessionForm() {
   const { addRow } = useOfflineTable(sessionType || "academic_sessions");
   const { isOnline } = useOnlineStatus();
 
-  // Filter students based on sessionType
-  const [displayedStudents, setDisplayedStudents] = useState([]);
+  // // Filter students based on sessionType
+  // const [displayedStudents, setDisplayedStudents] = useState([]);
 
   // Keep a cached copy when online, and fall back to cached students when offline
-  useEffect(() => {
-    let mounted = true;
-    async function ensureStudents() {
-      try {
-        if (isOnline) {
-          if (Array.isArray(students) && students.length) {
-            if (mounted) setDisplayedStudents(students);
-            try {
-              await cacheTable("students", students);
-            } catch (err) {
-              console.warn("Failed to cache students", err);
-            }
-          }
-        } else {
-          const cached = await getTable("students");
-          if (mounted) setDisplayedStudents(cached || []);
-        }
-      } catch (err) {
-        console.warn("ensureStudents error", err);
-      }
-    }
-    ensureStudents();
-    return () => { mounted = false; };
-  }, [students, isOnline]);
+  // useEffect(() => {
+  //   let mounted = true;
+  //   async function ensureStudents() {
+  //     try {
+  //       if (isOnline) {
+  //         if (Array.isArray(students) && students.length) {
+  //           if (mounted) setDisplayedStudents(students);
+  //           try {
+  //             await cacheTable("students", students);
+  //           } catch (err) {
+  //             console.warn("Failed to cache students", err);
+  //           }
+  //         }
+  //       } else {
+  //         const cached = await getTable("students");
+  //         if (mounted) setDisplayedStudents(cached || []);
+  //       }
+  //     } catch (err) {
+  //       console.warn("ensureStudents error", err);
+  //     }
+  //   }
+  //   ensureStudents();
+  //   return () => { mounted = false; };
+  // }, [students, isOnline]);
 
-  const filteredStudents = displayedStudents.filter(s => {
-    if (sessionType === "pe_sessions") return s.physical_education; // only PE students
-    return true; // all students for academics or no session type
-  });
+  // const filteredStudents = displayedStudents.filter(s => {
+  //   if (sessionType === "pe_sessions") return s.physical_education; // only PE students
+  //   return true; // all students for academics or no session type
+  // });
 
   const presetFields = {
     school_id: Number(filters?.school_id) || Number(user?.profile?.school_id),
     logged_by: user && user?.profile?.id,
-    ...(id ? { student_id: [id] } : { student_id: selectedStudents }),
+    // ...(id ? { student_id: [id] } : { student_id: selectedStudents }),
   };
-  console.log(filteredStudents)
-  const student = students.find(s => s.id === Number(id));
+  // console.log(filteredStudents)
+  // const student = students.find(s => s.id === Number(id));
 
   return (
     <div className="p-6">
-      {!id && (
+      {/* {!id && (
         <div className="page-filters">
           <FiltersPanel
             user={user}
@@ -111,12 +111,12 @@ export default function SessionForm() {
             showDeletedOption={["admin", "hr", "superviser"].includes(role)}
           />
         </div>
-      )}
-      <h1 className="text-2xl font-bold mb-6">
+      )} */}
+      {/* <h1 className="text-2xl font-bold mb-6">
         {id
           ? `Log session for ${student?.full_name || "student"}`
           : "Create Students Sessions (Bulk)"}
-      </h1>
+      </h1> */}
     <div className="form-container">
       {(role === "superuser" || role === "admin") && (
         <div className="form-session-select">
@@ -139,31 +139,29 @@ export default function SessionForm() {
           schema_name={sessionType === "academic_sessions" ? "Academic_sessions" : "PE_sessions"}
           presetFields={presetFields}
           user={user}
-          filteredData={filteredStudents}
-          selectedData={selectedStudents}
-          valueChange={setSelectedStudents}
-          id={id && id}
+          // filteredData={filteredStudents}
+          // selectedData={selectedStudents}
+          // valueChange={setSelectedStudents}
+          // id={id && id}
           onSubmit={async (formData, singleId) => {
-            const studentsId = singleId ? [singleId] : formData.student_id;
-            if (!studentsId || studentsId.length === 0) {
-              throw new Error("Please select at least one student.");
-            }
+            // const studentsId = singleId ? [singleId] : formData.student_id;
+            // if (!studentsId || studentsId.length === 0) {
+            //   throw new Error("Please select at least one student.");
+            // }
  
             console.log("formData: ", formData);
             const tableName = sessionType;
-            for (const studentId of studentsId) {
-              const record = { ...formData, student_id: studentId, user_id: user && user.profile?.id};
-                if (record.photo && isOnline) {
-                  record.photo = await UploadFile(
-                    record.photo,
-                    "session-uploads",
-                    `${studentId}/${record.title || "session"}`
-                  );
-                }
+            const record = { ...formData, user_id: user && user.profile?.id};
+                // if (record.photo && isOnline) {
+                //   record.photo = await UploadFile(
+                //     record.photo,
+                //     "session-uploads",
+                //     `${studentId}/${record.title || "session"}`
+                //   );
+                // }
 
                 // queue or insert via offline helper
-                await addRow(record);
-            }
+            await addRow(record);
           }}
         />
       )}

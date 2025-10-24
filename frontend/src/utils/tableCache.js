@@ -248,6 +248,8 @@ export async function syncMutations() {
   notifyChannel({ type: "synced", timestamp: Date.now() });
 }
 
+
+
 /** Manual reset: clears the entire offline DB */
 export async function resetOfflineDB() {
   await deleteDB(DB_NAME);
