@@ -364,7 +364,7 @@ const BiometricsSignIn = ({
 
             // batch create signed URLs
             // create signed URLs per path (supabase v2 uses createSignedUrl)
-            const signedResults = await Promise.all(paths.map((p) => api.storage.from(bucketName).createSignedUrl(p, 300)));
+              const signedResults = await Promise.all(paths.map((p) => api.storage.from(bucketName).createSignedUrl(p, 300)));
             const urlsData = [];
             let urlErr = null;
             for (const r of signedResults) {
@@ -372,7 +372,13 @@ const BiometricsSignIn = ({
                 urlErr = r.error;
                 urlsData.push(null);
               } else {
-                urlsData.push(r.data?.signedUrl || null);
+                // Validate and fix signed URL if needed
+                let signedUrl = r.data?.signedUrl || null;
+                if (signedUrl?.startsWith('htpps://')) {
+                  signedUrl = 'https://' + signedUrl.slice(7);
+                  console.warn('Fixed malformed signed URL protocol');
+                }
+                urlsData.push(signedUrl);
               }
             }
             if (urlErr || !urlsData.filter(Boolean).length) continue;
@@ -697,8 +703,41 @@ const BiometricsSignIn = ({
                               const p = `${listPath}/${f.name}`;
                               setMessage((m) => `${m}\nRequesting signed url for ${p}`);
                               const { data: urlData, error: urlErr } = await api.storage.from(bucketName).createSignedUrl(p, 60);
-                              if (urlErr) setMessage((m) => `${m}\nSigned URL error: ${urlErr.message || urlErr}`);
-                              else setMessage((m) => `${m}\nSigned URL OK: ${urlData?.signedUrl || JSON.stringify(urlData)}`);
+                              if (urlErr) {
+                                setMessage((m) => `${m}\nSigned URL error: ${urlErr.message || urlErr}`);
+                              } else {
+                                const signedUrl = urlData?.signedUrl;
+                                setMessage((m) => `${m}\nSigned URL generated successfully`);
+                                
+                                // Test face detection on the image
+                                try {
+                                  const faceapi = faceapiRef.current;
+                                  if (!faceapi) {
+                                    setMessage((m) => `${m}\nFace API not available yet`);
+                                    return;
+                                  }
+                                  
+                                  setMessage((m) => `${m}\nTesting face detection...`);
+                                  const img = await faceapi.fetchImage(signedUrl);
+                                  setMessage((m) => `${m}\nImage loaded: ${img.width}x${img.height}`);
+                                  
+                                  const detection = await faceapi
+                                    .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 128, scoreThreshold: 0.45 }))
+                                    .withFaceLandmarks()
+                                    .withFaceDescriptor();
+                                    
+                                  if (!detection) {
+                                    setMessage((m) => `${m}\n❌ No face detected in the image. Please ensure the image shows a clear, well-lit face.`);
+                                  } else {
+                                    setMessage((m) => `${m}\n✅ Face detected! Detection score: ${detection.detection.score.toFixed(2)}`);
+                                    setMessage((m) => `${m}\n✅ Face landmarks extracted`);
+                                    setMessage((m) => `${m}\n✅ Face descriptor generated`);
+                                  }
+                                } catch (err) {
+                                  setMessage((m) => `${m}\n❌ Face detection failed: ${err.message || err}`);
+                                  console.error('Face detection error:', err);
+                                }
+                              }
                             }
                           }
                         }

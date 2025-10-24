@@ -13,22 +13,45 @@ async function ensureFaceApi() {
   try {
     // minimal polyfill for process.env if not present in the worker bundle
     if (typeof globalThis.process === "undefined") {
-      // keep it small: only env is needed for some libs
-      // eslint-disable-next-line no-undef
-      globalThis.process = { env: {} };
+      try {
+        globalThis.process = { env: {} };
+      } catch (e) {}
     } else if (!globalThis.process.env) {
       globalThis.process.env = {};
     }
 
     // ensure navigator exists for browser checks
     if (typeof globalThis.navigator === "undefined") {
-      globalThis.navigator = { userAgent: "worker" };
+      try {
+        globalThis.navigator = { userAgent: "worker" };
+      } catch (e) {}
     }
 
-    // dynamic import to avoid top-level side-effects
-    const mod = await import('face-api.js');
-    faceapi = mod;
-    return faceapi;
+    // Try dynamic import first (modern bundlers). If that fails (syntax errors,
+    // module not found, or server returning HTML), fall back to loading the UMD
+    // bundle via importScripts (CDN). The fallback keeps the worker usable across
+    // environments where dynamic import can't resolve modules.
+    try {
+      const mod = await import('face-api.js');
+      faceapi = mod;
+      return faceapi;
+    } catch (err) {
+      console.warn('[descriptor.worker] dynamic import(face-api.js) failed, attempting importScripts UMD fallback', err);
+      // Attempt to load UMD bundle from unpkg as a fallback
+      try {
+        // unpkg UMD URL pinned to the installed version used in package.json
+        importScripts('https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js');
+        // UMD exposes `faceapi` on global scope
+        if (globalThis.faceapi) {
+          faceapi = globalThis.faceapi;
+          return faceapi;
+        }
+        throw new Error('UMD face-api did not expose global faceapi');
+      } catch (err2) {
+        console.error('[descriptor.worker] importScripts fallback failed', err2);
+        throw err2;
+      }
+    }
   } catch (err) {
     console.error('[descriptor.worker] failed to import face-api.js', err);
     throw err;
@@ -38,16 +61,17 @@ async function ensureFaceApi() {
 async function loadModels(modelsUrl = '/models') {
   try {
     await ensureFaceApi();
-    
     // Clean up the models URL to ensure proper path construction
     const baseUrl = modelsUrl.replace(/\/$/, '');
-    
+
     // Validate modelsUrl quickly by attempting to fetch the tiny detector manifest
     // This gives a fast, clear failure mode if models aren't reachable.
     const tinyManifest = `${baseUrl}/tiny_face_detector_model-weights_manifest.json`;
     const mResp = await fetch(tinyManifest, { cache: 'force-cache' });
     if (!mResp.ok) {
-      throw new Error(`Failed to fetch tiny_face_detector manifest (${mResp.status}) from ${tinyManifest}`);
+      const text = await mResp.text().catch(() => '');
+      const snippet = text ? text.slice(0, 240) : '';
+      throw new Error(`Failed to fetch tiny_face_detector manifest (${mResp.status}) from ${tinyManifest} - ${snippet}`);
     }
 
     // load tiny detector + landmarks + recognition
@@ -94,7 +118,19 @@ self.onmessage = async (e) => {
       try {
         const resp = await fetch(url, { cache: 'no-cache' });
         if (!resp.ok) {
-          console.warn('[descriptor.worker] fetch failed', resp.status, url);
+          const text = await resp.text().catch(() => '');
+          const snippet = text ? text.slice(0, 240) : '';
+          console.warn('[descriptor.worker] fetch failed', resp.status, url, snippet);
+          // post back a short diagnostic to help identify HTML/403/404 responses
+          self.postMessage({ id, error: `Fetch failed ${resp.status} for ${url}`, snippet });
+          continue;
+        }
+        const contentType = resp.headers.get('content-type') || '';
+        if (contentType.includes('text/html')) {
+          const text = await resp.text().catch(() => '');
+          const snippet = text ? text.slice(0, 240) : '';
+          console.warn('[descriptor.worker] expected image but got HTML', url, snippet);
+          self.postMessage({ id, error: `Expected image but got HTML for ${url}`, snippet });
           continue;
         }
         const blob = await resp.blob();
