@@ -4,7 +4,7 @@ import useOnlineStatus from "../../hooks/useOnlineStatus";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 
-function FilesDownloader({ bucketName, folderName, id }) {
+function FilesDownloader({ bucketName, folderName, id, onClose }) {
   const { isOnline } = useOnlineStatus();
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -18,10 +18,15 @@ function FilesDownloader({ bucketName, folderName, id }) {
 
       let allFiles = [];
       for (const item of data) {
-        if (item.type === "folder") {
+        // Skip the .emptyFolderPlaceholder files
+        if (item.name === ".emptyFolderPlaceholder") continue;
+        
+        if (item.id) {
+          // It's a folder, recurse into it
           const nestedFiles = await fetchFilesRecursively(`${path}/${item.name}`);
           allFiles = [...allFiles, ...nestedFiles];
         } else {
+          // It's a file
           allFiles.push({
             name: item.name,
             fullPath: `${path}/${item.name}`
@@ -53,9 +58,15 @@ function FilesDownloader({ bucketName, folderName, id }) {
     try {
       for (const file of files) {
         // Exact file path for signed URL
-        const { signedUrl, error: urlError } = await api.storage.from(bucketName).createSignedUrl(file.fullPath, 60);
+        const { data, error: urlError } = await api.storage.from(bucketName).createSignedUrl(file.fullPath, 60);
         if (urlError) {
           console.warn("Failed to get signed URL for:", file.fullPath, urlError);
+          continue;
+        }
+
+        const signedUrl = data?.signedUrl;
+        if (!signedUrl) {
+          console.warn("No signed URL returned for:", file.fullPath);
           continue;
         }
 
@@ -81,8 +92,22 @@ function FilesDownloader({ bucketName, folderName, id }) {
     }
   }
 
-  if (error) return <div>Error loading files: {error}</div>;
-  if (!files.length) return <div>No files found.</div>;
+  if (error) return (
+    <div>
+      <div style={{ marginBottom: 8 }}>Error loading files: {error}</div>
+      {onClose && (
+        <button className="btn btn-secondary" onClick={onClose}>Close</button>
+      )}
+    </div>
+  );
+  if (!files.length) return (
+    <div>
+      <div style={{ marginBottom: 8 }}>No files found.</div>
+      {onClose && (
+        <button className="btn btn-secondary" onClick={onClose}>Close</button>
+      )}
+    </div>
+  );
 
   return (
     <div>
@@ -90,6 +115,9 @@ function FilesDownloader({ bucketName, folderName, id }) {
       <button onClick={downloadAllFiles} disabled={loading}>
         {loading ? "Preparing download..." : "Download All Files"}
       </button>
+      {onClose && (
+        <button style={{ marginLeft: 8 }} className="btn btn-secondary" onClick={onClose}>Close</button>
+      )}
     </div>
   );
 }

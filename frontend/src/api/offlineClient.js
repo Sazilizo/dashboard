@@ -157,8 +157,46 @@ class QueryBuilder {
       maybeSingle: this.isMaybeSingleFlag,
     });
 
+    // OFFLINE-FIRST: Try cache first, then attempt network
+    let cachedData = (await getCachedResponse(cacheKey)) || [];
+    
+    // Always prepare offline fallback
+    let offlineResult = [...cachedData];
+    Object.entries(this.filters).forEach(([f, filter]) => {
+      if (filter.type === "eq") offlineResult = offlineResult.filter(r => r[f] === filter.value);
+      if (filter.type === "in") offlineResult = offlineResult.filter(r => filter.value.includes(r[f]));
+    });
+    if (this.orderField) {
+      offlineResult.sort((a, b) => (
+        this.orderAscending 
+          ? (a[this.orderField] > b[this.orderField] ? 1 : -1) 
+          : (a[this.orderField] < b[this.orderField] ? 1 : -1)
+      ));
+    }
+    if (this.rangeStart !== null && this.rangeEnd !== null) {
+      offlineResult = offlineResult.slice(this.rangeStart, this.rangeEnd + 1);
+    }
+
+    let finalResult;
+    if (this.isSingleFlag || this.isMaybeSingleFlag) {
+      finalResult = Array.isArray(offlineResult) ? offlineResult[0] ?? null : offlineResult ?? null;
+    } else {
+      finalResult = offlineResult;
+    }
+
+    // Check if we should even try network
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      console.log(`[offlineClient] Using cache for ${this.table} (navigator.onLine=false)`);
+      return { data: finalResult, error: null, fromCache: true };
+    }
+
+    // Try network with aggressive timeout (3 seconds)
     try {
-      let q = this.baseClient.from(this.table).select(this.queryString);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+      let q = this.baseClient.from(this.table).select(this.queryString).abortSignal(controller.signal);
+      
       Object.entries(this.filters).forEach(([f, filter]) => {
         if (filter.type === "eq") q = q.eq(f, filter.value);
         else if (filter.type === "in") q = q.in(f, filter.value);
@@ -169,27 +207,32 @@ class QueryBuilder {
       if (this.isMaybeSingleFlag && typeof q.maybeSingle === "function") q = q.maybeSingle();
 
       const { data, error } = await q;
+      
+      clearTimeout(timeoutId);
+
       if (error) throw error;
 
-      if (Array.isArray(data)) await cacheResponse(cacheKey, data);
-      else if (data != null) await cacheResponse(cacheKey, Array.isArray(data) ? data : [data]);
+      // Success! Update cache in background
+      if (Array.isArray(data)) {
+        cacheResponse(cacheKey, data).catch(err => 
+          console.warn('[offlineClient] Cache update failed:', err)
+        );
+      } else if (data != null) {
+        cacheResponse(cacheKey, Array.isArray(data) ? data : [data]).catch(err =>
+          console.warn('[offlineClient] Cache update failed:', err)
+        );
+      }
 
-      return { data, error: null };
+      return { data, error: null, fromCache: false };
     } catch (err) {
-      console.warn("Online query failed, using cache:", err);
-      let rows = (await getCachedResponse(cacheKey)) || [];
-      Object.entries(this.filters).forEach(([f, filter]) => {
-        if (filter.type === "eq") rows = rows.filter(r => r[f] === filter.value);
-        if (filter.type === "in") rows = rows.filter(r => filter.value.includes(r[f]));
-      });
-      if (this.orderField) rows.sort((a, b) => (this.orderAscending ? (a[this.orderField] > b[this.orderField] ? 1 : -1) : (a[this.orderField] < b[this.orderField] ? 1 : -1)));
-      if (this.rangeStart !== null && this.rangeEnd !== null) rows = rows.slice(this.rangeStart, this.rangeEnd + 1);
-
-      let result;
-      if (this.isSingleFlag || this.isMaybeSingleFlag) result = Array.isArray(rows) ? rows[0] ?? null : rows ?? null;
-      else result = rows;
-
-      return { data: result, error: null };
+      // Network failed (timeout, no internet, etc.) - use cached data
+      if (err.name === 'AbortError') {
+        console.warn(`[offlineClient] ${this.table} query timed out (3s) - using cache`);
+      } else {
+        console.warn(`[offlineClient] ${this.table} query failed - using cache:`, err.message);
+      }
+      
+      return { data: finalResult, error: null, fromCache: true };
     }
   }
 

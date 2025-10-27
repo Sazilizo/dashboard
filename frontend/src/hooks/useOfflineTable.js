@@ -8,12 +8,7 @@ import {
   syncMutations,
 } from "../utils/tableCache";
 
-/**
- * useOfflineTable
- * ----------------
- * Provides online/offline-aware data fetching with local caching, pagination,
- * sorting, and queued mutations for Supabase-like tables.
- */
+
 export default function useOfflineTable(
   tableName,
   filter = {},
@@ -77,11 +72,20 @@ export default function useOfflineTable(
 
     try {
       if (isOnline) {
+        // Build query with timeout protection
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+
         let query = api
           .from(tableName)
           .select(select)
           .order(sortBy, { ascending: sortOrder === "asc" })
           .range((pageNum - 1) * pageSize, pageNum * pageSize - 1);
+
+        // Add abort signal if supported
+        if (typeof query.abortSignal === 'function') {
+          query = query.abortSignal(controller.signal);
+        }
 
         // Apply filters
         Object.entries(filter).forEach(([key, value]) => {
@@ -97,20 +101,35 @@ export default function useOfflineTable(
           }
         });
 
-        const { data, error } = await query;
+        try {
+          const { data, error } = await query;
+          clearTimeout(timeoutId);
 
-        if (error) throw error;
+          if (error) throw error;
 
-        if (data) {
-          allRowsRef.current = reset
-            ? data
-            : [...allRowsRef.current, ...data];
+          if (data) {
+            allRowsRef.current = reset
+              ? data
+              : [...allRowsRef.current, ...data];
 
-          setRows([...allRowsRef.current]);
-          await cacheTable(tableName, allRowsRef.current);
-          setHasMore(data.length === pageSize);
-        } else {
-          setHasMore(false);
+            setRows([...allRowsRef.current]);
+            await cacheTable(tableName, allRowsRef.current);
+            setHasMore(data.length === pageSize);
+          } else {
+            setHasMore(false);
+          }
+        } catch (queryError) {
+          clearTimeout(timeoutId);
+          
+          // If query failed (timeout or network), use cached data
+          if (queryError.name === 'AbortError') {
+            console.warn(`[useOfflineTable] ${tableName} query timed out - using cache`);
+          } else {
+            console.warn(`[useOfflineTable] ${tableName} query failed:`, queryError.message);
+          }
+          
+          // Fall through to offline mode
+          throw queryError;
         }
       } else {
         // Offline mode → read cached data
@@ -126,8 +145,24 @@ export default function useOfflineTable(
         setHasMore(sorted.length > pageNum * pageSize);
       }
     } catch (err) {
-      console.error("Fetch error:", err);
-      setError(err);
+      console.warn(`[useOfflineTable] Falling back to cache for ${tableName}:`, err.message);
+      
+      // Always try to load from cache on any error
+      try {
+        const cached = (await getTable(tableName)) || [];
+
+        let sorted = [...cached].sort((a, b) => {
+          if (sortOrder === "asc") return a[sortBy] > b[sortBy] ? 1 : -1;
+          else return a[sortBy] < b[sortBy] ? 1 : -1;
+        });
+
+        const paginated = sorted.slice(0, pageNum * pageSize);
+        setRows(paginated);
+        setHasMore(sorted.length > pageNum * pageSize);
+      } catch (cacheErr) {
+        console.error(`[useOfflineTable] Cache read failed for ${tableName}:`, cacheErr);
+        setError(cacheErr);
+      }
     } finally {
       setLoading(false);
     }

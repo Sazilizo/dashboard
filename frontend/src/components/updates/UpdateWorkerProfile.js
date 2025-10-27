@@ -1,19 +1,19 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import api from "../../api/client";
-import DynamicBulkForm from "../forms/DynamicBulkForm";
+import DynamicBulkForm, { getTableColumns } from "../forms/DynamicBulkForm";
 import UploadFileHelper from "../profiles/UploadHelper";
 import { useSchools } from "../../context/SchoolsContext";
 import { useAuth } from "../../context/AuthProvider";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
 
 export default function UpdateWorkerProfile() {
   const { id } = useParams();
   const { user } = useAuth();
   const { schools } = useSchools();
+  const { isOnline } = useOnlineStatus();
   const [worker, setWorker] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tutorOptions, setTutorOptions] = useState([]);
-  const [coachOptions, setCoachOptions] = useState([]);
 
   // Compute allowed school IDs based on user role
   const schoolIds = useMemo(() => {
@@ -47,45 +47,6 @@ export default function UpdateWorkerProfile() {
     if (id) fetchWorker();
   }, [id]);
 
-  // Populate worker options for linking (like supervisor, tutor, coach, etc.)
-  useEffect(() => {
-    if (!schoolIds.length) return;
-
-    async function fetchWorkers() {
-      const { data, error } = await api
-        .from("workers")
-        .select("id, name, last_name, role:roles(name), school_id")
-        .in("school_id", schoolIds);
-
-      if (error) {
-        console.error("Failed to fetch workers:", error);
-        return;
-      }
-
-      setTutorOptions(
-        data
-          ?.filter((w) => w.role?.name && /tutor/i.test(w.role.name))
-          ?.map((w) => ({
-            value: w.id,
-            label: `${w.name} ${w.last_name}`,
-            school_id: w.school_id,
-          })) || []
-      );
-
-      setCoachOptions(
-        data
-          ?.filter((w) => w.role?.name && /coach/i.test(w.role.name))
-          ?.map((w) => ({
-            value: w.id,
-            label: `${w.name} ${w.last_name}`,
-            school_id: w.school_id,
-          })) || []
-      );
-    }
-
-    fetchWorkers();
-  }, [schoolIds]);
-
   if (loading) return <p>Loading worker data...</p>;
 
   return (
@@ -103,32 +64,54 @@ export default function UpdateWorkerProfile() {
           schema_name="Worker"
           presetFields={worker}
           id={id}
+          isOnline={isOnline}
+          schoolIds={schoolIds}
+          folder="workers"
           onSubmit={async (formData) => {
             try {
-              const record = { ...formData };
+              console.log("UpdateWorkerProfile: received formData", formData);
+              
+              // Dynamically fetch real DB columns for workers
+              const columns = await getTableColumns("workers");
+              console.log("UpdateWorkerProfile: DB columns", columns);
+              
+              const filtered = {};
+              for (const k in formData) {
+                if (columns.includes(k)) filtered[k] = formData[k];
+              }
 
-              // Handle photo upload if new file provided
-              if (record.photo instanceof File) {
-                const uploadedUrl = await UploadFileHelper(
-                  record.photo,
-                  "workers",
-                  id
-                );
-                record.photo = uploadedUrl;
+              console.log("UpdateWorkerProfile: filtered payload", filtered);
+
+              // Handle all file uploads (photo, id_copy_pdf, cv_pdf, clearance_pdf, child_protection_pdf)
+              const fileFields = ["photo", "id_copy_pdf", "cv_pdf", "clearance_pdf", "child_protection_pdf"];
+              for (const fieldName of fileFields) {
+                if (filtered[fieldName] instanceof File) {
+                  const uploadedUrl = await UploadFileHelper(
+                    filtered[fieldName],
+                    "workers",
+                    id
+                  );
+                  filtered[fieldName] = uploadedUrl;
+                }
               }
 
               // Save updates
-              const { error } = await api
+              const { data, error } = await api
                 .from("workers")
-                .update(record)
-                .eq("id", id);
+                .update(filtered)
+                .eq("id", id)
+                .select();
 
-              if (error) throw error;
+              if (error) {
+                console.error("UpdateWorkerProfile: Supabase error", error);
+                throw error;
+              }
 
+              console.log("UpdateWorkerProfile: update successful", data);
               alert("Worker profile updated successfully!");
             } catch (err) {
-              console.error(err);
-              alert("Failed to update worker profile.");
+              console.error("UpdateWorkerProfile: Error during update", err);
+              alert(`Failed to update worker profile: ${err.message || JSON.stringify(err)}`);
             }
           }}
         />

@@ -1,3 +1,29 @@
+// Utility to fetch and cache real DB columns for a table from Supabase
+const tableColumnsCache = {};
+export async function getTableColumns(table) {
+  if (tableColumnsCache[table]) return tableColumnsCache[table];
+  // Query information_schema.columns via Supabase
+  const { data, error } = await api
+    .from('information_schema.columns')
+    .select('column_name')
+    .eq('table_name', table);
+  if (error) {
+    console.warn('Failed to fetch columns for', table, error);
+    return [];
+  }
+  const columns = (data || []).map((row) => row.column_name);
+  tableColumnsCache[table] = columns;
+  return columns;
+}
+// Utility to filter an object to only allowed keys
+export function filterToSchemaFields(obj, fields) {
+  const allowed = new Set(fields.map(f => f.name));
+  const out = {};
+  for (const k in obj) {
+    if (allowed.has(k)) out[k] = obj[k];
+  }
+  return out;
+}
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useForm, Controller, useWatch } from "react-hook-form";
@@ -45,6 +71,7 @@ export default function DynamicBulkFormRHF({
 
   const [tutorOptions, setTutorOptions] = useState([]);
   const [coachOptions, setCoachOptions] = useState([]);
+  const [roleOptions, setRoleOptions] = useState([]);
   const [schema, setSchema] = useState([]);
   const [formSchema, setFormSchema] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -149,6 +176,74 @@ export default function DynamicBulkFormRHF({
   const selectedSchool = watchAll.school_id;
   const physicalEdSelected = watchAll.physical_education;
 
+  // ---------------------- REPEATER/SECTIONS HELPERS ----------------------
+  const ensureSectionsPath = (prev) => {
+    const prevSectionsObj = prev.sections || {};
+    const sectionsArr = Array.isArray(prevSectionsObj.sections) ? [...prevSectionsObj.sections] : [];
+    return { prevSectionsObj, sectionsArr };
+  };
+
+  const handleSectionChange = (sectionIndex, key, value) => {
+    const currentValues = getValues();
+    const { prevSectionsObj, sectionsArr } = ensureSectionsPath(currentValues);
+    const section = sectionsArr[sectionIndex] || {
+      section_title: "",
+      section_image: null,
+      number_of_questions: 0,
+      questions: [],
+    };
+    const updatedSection = {
+      ...section,
+      [key]: key === "number_of_questions" ? Number(value) : value,
+    };
+    sectionsArr[sectionIndex] = updatedSection;
+    setValue("sections", { ...prevSectionsObj, sections: sectionsArr });
+  };
+
+  const handleQuestionChange = (sectionIndex, questionIndex, key, value) => {
+    const currentValues = getValues();
+    const { prevSectionsObj, sectionsArr } = ensureSectionsPath(currentValues);
+    const section = sectionsArr[sectionIndex] || {
+      section_title: "",
+      section_image: null,
+      number_of_questions: 0,
+      questions: [],
+    };
+    const questionsArr = Array.isArray(section.questions) ? [...section.questions] : [];
+    const question = questionsArr[questionIndex] || { question: "", type: "text", options: [], correct_answer: "" };
+    const updatedQuestion = { ...question, [key]: value };
+    questionsArr[questionIndex] = updatedQuestion;
+    sectionsArr[sectionIndex] = { ...section, questions: questionsArr };
+    setValue("sections", { ...prevSectionsObj, sections: sectionsArr });
+  };
+
+  const handleAddSection = () => {
+    const currentValues = getValues();
+    const { prevSectionsObj, sectionsArr } = ensureSectionsPath(currentValues);
+    const newSections = [...sectionsArr, {
+      section_title: "",
+      section_image: null,
+      number_of_questions: 0,
+      questions: [],
+    }];
+    setValue("sections", { ...prevSectionsObj, sections: newSections });
+  };
+
+  const handleAddQuestion = (sectionIndex) => {
+    const currentValues = getValues();
+    const { prevSectionsObj, sectionsArr } = ensureSectionsPath(currentValues);
+    const section = sectionsArr[sectionIndex] || {
+      section_title: "",
+      section_image: null,
+      number_of_questions: 0,
+      questions: [],
+    };
+    const questionsArr = Array.isArray(section.questions) ? [...section.questions] : [];
+    questionsArr.push({ question: "", type: "text", options: [], correct_answer: "" });
+    sectionsArr[sectionIndex] = { ...section, questions: questionsArr };
+    setValue("sections", { ...prevSectionsObj, sections: sectionsArr });
+  };
+
   // ---------------------- Auto age from DOB ----------------------
   useEffect(() => {
     if (!watchAll.date_of_birth) return;
@@ -156,6 +251,41 @@ export default function DynamicBulkFormRHF({
     setValue("age", age);
     trigger("age");
   }, [watchAll.date_of_birth]);
+
+  // ---------------------- Fetch Roles ----------------------
+  useEffect(() => {
+    async function fetchRoles() {
+      try {
+        let data = [];
+
+        if (!isOnline) {
+          const cached = await getTable("roles");
+          data = cached || [];
+        } else {
+          const { data: fetched, error } = await api
+            .from("roles")
+            .select("id, name");
+          if (error) throw error;
+          data = fetched;
+          await cacheTable("roles", data);
+        }
+
+        console.log("Fetched Roles:", data);
+        setRoleOptions(
+          data.map((r) => ({
+            value: r.id,
+            label: r.name,
+            id: r.id,
+            name: r.name,
+          }))
+        );
+      } catch (err) {
+        console.warn("Role fetch failed:", err);
+      }
+    }
+
+    fetchRoles();
+  }, [isOnline]);
 
   // ---------------------- Fetch Tutors & Coaches ----------------------
   useEffect(() => {
@@ -277,16 +407,6 @@ export default function DynamicBulkFormRHF({
 
       console.log("DynamicBulkForm: prepared payload", payload);
 
-      // Sanity-check: warn about keys present in payload that are not in the schema
-      try {
-        const schemaNames = (schema || []).map((f) => f.name);
-        const payloadKeys = Object.keys(payload[0] || {});
-        const extraKeys = payloadKeys.filter((k) => !schemaNames.includes(k) && k !== "id");
-        if (extraKeys.length) console.warn("Payload contains keys not defined in form schema:", extraKeys);
-      } catch (err) {
-        /* ignore */
-      }
-
       if (typeof onSubmit === "function") {
         const res = await onSubmit(Array.isArray(data) ? payload : payload[0], id);
         console.log("DynamicBulkForm: onSubmit returned", res);
@@ -318,17 +438,46 @@ export default function DynamicBulkFormRHF({
 
     let options = field.options || [];
     if (field.name === "school_id") options = schools;
-    if (field.name === "role") options = roles;
+    if (field.name === "role" || field.name === "role_id") options = roleOptions;
     if (field.name === "category") options = catOptions;
     if (field.name === "tutor_id")
       // tutorOptions already has { value, label, school_id }
       // allow loose equality because selectedSchool may be string/number
       options = tutorOptions.filter((t) => t.school_id == selectedSchool);
-    if (field.name === "coach_id")
+    if (field.name === "coach_id" && schema_name === "students" )
       options = coachOptions.filter((c) => c.school_id == selectedSchool);
     
     if (field.name === "race") options = raceOptions;
     if (field.name === "gender") options = genderOptions;
+
+    // Special handling for ID fields that should always be dropdowns
+    if (field.name === "school_id" || field.name === "role_id" || field.name === "tutor_id" || field.name === "coach_id") {
+      return (
+        <div key={field.name} className="mb-3">
+          <label className="block mb-1 font-semibold">
+            {field.label} {isRequired && <span className="text-red-600 ml-1">*</span>}
+          </label>
+          <Controller
+            control={control}
+            name={field.name}
+            render={({ field: f }) => (
+              <select {...f} className="w-full p-2 border rounded" value={f.value || ""}>
+                <option value="">Select {field.label}</option>
+                {options.map((opt) => (
+                  <option
+                    key={opt.id || opt.value || opt}
+                    value={opt.id || opt.value || opt}
+                  >
+                    {opt.label || opt.name || opt}
+                  </option>
+                ))}
+              </select>
+            )}
+          />
+          {errors[field.name]?.message && <p className="text-red-600 text-sm">{errors[field.name]?.message}</p>}
+        </div>
+      );
+    }
 
     if (field.name === "grade") {
       options = ["R1", "R2", "R3", "R4"];
@@ -395,8 +544,8 @@ export default function DynamicBulkFormRHF({
                 <UploadFile
                   {...f}
                   label={field.label}
-                  // prefer explicit field.group, then parent's folderProp, then field.name, then pluralized schema_name
-                  folder={field.group || folderProp || field.name || `${String(schema_name).toLowerCase()}s`}
+                  // Use folderProp if provided, otherwise pluralize schema_name (Worker -> workers, Student -> students)
+                  folder={folderProp || `${String(schema_name).toLowerCase()}s`}
                   id={externalRecordId || id}
                 />
               )}
@@ -405,27 +554,97 @@ export default function DynamicBulkFormRHF({
           </div>
         );
 
-      case "checkbox":
-      case "boolean":
-        return (
-          <div key={field.name} className="mb-3">
-            <Controller
-              control={control}
-              name={field.name}
-              render={({ field: f }) => (
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" {...f} />
-                  <span>
-                    {field.label} {isRequired && <span className="text-red-600 ml-1">*</span>}
-                  </span>
-                </label>
-              )}
-            />
-            {errors[field.name]?.message && <p className="text-red-600 text-sm">{errors[field.name]?.message}</p>}
-          </div>
-        );
+      case "json_object": {
+        // Check if this field has repeater logic (sections/questions)
+        const groupArr = Array.isArray(field.group) ? field.group : [];
+        const hasRepeater = groupArr.some((g) => g?.type === "repeater");
 
-      case "json_object":
+        if (hasRepeater) {
+          // Repeater field for sections with nested questions
+          const sectionsData = (watchAll[field.name] && Array.isArray(watchAll[field.name].sections))
+            ? watchAll[field.name].sections
+            : [];
+
+          return (
+            <div key={field.name} className="mb-4 border p-2 rounded">
+              <label className="font-medium">{field.label}</label>
+              <div className="mb-2">
+                <button type="button" onClick={handleAddSection} className="px-2 py-1 bg-green-500 text-white rounded">
+                  + Add Section
+                </button>
+              </div>
+              {sectionsData.map((section, sIndex) => (
+                <div key={sIndex} className="mb-4 border p-2 rounded bg-gray-50">
+                  <input
+                    type="text"
+                    placeholder={`Section ${sIndex + 1} Title`}
+                    value={section.section_title || ""}
+                    onChange={(e) => handleSectionChange(sIndex, "section_title", e.target.value)}
+                    className="w-full mb-2 p-2 border rounded"
+                    required
+                  />
+                  <input
+                    type="number"
+                    placeholder="Number of Questions"
+                    min={0}
+                    max={20}
+                    value={section.number_of_questions ?? 0}
+                    onChange={(e) => handleSectionChange(sIndex, "number_of_questions", e.target.value)}
+                    className="w-full mb-2 p-2 border rounded"
+                    required
+                  />
+                  <div>
+                    <button type="button" onClick={() => handleAddQuestion(sIndex)} className="px-2 py-1 bg-blue-500 text-white rounded mb-2">
+                      + Add Question
+                    </button>
+                  </div>
+                  {(Array.isArray(section.questions) ? section.questions : []).map((q, qIndex) => (
+                    <div key={qIndex} className="mb-2 p-2 border rounded bg-white">
+                      <input
+                        type="text"
+                        placeholder={`Question ${qIndex + 1}`}
+                        value={q.question || ""}
+                        onChange={(e) => handleQuestionChange(sIndex, qIndex, "question", e.target.value)}
+                        className="w-full mb-1 p-2 border rounded"
+                        required
+                      />
+                      <select
+                        value={q.type || ""}
+                        onChange={(e) => handleQuestionChange(sIndex, qIndex, "type", e.target.value)}
+                        className="w-full mb-1 p-2 border rounded"
+                        required
+                      >
+                        <option value="">Select Type</option>
+                        <option value="text">Text</option>
+                        <option value="image_choice">Image Choice</option>
+                        <option value="multiple_choice">Multiple Choice</option>
+                        <option value="long_text">Long Text</option>
+                      </select>
+                      {(q.type === "multiple_choice" || q.type === "image_choice") && (
+                        <input
+                          type="text"
+                          placeholder="Options (comma separated)"
+                          value={Array.isArray(q.options) ? q.options.join(",") : (q.options || "")}
+                          onChange={(e) => handleQuestionChange(sIndex, qIndex, "options", e.target.value.split(",").map(o => o.trim()))}
+                          className="w-full mb-1 p-2 border rounded"
+                        />
+                      )}
+                      <input
+                        type="text"
+                        placeholder="Correct Answer"
+                        value={q.correct_answer || ""}
+                        onChange={(e) => handleQuestionChange(sIndex, qIndex, "correct_answer", e.target.value)}
+                        className="w-full mb-1 p-2 border rounded"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          );
+        }
+
+        // Standard json_object field (not a repeater)
         return (
           <div key={field.name} className="mb-3">
             <label className="block mb-1 font-semibold">
@@ -441,6 +660,27 @@ export default function DynamicBulkFormRHF({
                   group={field.group}
                   max={field.max || 100}
                 />
+              )}
+            />
+            {errors[field.name]?.message && <p className="text-red-600 text-sm">{errors[field.name]?.message}</p>}
+          </div>
+        );
+      }
+
+      case "checkbox":
+      case "boolean":
+        return (
+          <div key={field.name} className="mb-3">
+            <Controller
+              control={control}
+              name={field.name}
+              render={({ field: f }) => (
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={f.value} onChange={(e) => f.onChange(e.target.checked)} />
+                  <span>
+                    {field.label} {isRequired && <span className="text-red-600 ml-1">*</span>}
+                  </span>
+                </label>
               )}
             />
             {errors[field.name]?.message && <p className="text-red-600 text-sm">{errors[field.name]?.message}</p>}

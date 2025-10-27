@@ -1,181 +1,137 @@
-import React, { useEffect, useState, useMemo } from "react";
-import api from "../../api/client"; // Supabase client instance
+import React, { useEffect, useState } from "react";
+import api from "../../api/client"; // supabase client
 
-function Photos({ id, bucketName, folderName, photoCount = 5, pageSize = 20 }) {
+// restrictToProfileFolder: when true, only list `${folderName}/${id}/profile-picture` with no fallback
+function Photos({ id, bucketName, folderName, photoCount = 1, restrictToProfileFolder = true }) {
   const [files, setFiles] = useState([]);
   const [signedUrls, setSignedUrls] = useState({});
   const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
-
-  // configurable subfolders — just add more here if needed
-  const subfolders = useMemo(() => ["", "profile-pictures", "documents"], []);
 
   useEffect(() => {
-    if (!id || !bucketName || !folderName) return;
-
-    async function fetchAllFiles() {
-      setLoading(true);
-      setError(null);
-
+    async function fetchFilesAndUrls() {
       try {
-        // 1️⃣ List all folders concurrently
-        const listPromises = subfolders.map(async (sub) => {
-          const path = sub ? `${folderName}/${id}/${sub}` : `${folderName}/${id}`;
-          const { data, error } = await api.storage.from(bucketName).list(path);
+        const profileFolder = `${folderName}/${id}/profile-picture`;
 
-          if (error) {
-            console.warn(`Error listing ${path}:`, error.message);
-            return [];
-          }
+        // Try to list images from the profile-picture subfolder
+        let { data: dataPrimary, error: errorPrimary } = await api.storage
+          .from(bucketName)
+          .list(profileFolder, { limit: 100 });
 
-          return (data || []).map((file) => ({
-            ...file,
-            path: `${path}/${file.name}`,
-            subfolder: sub || "root",
-          }));
-        });
-
-        const results = await Promise.all(listPromises);
-        const allFiles = results.flat();
-
-        if (!allFiles.length) {
-          setFiles([]);
-          setHasMore(false);
-          setLoading(false);
+        if (errorPrimary) {
+          console.warn("Error listing profile pictures:", errorPrimary.message);
+          // Treat API errors as actual errors
+          setError(errorPrimary.message);
           return;
         }
 
-        // 2️⃣ Sort newest first
-        const sorted = allFiles.sort((a, b) => {
-          if (a.created_at && b.created_at) {
-            return new Date(b.created_at) - new Date(a.created_at);
+        // Helper to filter to likely file entries only
+        const toImageFiles = (arr) =>
+          (arr || [])
+            .filter((f) => !!f?.name && f.name !== ".emptyFolderPlaceholder")
+            .filter((f) => {
+              // If metadata.size exists, it's a file; otherwise, use extension heuristic
+              const isFileByMeta = typeof f?.metadata?.size === "number";
+              const lower = String(f.name).toLowerCase();
+              const isImageExt = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".heic"].some((ext) =>
+                lower.endsWith(ext)
+              );
+              return isFileByMeta || isImageExt;
+            });
+
+        let imageFiles = toImageFiles(dataPrimary);
+
+        // Optional fallback: only when explicitly allowed
+        if (!restrictToProfileFolder && !imageFiles.length) {
+          const recordRoot = `${folderName}/${id}`;
+          const { data: dataFallback, error: errorFallback } = await api.storage
+            .from(bucketName)
+            .list(recordRoot, { limit: 100 });
+
+          if (errorFallback) {
+            console.warn("Error listing record root:", errorFallback.message);
+            // Don't surface as UI error; just proceed with no photos
+          } else {
+            imageFiles = toImageFiles(dataFallback);
           }
-          return b.name.localeCompare(a.name);
+        }
+
+        if (!imageFiles.length) {
+          // No photos is not an error; show graceful placeholder
+          setFiles([]);
+          setSignedUrls({});
+          return;
+        }
+
+        // Sort by created_at desc if available, else by name
+        const sortedFiles = imageFiles
+          .sort((a, b) => (new Date(b.created_at || 0) - new Date(a.created_at || 0)) || (String(b.name).localeCompare(String(a.name))))
+          .slice(0, photoCount);
+
+        setFiles(sortedFiles);
+
+        // Create signed URLs per-file (supabase-js v2)
+        // Attempt signing in the profile-picture folder
+        const paths = sortedFiles.map((f) => `${profileFolder}/${f.name}`);
+        const signedResults = await Promise.all(
+          paths.map((p) => api.storage.from(bucketName).createSignedUrl(p, 3600))
+        );
+
+        const urls = {};
+        signedResults.forEach((r, idx) => {
+          if (!r.error && r.data?.signedUrl) {
+            urls[sortedFiles[idx].name] = r.data.signedUrl;
+          }
         });
 
-        setHasMore(sorted.length > pageSize);
-        setFiles(sorted);
+        // If not restricted and nothing signed yet, fallback to root signing
+        if (!restrictToProfileFolder && Object.keys(urls).length === 0) {
+          const fallbackPaths = sortedFiles.map((f) => `${folderName}/${id}/${f.name}`);
+          const fallbackResults = await Promise.all(
+            fallbackPaths.map((p) => api.storage.from(bucketName).createSignedUrl(p, 3600))
+          );
+          fallbackResults.forEach((r, idx) => {
+            if (!r.error && r.data?.signedUrl) {
+              urls[sortedFiles[idx].name] = r.data.signedUrl;
+            }
+          });
+        }
+
+        setSignedUrls(urls);
       } catch (err) {
-        console.error("❌ Failed to fetch files:", err);
+        console.error("Failed to fetch photos:", err);
         setError(err.message);
-      } finally {
-        setLoading(false);
       }
     }
 
-    fetchAllFiles();
-  }, [id, bucketName, folderName, subfolders, pageSize]);
+    if (id && bucketName && folderName) fetchFilesAndUrls();
+  }, [id, bucketName, folderName, photoCount, restrictToProfileFolder]);
 
-  // 🧠 Paginated slice
-  const currentPageFiles = useMemo(() => {
-    const end = page * pageSize;
-    const slice = files.slice(0, end);
-    setHasMore(files.length > end);
-    return slice;
-  }, [files, page, pageSize]);
-
-  // 3️⃣ Fetch signed URLs for currently visible files only
-  useEffect(() => {
-    if (!currentPageFiles.length) return;
-
-    async function fetchSignedUrls() {
-      try {
-        const filePaths = currentPageFiles.map((f) => f.path);
-        const { data: signedBatch, error: batchError } = await api.storage
-          .from(bucketName)
-          .createSignedUrls(filePaths, 60 * 10); // valid for 10 min
-
-        if (batchError) throw new Error(batchError.message);
-
-        const urlsMap = {};
-        signedBatch.forEach((item, i) => {
-          if (item?.signedUrl) urlsMap[filePaths[i]] = item.signedUrl;
-        });
-
-        setSignedUrls((prev) => ({ ...prev, ...urlsMap }));
-      } catch (err) {
-        console.error("Signed URL fetch error:", err);
-        setError(err.message);
-      }
-    }
-
-    fetchSignedUrls();
-  }, [currentPageFiles, bucketName]);
-
-  // 🧩 Group files by folder
-  const groupedFiles = useMemo(() => {
-    return subfolders.reduce((acc, sub) => {
-      acc[sub || "root"] = currentPageFiles.filter(
-        (f) => f.subfolder === (sub || "root")
-      );
-      return acc;
-    }, {});
-  }, [currentPageFiles, subfolders]);
-
-  if (loading) return <div className="text-gray-500 animate-pulse">Loading files...</div>;
-  if (error) return <div className="text-red-500">Error: {error}</div>;
-  if (!files.length) return <div>No files found.</div>;
+  if (error) return <div className="text-red-500">Error loading images: {error}</div>;
+  if (!files.length) return (
+    <div className="w-full h-full flex items-center justify-center bg-gray-100 rounded overflow-hidden">
+      <span className="text-gray-500 text-sm">No image</span>
+    </div>
+  );
 
   return (
-    <div className="space-y-6">
-      {Object.entries(groupedFiles).map(([sub, group]) =>
-        group.length ? (
-          <div key={sub}>
-            <h3 className="text-lg font-semibold capitalize mb-2">
-              {sub === "root" ? "General Files" : sub.replace("-", " ")}
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {group.map((file) => {
-                const url = signedUrls[file.path];
-                const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
-                return (
-                  <div
-                    key={file.path}
-                    className="border rounded-xl p-2 shadow-sm hover:shadow-md transition bg-white"
-                  >
-                    {isImage && url ? (
-                      <img
-                        src={url}
-                        alt={file.name}
-                        loading="lazy"
-                        className="w-full h-40 object-cover rounded-lg"
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center justify-center h-40 bg-gray-50 rounded-lg text-gray-600">
-                        📄 <span className="truncate text-xs">{file.name}</span>
-                      </div>
-                    )}
-                    {url && (
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block text-sm text-blue-600 mt-1 text-center truncate"
-                      >
-                        {file.name}
-                      </a>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : null
-      )}
-
-      {/* Pagination control */}
-      {hasMore && (
-        <div className="text-center mt-4">
-          <button
-            onClick={() => setPage((p) => p + 1)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+    <div className="">
+      {files.map((file) => {
+        const url = signedUrls[file.name];
+        if (!url) return null;
+        return (
+          <div
+            key={file.name}
+            className=""
           >
-            Load More
-          </button>
-        </div>
-      )}
+            <img
+              src={url}
+              alt={file.name}
+              loading="lazy"
+              className=""
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }

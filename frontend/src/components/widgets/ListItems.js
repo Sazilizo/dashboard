@@ -1,44 +1,33 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Link } from "react-router-dom";
+import Photos from "../profiles/Photos";
 
-function FallbackImage({ url }) {
-  return (
-    <div className="w-full h-full flex items-center justify-center bg-gray-100 rounded overflow-hidden">
-      {url ? (
-        <img
-          src={url}
-          alt="Student"
-          loading="lazy"
-          className="w-full h-full object-cover"
-        />
-      ) : (
-        <span className="text-gray-500 text-sm">No image</span>
-      )}
-    </div>
-  );
-}
-
-export default function ListItems({ students, onDelete, onUpdate, photoMap }) {
+export default function ListItems({ students, onDelete, onUpdate, bucketName = "student-uploads", folderName = "students" }) {
   const [editId, setEditId] = useState(null);
   const [editName, setEditName] = useState("");
 
   if (!students || students.length === 0) return <p>No students found.</p>;
 
-  console.log("Rendering ListItems with students:", students);
   return (
-    <ul className="app-list">
+    <ul className="app-list wave-list">
       {students.map((s) => (
         <li key={s.id}>
           <Link to={`/dashboard/students/${s.id}`}>
             <div className="app-profile-photo">
-              <FallbackImage url={photoMap?.[s.id]} />
+              <Photos
+                bucketName={bucketName}
+                folderName={folderName}
+                id={s.id}
+                photoCount={1}
+                restrictToProfileFolder={true}
+              />
             </div>
             <div className="app-list-item-details">
               <p>
                 <strong>{s.full_name}</strong>
               </p>
               <p>
-                Grade: {s.grade}{" "}
+                Grade:{ `${s.grade} (${s.category})`}{" "}
                 {s.__queued && (
                   <span style={{ color: "orange", marginLeft: 8 }}>
                     (Queued)
@@ -46,6 +35,7 @@ export default function ListItems({ students, onDelete, onUpdate, photoMap }) {
                 )}
               </p>
             </div>
+            <p>School: {s.school.name}</p>
           </Link>
 
           {onDelete && (

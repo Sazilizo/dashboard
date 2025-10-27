@@ -53,10 +53,6 @@ export default function EditProfile({ user,onAvatarUpdated }) {
     setShowConfirm(true);
   };
 
-  if (onAvatarUpdated) {
-    onAvatarUpdated();
-  }
-
   const uploadAvatar = async (file) => {
     try {
       const url = await UploadFileHelper(file, "profile-avatars", user.id);
@@ -65,6 +61,10 @@ export default function EditProfile({ user,onAvatarUpdated }) {
         setPendingFile(null);
         setNewAvatarPreview(null);
         setShowConfirm(false);
+        // Call the callback after successful upload
+        if (onAvatarUpdated) {
+          onAvatarUpdated();
+        }
       }
     } catch (err) {
       setError("Avatar upload failed");

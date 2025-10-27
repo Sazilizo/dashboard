@@ -72,30 +72,27 @@ export default function FilesPopup({ bucketName, folderName, id, onClose }) {
     async function refreshFiles(cacheKey) {
       const basePath = `${folderName}/${id}`;
 
-      // List both document and profile-picture folders concurrently
-      const [rootRes, docsRes, profileRes] = await Promise.all([
+      // List both root folder and profile-picture subfolder concurrently
+      const [rootRes, profileRes] = await Promise.all([
         api.storage.from(bucketName).list(basePath, { limit: 1000 }),
-        api.storage.from(bucketName).list(`${basePath}/documents`, { limit: 1000 }),
         api.storage.from(bucketName).list(`${basePath}/profile-picture`, { limit: 1000 }),
       ]);
 
-      const listErrors = [rootRes.error, docsRes.error, profileRes.error].filter(Boolean);
+      const listErrors = [rootRes.error, profileRes.error].filter(Boolean);
       if (listErrors.length) throw listErrors[0];
 
-      // Merge files from all folders
+      // Merge files from both folders
+      // Root folder contains PDFs and other documents (siblings to profile-picture)
       const rootFiles = (rootRes.data || [])
-        .filter((f) => f.metadata)
+        .filter((f) => f.name && f.name !== ".emptyFolderPlaceholder" && !f.id) // exclude folders and placeholders
         .map((f) => ({ ...f, fullPath: `${basePath}/${f.name}` }));
 
-      const docFiles = (docsRes.data || [])
-        .filter((f) => f.metadata)
-        .map((f) => ({ ...f, fullPath: `${basePath}/documents/${f.name}` }));
-
+      // Profile-picture folder contains images
       const profileFiles = (profileRes.data || [])
-        .filter((f) => f.metadata)
+        .filter((f) => f.name && f.name !== ".emptyFolderPlaceholder")
         .map((f) => ({ ...f, fullPath: `${basePath}/profile-picture/${f.name}` }));
 
-      const allFiles = [...rootFiles, ...docFiles, ...profileFiles];
+      const allFiles = [...profileFiles, ...rootFiles]; // Put profile pictures first
       if (!allFiles.length) throw new Error("No files found");
 
       // ✅ Batch signed URL generation
@@ -189,69 +186,69 @@ export default function FilesPopup({ bucketName, folderName, id, onClose }) {
     }
   };
 
-  if (loading)
-    return (
-      <div className="popup-overlay">
-        <div className="popup-loading">Loading files...</div>
-      </div>
-    );
-  if (error)
-    return (
-      <div className="popup-overlay">
-        <div className="popup-error">Error: {error}</div>
-      </div>
-    );
-  if (!files.length)
-    return (
-      <div className="popup-overlay">
-        <div className="popup-empty">No files found.</div>
-      </div>
-    );
-
   return (
-    <div className="popup-overlay">
+    <div
+      className="popup-overlay"
+      onClick={(e) => {
+        // Close when clicking outside the modal content
+        if (e.target && e.target.classList && e.target.classList.contains("popup-overlay")) {
+          onClose?.();
+        }
+      }}
+    >
       <div className="popup-content">
         <button className="popup-close" onClick={onClose}>✖</button>
-        <h4>Files for {id}</h4>
 
-        <button className="btn btn-primary mb-2" onClick={downloadSelectedAsZip}>
-          Download Selected ({selectedFiles.size})
-        </button>
+        {loading && <div className="popup-loading">Loading files...</div>}
+        {!loading && error && <div className="popup-error">Error: {error}</div>}
+        {!loading && !error && !files.length && (
+          <div className="popup-empty">No files found.</div>
+        )}
 
-        <div className="file-grid">
-          {files.map((file) => {
-            const url = signedUrls[file.fullPath];
-            const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
+        {!loading && !error && files.length > 0 && (
+          <>
+            <h4>Files for {id}</h4>
 
-            return (
-              <div key={file.fullPath} className="file-item">
-                <input
-                  type="checkbox"
-                  checked={selectedFiles.has(file.fullPath)}
-                  onChange={() => toggleSelect(file)}
-                />
-                {isImage && url ? (
-                  <img
-                    data-src={url}
-                    alt={file.name}
-                    ref={handleLazyLoad}
-                    className="file-preview"
-                  />
-                ) : (
-                  <div className="file-icon">
-                    {fileIcon(file.name)} {file.name}
+            <button className="btn btn-primary mb-2" onClick={downloadSelectedAsZip}>
+              Download Selected ({selectedFiles.size})
+            </button>
+
+            <div className="file-grid">
+              {files.map((file) => {
+                const url = signedUrls[file.fullPath];
+                const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name);
+
+                return (
+                  <div key={file.fullPath} className="file-item">
+                    <input
+                      type="checkbox"
+                      checked={selectedFiles.has(file.fullPath)}
+                      onChange={() => toggleSelect(file)}
+                    />
+                    {isImage && url ? (
+                      <img
+                        data-src={url}
+                        alt={file.name}
+                        ref={handleLazyLoad}
+                        className="file-preview"
+                      />
+                    ) : (
+                      <div className="file-icon">
+                        {fileIcon(file.name)} {file.name}
+                      </div>
+                    )}
+                    <button
+                      className="btn btn-secondary btn-sm mt-1"
+                      onClick={() => handleDownload(file)}
+                    >
+                      Download
+                    </button>
                   </div>
-                )}
-                <button
-                  className="btn btn-secondary btn-sm mt-1"
-                  onClick={() => handleDownload(file)}
-                >
-                  Download
-                </button>
-              </div>
-            );
-          })}
-        </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useSchools } from "../../context/SchoolsContext";
 import api from "../../api/client";
 import UploadFile from "../profiles/UploadHelper";
 import RoleSelect from "../../hooks/RoleSelect";
 import { queueMutation } from "../../utils/tableCache";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
+import { autoResizeTextarea } from "../../utils/autoResizeTextarea";
 
 export default function WorkerForm() {
   const { schools } = useSchools();
@@ -13,6 +14,7 @@ export default function WorkerForm() {
   const [formData, setFormData] = useState({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const textareaRefs = useRef({});
 
   // Load Worker schema
   useEffect(() => {
@@ -52,6 +54,10 @@ export default function WorkerForm() {
       setFormData((prev) => ({ ...prev, [name]: files[0] || null }));
     } else {
       setFormData((prev) => ({ ...prev, [name]: value }));
+      // Auto-resize textarea on change
+      if (e.target.tagName === 'TEXTAREA') {
+        autoResizeTextarea(e.target);
+      }
     }
   };
 
@@ -206,6 +212,11 @@ export default function WorkerForm() {
                 value={formData[f.name]}
                 onChange={handleChange}
                 required={f.required}
+                ref={(el) => {
+                  textareaRefs.current[f.name] = el;
+                  if (el) autoResizeTextarea(el);
+                }}
+                data-auto-resize="true"
               />
             </div>
           );

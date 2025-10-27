@@ -5,15 +5,18 @@ export const UploadFileHelper = async (file, folder, id) => {
   try {
     if (!file) return null;
 
+    // Helper to check if file is an image (including SVG)
+    const isImage = file.type.startsWith("image/") || file.type === "image/svg+xml";
+
     // only accept image or pdf
-    if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
+    if (!isImage && file.type !== "application/pdf") {
       throw new Error("Only images and PDF files are allowed.");
     }
 
     let uploadFile = file;
 
-    // compress images before upload
-    if (file.type.startsWith("image/")) {
+    // compress images before upload (skip SVG as it's already optimized)
+    if (isImage && file.type !== "image/svg+xml") {
       try {
         const options = {
           maxSizeMB: 0.05, // ~50KB target
@@ -43,7 +46,7 @@ export const UploadFileHelper = async (file, folder, id) => {
     if (folder === "students") {
       bucketName = "student-uploads";
       // images should go into profile-picture subfolder so there is only one main profile image
-      if (file.type.startsWith("image/")) {
+      if (isImage) {
         // place profile-picture as a child of the record id folder: <folder>/<id>/profile-picture/<file>
         filePath = `${folder}/${id}/profile-picture/${uniqueName}`;
       } else {
@@ -51,21 +54,21 @@ export const UploadFileHelper = async (file, folder, id) => {
       }
     } else if (folder === "workers") {
       bucketName = "worker-uploads";
-      if (file.type.startsWith("image/")) {
+      if (isImage) {
         filePath = `${folder}/${id}/profile-picture/${uniqueName}`;
       } else {
         filePath = `${folder}/${id}/${uniqueName}`;
       }
     } else if (folder === "sessions") {
       bucketName = "session-uploads";
-      if (file.type.startsWith("image/")) {
+      if (isImage) {
         filePath = `${folder}/${id}/profile-picture/${uniqueName}`;
       } else {
         filePath = `${folder}/${id}/${uniqueName}`;
       }
     } else if (folder === "meals") {
       bucketName = "meal-uploads";
-      if (file.type.startsWith("image/")) {
+      if (isImage) {
         filePath = `${folder}/${id}/profile-picture/${uniqueName}`;
       } else {
         filePath = `${folder}/${id}/${uniqueName}`;
@@ -86,7 +89,7 @@ export const UploadFileHelper = async (file, folder, id) => {
     } else {
       // custom folder (fallback)
       bucketName = "student-uploads";
-      if (file.type.startsWith("image/")) {
+      if (isImage) {
         filePath = id ? `${folder}/${id}/profile-picture/${uniqueName}` : `${folder}/profile-picture/${uniqueName}`;
       } else {
         filePath = id ? `${folder}/${id}/${uniqueName}` : `${folder}/${uniqueName}`;
@@ -94,7 +97,7 @@ export const UploadFileHelper = async (file, folder, id) => {
     }
 
     // For images, ensure there is only one main profile-picture for this id: remove existing files in that folder
-    if (file.type.startsWith("image/") && id) {
+    if (isImage && id) {
       try {
         // list files under <folder>/<id>/profile-picture
         const listPath = `${folder}/${id}/profile-picture`;

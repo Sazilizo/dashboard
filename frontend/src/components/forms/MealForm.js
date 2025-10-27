@@ -10,20 +10,22 @@ export default function MealForm() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { addRow } = useOfflineTable("meals");
-  const [mealId, setMealId] = useState(null);
+  const [showSuccess, setShowSuccess] = useState(false);
 
   const handleSubmit = async (payload) => {
     try {
       // Use offline helper (will queue when offline). If online and the
       // backend returns a server id we rely on the list refresh to show it.
       const res = await addRow(payload);
-      if (res?.tempId) {
-        setMealId(res.tempId);
-      } else {
-        setMealId(null);
-      }
+      setShowSuccess(true);
+      
+      // Hide success message after 3 seconds
+      setTimeout(() => {
+        setShowSuccess(false);
+      }, 3000);
     } catch (err) {
       console.error("Failed to create meal:", err);
+      setShowSuccess(false);
       throw err;
     }
   };
@@ -34,11 +36,10 @@ export default function MealForm() {
       <DynamicBulkForm
         schema_name="Meal"
         onSubmit={handleSubmit}
-        studentId={mealId} // optional for consistency with DynamicBulkForm
       />
-      {mealId && (
+      {showSuccess && (
         <p className="mt-4 text-green-600">
-          Meal created! You can now distribute it to students.
+          Meal created successfully! You can now distribute it to students.
         </p>
       )}
     </div>

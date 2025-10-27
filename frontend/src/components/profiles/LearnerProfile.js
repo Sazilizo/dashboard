@@ -17,10 +17,11 @@ const LearnerProfile = () => {
   const { user } = useAuth();
   // const { isOnline } = useOnlineStatus();
   const [student, setStudent] = useState(null);
+  const [tutor, setTutor] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [attendanceMode, setAttendanceMode] = useState(null);
-  const [toggleSessionList, setToggleSessionList] = useState(false)
+  const [toggleSessionList, setToggleSessionList] = useState(false);
   const [displayCount, setDisplayCount] = useState(0);
 
   useEffect(() => {
@@ -31,6 +32,7 @@ const LearnerProfile = () => {
           .select(`
             *,
             school:school_id(*),
+            tutor:tutor_id(id, name, last_name, photo, role_id),
             academic_sessions:academic_session_participants(student_id, *),
             attendance_records:attendance_records(student_id, *),
             assessments:assessments(student_id, *),
@@ -67,6 +69,9 @@ const LearnerProfile = () => {
         };
 
         setStudent(flattened);
+        if (flattened.tutor) {
+          setTutor(flattened.tutor);
+        }
       } catch (err) {
         setError(err.message || err);
       } finally {
@@ -116,6 +121,88 @@ const LearnerProfile = () => {
     return [specsDataChart, attendanceDataChart];
   }, [student, user]);
 
+  // --- Generate Progress Report ---
+  const progressReport = useMemo(() => {
+    if (!student || !student.completed_academic_sessions?.length) {
+      return {
+        summary: "No sessions completed yet. Start recording sessions to see progress!",
+        strengths: [],
+        improvements: [],
+        overall: "pending"
+      };
+    }
+
+    // Calculate average specs
+    const allSpecs = student.completed_academic_sessions
+      .map(s => s.specs)
+      .filter(Boolean);
+    
+    if (!allSpecs.length) {
+      return {
+        summary: "Sessions recorded but no performance data available yet.",
+        strengths: [],
+        improvements: [],
+        overall: "pending"
+      };
+    }
+
+    // Aggregate all spec values
+    const specAverages = {};
+    const specCounts = {};
+    
+    allSpecs.forEach(specs => {
+      Object.entries(specs || {}).forEach(([key, value]) => {
+        if (typeof value === 'number') {
+          specAverages[key] = (specAverages[key] || 0) + value;
+          specCounts[key] = (specCounts[key] || 0) + 1;
+        }
+      });
+    });
+
+    // Calculate averages
+    Object.keys(specAverages).forEach(key => {
+      specAverages[key] = specAverages[key] / specCounts[key];
+    });
+
+    // Determine strengths (>= 7) and areas for improvement (<= 5)
+    const strengths = Object.entries(specAverages)
+      .filter(([_, avg]) => avg >= 7)
+      .map(([key, _]) => key.replace(/_/g, ' '))
+      .slice(0, 3);
+
+    const improvements = Object.entries(specAverages)
+      .filter(([_, avg]) => avg <= 5)
+      .map(([key, _]) => key.replace(/_/g, ' '))
+      .slice(0, 3);
+
+    const overallAverage = Object.values(specAverages).reduce((a, b) => a + b, 0) / Object.keys(specAverages).length;
+    
+    // Attendance percentage
+    const attendanceRate = student.attendance_records?.length 
+      ? (student.attendance_records.length / student.academic_sessions.length * 100).toFixed(0)
+      : 0;
+
+    // Generate summary
+    let summary = "";
+    if (overallAverage >= 7) {
+      summary = `${student.full_name} is performing excellently with an average score of ${overallAverage.toFixed(1)}/10. `;
+    } else if (overallAverage >= 5) {
+      summary = `${student.full_name} is showing good progress with an average score of ${overallAverage.toFixed(1)}/10. `;
+    } else {
+      summary = `${student.full_name} is developing with an average score of ${overallAverage.toFixed(1)}/10 and would benefit from additional support. `;
+    }
+
+    summary += `Attendance is at ${attendanceRate}% across ${student.academic_sessions.length} sessions.`;
+
+    return {
+      summary,
+      strengths,
+      improvements,
+      overall: overallAverage >= 7 ? "excellent" : overallAverage >= 5 ? "good" : "developing",
+      attendanceRate
+    };
+  }, [student]);
+
   useEffect(() => {
     document.title = student ? `${student.full_name} - Profile` : "Learner Profile";
   }, [student]);
@@ -162,9 +249,69 @@ const LearnerProfile = () => {
 
       <div className="grid-layout">
         <div className="profile-wrapper">
+          {/* Tutor Info Card */}
+          {tutor && (
+            <Card className="tutor-card">
+              <Link to={`/dashboard/workers/${tutor.id}`} className="tutor-link">
+                <div className="tutor-info">
+                  <div className="tutor-avatar">
+                    {tutor.photo ? (
+                      <img src={tutor.photo} alt={`${tutor.name} ${tutor.last_name}`} />
+                    ) : (
+                      <div className="tutor-avatar-placeholder">
+                        {tutor.name?.[0]}{tutor.last_name?.[0]}
+                      </div>
+                    )}
+                  </div>
+                  <div className="tutor-details">
+                    <p className="tutor-label">Assigned Tutor</p>
+                    <p className="tutor-name">{tutor.name} {tutor.last_name}</p>
+                  </div>
+                </div>
+              </Link>
+            </Card>
+          )}
+
           <Card className="profile-details-card-wrapper">
             <ProfileInfoCard data={student} bucketName="student-uploads" folderName="students" />
           </Card>
+
+          {/* Progress Report Card */}
+          <Card className="progress-report-card">
+            <h3 className="progress-report-title">Progress Report</h3>
+            <div className="progress-report-content">
+              <p className="progress-summary">{progressReport.summary}</p>
+              
+              {progressReport.strengths?.length > 0 && (
+                <div className="progress-section">
+                  <h4>💪 Strengths</h4>
+                  <ul>
+                    {progressReport.strengths.map((strength, idx) => (
+                      <li key={idx} className="strength-item">{strength}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {progressReport.improvements?.length > 0 && (
+                <div className="progress-section">
+                  <h4>🎯 Focus Areas</h4>
+                  <ul>
+                    {progressReport.improvements.map((area, idx) => (
+                      <li key={idx} className="improvement-item">{area}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="progress-badge">
+                <span className={`badge badge-${progressReport.overall}`}>
+                  {progressReport.overall.toUpperCase()}
+                </span>
+              </div>
+            </div>
+          </Card>
+
           <Card className="profile-details-count-card">
             <div className="info-count-card">
               {/* {icon && <div className="info-count-icon">{icon}</div>} */}

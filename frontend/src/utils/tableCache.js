@@ -3,45 +3,21 @@ import { openDB } from "idb";
 import api from "../api/client";
 import UploadFileHelper from "../components/profiles/UploadHelper";
 
-/**
- * Offline DB: versioned schema + migrations + in-page background sync + indexed lookups
- *
- * Key ideas:
- * - DB_VERSION increments when we add migrations (do NOT delete DB at runtime).
- * - Migrations are pure JS operations executed in upgrade() and can create indexes.
- * - Use memoryCache for instant reads.
- * - syncMutations() exists and is wired to automatic retry when online.
- * - getTableFiltered uses IDB indexes when possible.
- */
 
-/* ----------------------------- Config ------------------------------ */
 const DB_NAME = "GCU_Schools_offline";
 const DB_VERSION = 2; // bump this when adding new stores/indexes/migrations
 const CORE_STORES = ["tables", "mutations", "files", "cached_files"];
 
-/**
- * Index configuration per-table.
- * Add fields you want fast-filter/indexed lookups for. Index names must match object keys.
- * Example: students -> ['school_id', 'grade', 'category']
- */
 const INDEX_CONFIG = {
   students: ["school_id", "grade", "category", "full_name"],
   workers: ["school_id", "role", "full_name"],
   schools: ["name"],
   meals: ["school_id", "date"],
-  // add more tables and fields as needed
+  roles: ["name"],
 };
 
-/* --------------------------- In-memory cache ------------------------ */
 const memoryCache = new Map();
 
-/* --------------------------- Migrations ---------------------------- */
-/**
- * Each migration function receives the IDBDatabase `upgradeDb` and the oldVersion,
- * and should perform necessary schema changes. Keep migrations additive.
- *
- * When bumping DB_VERSION, add a new entry here keyed by the target version.
- */
 const MIGRATIONS = {
   1: (upgradeDb, oldVersion) => {
     // initial schema (if DB didn't exist)
@@ -403,8 +379,15 @@ export async function clearFiles() {
  * - preserves order (timestamp)
  * - uploads files via UploadFileHelper
  * - updates table caches (memory + tables store)
+ * - uses aggressive timeouts to handle slow/fake WiFi connections
  */
 export async function syncMutations() {
+  // Check if we're truly online before attempting sync
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    console.log('[tableCache] syncMutations skipped - navigator.onLine=false');
+    return {};
+  }
+
   const mutations = await getMutations();
   const files = await getFiles();
 
@@ -413,9 +396,12 @@ export async function syncMutations() {
     return {};
   }
 
+  console.log(`[tableCache] Starting sync for ${mutations.length} mutations...`);
+
   mutations.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   const idMap = {};
   const succeeded = [];
+  const failed = [];
 
   const replaceTempIds = (obj) => {
     if (!obj || typeof obj !== "object") return obj;
@@ -439,13 +425,23 @@ export async function syncMutations() {
 
   for (const m of mutations) {
     try {
+      // Create timeout for each mutation (10 seconds max)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
       const fileEntries = files.filter((f) => f.mutationId === m.id);
 
       if (["insert", "INSERT"].includes(m.type)) {
         let payload = replaceTempIds(m.payload || {});
         if (payload?.id?.startsWith("__tmp_")) delete payload.id;
 
-        const insertQuery = api.from(m.table).insert(payload);
+        let insertQuery = api.from(m.table).insert(payload);
+        
+        // Add abort signal if supported
+        if (typeof insertQuery.abortSignal === 'function') {
+          insertQuery = insertQuery.abortSignal(controller.signal);
+        }
+
         // support Supabase returning .select().single() or array
         let insertResult;
         try {
@@ -454,6 +450,8 @@ export async function syncMutations() {
           const r = await insertQuery.select();
           insertResult = { data: Array.isArray(r.data) ? r.data[0] : r.data, error: r.error };
         }
+
+        clearTimeout(timeoutId);
 
         const { data, error } = insertResult || {};
         if (error) throw error;
@@ -473,8 +471,9 @@ export async function syncMutations() {
           }
         }
 
-        if (Object.keys(fileUpdates).length)
+        if (Object.keys(fileUpdates).length) {
           await api.from(m.table).update(fileUpdates).eq("id", newId);
+        }
 
         // update table cache: replace tempId rows with serverRow or append
         const tableCache = await getTable(m.table);
@@ -489,6 +488,8 @@ export async function syncMutations() {
 
         await deleteFilesForMutation(m.id);
         succeeded.push(m.id);
+        
+        console.log(`[tableCache] ✓ Synced mutation ${m.id} (${m.type} ${m.table})`);
       } else if (["update", "UPDATE"].includes(m.type)) {
         const resolved = replaceTempIds(m.payload || {});
         const id = resolved.id;
@@ -500,6 +501,7 @@ export async function syncMutations() {
         }
 
         await api.from(m.table).update(updateData).eq("id", id);
+        clearTimeout(timeoutId);
 
         const tableCache = await getTable(m.table);
         const updated = (tableCache || []).map((r) =>
@@ -508,18 +510,31 @@ export async function syncMutations() {
         await cacheTable(m.table, updated);
         await deleteFilesForMutation(m.id);
         succeeded.push(m.id);
+        
+        console.log(`[tableCache] ✓ Synced mutation ${m.id} (${m.type} ${m.table})`);
       } else if (["delete", "DELETE"].includes(m.type)) {
         const resolved = replaceTempIds(m.payload || {});
         const id = resolved.id;
         await api.from(m.table).delete().eq("id", id);
+        clearTimeout(timeoutId);
+        
         const tableCache = await getTable(m.table);
         const filtered = (tableCache || []).filter((r) => r.id !== id);
         await cacheTable(m.table, filtered);
         await deleteFilesForMutation(m.id);
         succeeded.push(m.id);
+        
+        console.log(`[tableCache] ✓ Synced mutation ${m.id} (${m.type} ${m.table})`);
       }
     } catch (err) {
-      console.error("Sync error for mutation", m, err);
+      if (err.name === 'AbortError') {
+        console.warn(`[tableCache] ✗ Mutation ${m.id} timed out (10s) - will retry later`);
+        failed.push({ id: m.id, reason: 'timeout' });
+      } else {
+        console.error(`[tableCache] ✗ Sync error for mutation ${m.id}:`, err.message);
+        failed.push({ id: m.id, reason: err.message });
+      }
+      
       notifyChannel({
         type: "sync-error",
         table: m.table,
@@ -528,6 +543,11 @@ export async function syncMutations() {
       });
       // don't throw — continue other mutations
     }
+  }
+
+  console.log(`[tableCache] Sync complete: ${succeeded.length} succeeded, ${failed.length} failed`);
+  if (failed.length > 0) {
+    console.log('[tableCache] Failed mutations will be retried on next sync');
   }
 
   // Remove succeeded mutations
@@ -594,37 +614,92 @@ function notifyChannel(msg) {
 /* ----------------------- Background sync runner -------------------- */
 /**
  * attemptBackgroundSync:
- * - If online => run syncMutations immediately (debounced)
- * - If offline => do nothing
- *
- * There's also a lightweight retry mechanism to avoid hammering the network.
+ * - Checks real connectivity before attempting sync
+ * - Uses debouncing and exponential backoff to avoid hammering fake WiFi connections
+ * - If offline or no real internet => do nothing
  */
 let bgSyncRunning = false;
 let lastBgSync = 0;
 let bgSyncRetryTimeout = null;
+let consecutiveFailures = 0;
 
 /** Minimum interval between auto-sync attempts (ms) */
-const BG_SYNC_MIN_INTERVAL = 5 * 1000; // 5s (adjust as needed)
+const BG_SYNC_MIN_INTERVAL = 10 * 1000; // 10s (to avoid hammering fake WiFi)
+
+/**
+ * Check if we have real internet connectivity (not just WiFi connection)
+ */
+async function checkRealConnectivity() {
+  if (typeof navigator === 'undefined' || !navigator.onLine) {
+    return false;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+
+    await fetch('https://www.google.com/favicon.ico', {
+      method: 'HEAD',
+      mode: 'no-cors',
+      cache: 'no-cache',
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+    return true; // Successfully connected
+  } catch (err) {
+    console.warn('[tableCache] Real connectivity check failed:', err.message);
+    return false; // No real internet
+  }
+}
 
 export async function attemptBackgroundSync({ force = false } = {}) {
-  if (typeof navigator !== "undefined" && !navigator.onLine && !force) return;
   const now = Date.now();
-  if (bgSyncRunning) return;
-  if (!force && now - lastBgSync < BG_SYNC_MIN_INTERVAL) return;
+  
+  // Quick checks before expensive operations
+  if (bgSyncRunning) {
+    console.log('[tableCache] Sync already running, skipping');
+    return;
+  }
+  
+  if (!force && now - lastBgSync < BG_SYNC_MIN_INTERVAL) {
+    console.log('[tableCache] Sync called too soon, debouncing');
+    return;
+  }
+
+  // Check real connectivity first
+  const hasInternet = await checkRealConnectivity();
+  if (!hasInternet && !force) {
+    console.log('[tableCache] No real internet connectivity, skipping sync');
+    consecutiveFailures++;
+    return;
+  }
 
   bgSyncRunning = true;
+  console.log('[tableCache] Starting background sync...');
+  
   try {
     const idMap = await syncMutations();
     lastBgSync = Date.now();
+    consecutiveFailures = 0; // Reset on success
     notifyChannel({ type: "synced", tempIdMap: idMap });
+    console.log('[tableCache] Background sync completed successfully');
   } catch (err) {
-    console.warn("[offlineDB] background sync failed:", err);
-    // exponential backoff for retries
+    consecutiveFailures++;
+    console.warn(`[tableCache] Background sync failed (attempt ${consecutiveFailures}):`, err.message);
+    
+    // Exponential backoff: wait longer after each failure
+    const backoffDelay = Math.min(
+      2000 * Math.pow(2, consecutiveFailures - 1), // 2s, 4s, 8s, 16s...
+      60000 // Max 1 minute
+    );
+    
     if (bgSyncRetryTimeout) clearTimeout(bgSyncRetryTimeout);
     bgSyncRetryTimeout = setTimeout(() => {
       bgSyncRunning = false;
+      console.log(`[tableCache] Retrying sync after ${backoffDelay}ms backoff...`);
       attemptBackgroundSync();
-    }, 2000 + Math.random() * 3000);
+    }, backoffDelay + Math.random() * 1000);
   } finally {
     bgSyncRunning = false;
   }

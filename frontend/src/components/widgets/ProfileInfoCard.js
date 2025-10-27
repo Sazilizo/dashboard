@@ -9,7 +9,13 @@ const ProfileInfoCard = ({ data, bucketName, folderName }) => {
   return (
     <div className="profile-details-card">
       <div className="profile-image">
-        <Photos bucketName={bucketName} folderName={folderName} id={data.id} photoCount={1} />
+        <Photos
+          bucketName={bucketName}
+          folderName={folderName}
+          id={data.id}
+          photoCount={1}
+          restrictToProfileFolder={true}
+        />
       </div>
 
       <div className="profile-details">
