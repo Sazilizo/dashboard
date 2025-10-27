@@ -1,68 +1,128 @@
-// src/api/offlineClient.js
-import { createClient } from "@supabase/supabase-js";
 import { openDB } from "idb";
-import { getStoredAuthData } from "../auth/offlineAuth";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
-const DB_NAME = "api-cache";
-const DB_VERSION = 1;
-const CACHE_STORE = "responses";
-const QUEUE_STORE = "mutations";
+/* Configuration */
+export const DB_NAME = "GCU_Schools_offline";
+export const DB_VERSION = 2;
+const TABLES_STORE = "tables"; // shape: { name, rows, timestamp }
+const MUTATIONS_STORE = "mutations"; // queued mutations
+const FILES_STORE = "files"; // file blobs for mutations
+const CACHED_FILES_STORE = "cached_files"; // file metadata/cache
 const MAX_CACHE_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-// ---------------------------------------------
-// 🔹 IndexedDB setup
-// ---------------------------------------------
-async function getDB() {
+/* DB helpers */
+export async function getDB() {
   return openDB(DB_NAME, DB_VERSION, {
-    upgrade(db) {
-      if (!db.objectStoreNames.contains(CACHE_STORE)) {
-        const store = db.createObjectStore(CACHE_STORE, { keyPath: "id" });
-        store.createIndex("timestamp", "timestamp");
+    upgrade(db, oldVersion) {
+      if (oldVersion < 1) {
+        if (!db.objectStoreNames.contains(TABLES_STORE)) db.createObjectStore(TABLES_STORE, { keyPath: "name" });
+        if (!db.objectStoreNames.contains(MUTATIONS_STORE)) db.createObjectStore(MUTATIONS_STORE, { keyPath: "id", autoIncrement: true });
+        if (!db.objectStoreNames.contains(FILES_STORE)) db.createObjectStore(FILES_STORE, { keyPath: "id", autoIncrement: true });
+        if (!db.objectStoreNames.contains(CACHED_FILES_STORE)) db.createObjectStore(CACHED_FILES_STORE, { keyPath: "key" });
       }
-      if (!db.objectStoreNames.contains(QUEUE_STORE)) {
-        db.createObjectStore(QUEUE_STORE, { keyPath: "id", autoIncrement: true });
+      if (oldVersion < 2) {
+        try {
+          const tablesStore = db.objectStoreNames.contains(TABLES_STORE) ? db.transaction(TABLES_STORE).objectStore(TABLES_STORE) : null;
+          if (tablesStore && !tablesStore.indexNames.contains("timestamp")) tablesStore.createIndex("timestamp", "timestamp");
+        } catch (e) {}
+        if (!db.objectStoreNames.contains("background_sync")) db.createObjectStore("background_sync", { keyPath: "id", autoIncrement: true });
       }
     },
+    blocked() { console.warn("[offlineClient] openDB blocked"); },
+    blocking() { console.warn("[offlineClient] openDB blocking"); },
   });
 }
 
-async function cleanupCache() {
-  const db = await getDB();
-  const tx = db.transaction(CACHE_STORE, "readwrite");
-  const store = tx.objectStore(CACHE_STORE);
-  const now = Date.now();
+/* Cache helpers */
+export async function cacheResponse(key, rows) {
+  try {
+    const db = await getDB();
+    await db.put(TABLES_STORE, { name: key, rows, timestamp: Date.now() });
+  } catch (err) { console.warn("[offlineClient] cacheResponse failed:", err); }
+}
 
-  for await (const cursor of store.index("timestamp")) {
-    if (now - cursor.value.timestamp > MAX_CACHE_AGE) {
-      store.delete(cursor.key);
+export async function getCachedResponse(key) {
+  try {
+    const db = await getDB();
+    const entry = await db.get(TABLES_STORE, key);
+    return entry?.rows ?? null;
+  } catch (err) { console.warn("[offlineClient] getCachedResponse failed:", err); return null; }
+}
+
+export async function cleanupCache() {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(TABLES_STORE, "readwrite");
+    const store = tx.objectStore(TABLES_STORE);
+    const allKeys = await store.getAllKeys();
+    const now = Date.now();
+    for (const key of allKeys) {
+      const entry = await store.get(key);
+      if (!entry) continue;
+      if (now - (entry.timestamp || 0) > MAX_CACHE_AGE) await store.delete(key);
     }
-  }
+    await tx.done;
+  } catch (err) { console.warn("[offlineClient] cleanupCache failed:", err); }
 }
 
-async function cacheResponse(key, data) {
+/* Mutation queueing */
+export async function queueMutation(method, path, data) {
   const db = await getDB();
-  await db.put(CACHE_STORE, { id: key, data, timestamp: Date.now() });
-}
+  const tx = db.transaction([MUTATIONS_STORE, FILES_STORE], "readwrite");
+  const mutationsStore = tx.objectStore(MUTATIONS_STORE);
+  const filesStore = tx.objectStore(FILES_STORE);
 
-async function getCachedResponse(key) {
-  const db = await getDB();
-  const cached = await db.get(CACHE_STORE, key);
-  return cached?.data;
-}
-
-async function queueMutation(method, path, data) {
-  const db = await getDB();
-  await db.add(QUEUE_STORE, {
-    method,
-    path,
-    data,
-    timestamp: Date.now(),
+  const fileFields = [];
+  const cleaned = Array.isArray(data) ? [...data] : { ...data };
+  Object.entries(data || {}).forEach(([k, v]) => {
+    if (v instanceof File || v instanceof Blob) {
+      cleaned[k] = { __file_pending: true };
+      fileFields.push({ fieldName: k, file: v });
+    }
   });
+
+  const timestamp = Date.now();
+  const key = await mutationsStore.add({ method, path, payload: cleaned, timestamp });
+  for (const f of fileFields) await filesStore.add({ mutationId: key, fieldName: f.fieldName, file: f.file });
+  await tx.done;
+
+  if ("serviceWorker" in navigator && "SyncManager" in window) {
+    navigator.serviceWorker.ready.then((reg) => { try { reg.sync.register("sync-mutations").catch(() => {}); } catch {} });
+  }
+  if (typeof BroadcastChannel !== "undefined") {
+    try { new BroadcastChannel("offline-sync").postMessage({ type: "queued", mutationId: key, path }); } catch {}
+  }
+  return key;
 }
 
-// ---------------------------------------------
-// 🔹 QueryBuilder (used for .select() and fallback logic)
-// ---------------------------------------------
+/* Mutation helpers */
+export async function getMutations() {
+  const db = await getDB();
+  const tx = db.transaction(MUTATIONS_STORE);
+  const vals = await tx.store.getAll();
+  const keys = await tx.store.getAllKeys();
+  return vals.map((v, i) => ({ id: keys[i], ...v }));
+}
+
+export async function getFilesForMutation(mutationId) {
+  const db = await getDB();
+  const tx = db.transaction(FILES_STORE);
+  const vals = await tx.store.getAll();
+  const keys = await tx.store.getAllKeys();
+  return vals.map((v, i) => ({ id: keys[i], ...v })).filter((f) => f.mutationId === mutationId);
+}
+
+async function deleteFilesForMutation(mutationId) {
+  const db = await getDB();
+  const tx = db.transaction(FILES_STORE, "readwrite");
+  const all = await tx.store.getAll();
+  const keys = await tx.store.getAllKeys();
+  const toRemove = all.map((v, i) => (v.mutationId === mutationId ? keys[i] : null)).filter(Boolean);
+  for (const k of toRemove) await tx.store.delete(k);
+  await tx.done;
+}
+
+/* QueryBuilder */
 class QueryBuilder {
   constructor(table, baseClient) {
     this.table = table;
@@ -73,23 +133,17 @@ class QueryBuilder {
     this.filters = {};
     this.rangeStart = null;
     this.rangeEnd = null;
+    this.isSingleFlag = false;
+    this.isMaybeSingleFlag = false;
   }
 
-  select(query) { this.queryString = query; return this; }
+  select(q = "*") { this.queryString = q; return this; }
   order(field, { ascending = true } = {}) { this.orderField = field; this.orderAscending = ascending; return this; }
-  range(start, end) { this.rangeStart = start; this.rangeEnd = end; return this; }
-  eq(field, value) { this.filters[field] = { type: "eq", value }; return this; }
-  in(field, values) { this.filters[field] = { type: "in", value: values }; return this; }
-  single() { this.isSingle = true; return this; }
-
-  async maybeSingle() {
-    const res = await this.execute();
-    const { data, error } = res || {};
-    if (error) return { data: null, error };
-    return { data: Array.isArray(data) ? data[0] ?? null : data ?? null, error: null };
-  }
-
-  then(resolve, reject) { return this.execute().then(resolve, reject); }
+  range(s, e) { this.rangeStart = s; this.rangeEnd = e; return this; }
+  eq(f, v) { this.filters[f] = { type: "eq", value: v }; return this; }
+  in(f, vals) { this.filters[f] = { type: "in", value: vals }; return this; }
+  single() { this.isSingleFlag = true; return this; }
+  maybeSingle() { this.isMaybeSingleFlag = true; return this; }
 
   async execute() {
     const cacheKey = JSON.stringify({
@@ -99,126 +153,136 @@ class QueryBuilder {
       order: this.orderField,
       ascending: this.orderAscending,
       range: [this.rangeStart, this.rangeEnd],
-      single: this.isSingle,
+      single: this.isSingleFlag,
+      maybeSingle: this.isMaybeSingleFlag,
     });
 
     try {
-      let query = this.baseClient.from(this.table).select(this.queryString);
-      Object.entries(this.filters).forEach(([field, filter]) => {
-        if (filter.type === "in") query = query.in(field, filter.value);
-        else if (filter.type === "eq") query = query.eq(field, filter.value);
+      let q = this.baseClient.from(this.table).select(this.queryString);
+      Object.entries(this.filters).forEach(([f, filter]) => {
+        if (filter.type === "eq") q = q.eq(f, filter.value);
+        else if (filter.type === "in") q = q.in(f, filter.value);
       });
-      if (this.orderField) query = query.order(this.orderField, { ascending: this.orderAscending });
-      if (this.rangeStart !== null && this.rangeEnd !== null) query = query.range(this.rangeStart, this.rangeEnd);
-      if (this.isSingle) query = query.single();
+      if (this.orderField) q = q.order(this.orderField, { ascending: this.orderAscending });
+      if (this.rangeStart !== null && this.rangeEnd !== null) q = q.range(this.rangeStart, this.rangeEnd);
+      if (this.isSingleFlag) q = q.single();
+      if (this.isMaybeSingleFlag && typeof q.maybeSingle === "function") q = q.maybeSingle();
 
-      const { data, error } = await query;
+      const { data, error } = await q;
       if (error) throw error;
 
-      await cacheResponse(cacheKey, data);
+      if (Array.isArray(data)) await cacheResponse(cacheKey, data);
+      else if (data != null) await cacheResponse(cacheKey, Array.isArray(data) ? data : [data]);
+
       return { data, error: null };
-    } catch (error) {
-      console.warn("Online query failed, using cache:", error);
-      let data = await getCachedResponse(cacheKey) || [];
-      Object.entries(this.filters).forEach(([field, filter]) => {
-        if (filter.type === "eq") data = data.filter((row) => row[field] === filter.value);
-        if (filter.type === "in") data = data.filter((row) => filter.value.includes(row[field]));
+    } catch (err) {
+      console.warn("Online query failed, using cache:", err);
+      let rows = (await getCachedResponse(cacheKey)) || [];
+      Object.entries(this.filters).forEach(([f, filter]) => {
+        if (filter.type === "eq") rows = rows.filter(r => r[f] === filter.value);
+        if (filter.type === "in") rows = rows.filter(r => filter.value.includes(r[f]));
       });
-      if (this.orderField) data.sort((a, b) =>
-        this.orderAscending ? (a[this.orderField] > b[this.orderField] ? 1 : -1) : (a[this.orderField] < b[this.orderField] ? 1 : -1)
-      );
-      if (this.rangeStart !== null && this.rangeEnd !== null) data = data.slice(this.rangeStart, this.rangeEnd + 1);
-      if (this.isSingle) data = Array.isArray(data) ? data[0] ?? null : data ?? null;
-      return { data, error: null };
+      if (this.orderField) rows.sort((a, b) => (this.orderAscending ? (a[this.orderField] > b[this.orderField] ? 1 : -1) : (a[this.orderField] < b[this.orderField] ? 1 : -1)));
+      if (this.rangeStart !== null && this.rangeEnd !== null) rows = rows.slice(this.rangeStart, this.rangeEnd + 1);
+
+      let result;
+      if (this.isSingleFlag || this.isMaybeSingleFlag) result = Array.isArray(rows) ? rows[0] ?? null : rows ?? null;
+      else result = rows;
+
+      return { data: result, error: null };
     }
   }
+
+  then(resolve, reject) { return this.execute().then(resolve, reject); }
 }
 
-// ---------------------------------------------
-// 🔹 Supabase Offline Wrapper
-// ---------------------------------------------
+/* Offline Client factory */
 export function createOfflineClient(supabaseUrl, supabaseKey) {
-  const supabase = createClient(supabaseUrl, supabaseKey, {
-    auth: { persistSession: true, autoRefreshToken: true },
-  });
-
-  const wrappedAuth = {
-    async getUser() {
-      try { return await supabase.auth.getUser(); }
-      catch { const { user } = await getStoredAuthData(); return { data: { user }, error: null }; }
-    },
-    onAuthStateChange: (...args) => supabase.auth.onAuthStateChange(...args),
-    signInWithPassword: (...args) => supabase.auth.signInWithPassword(...args),
-    signOut: (...args) => supabase.auth.signOut(...args),
-    refreshSession: (...args) => supabase.auth.refreshSession(...args),
-    getSession: (...args) => supabase.auth.getSession(...args),
-  };
-
-  const wrapQuery = (query) => new Proxy(query, {
-    get(target, prop) {
-      const orig = target[prop];
-      if (typeof orig !== "function") return orig;
-      return (...args) => {
-        try {
-          const result = orig.apply(target, args);
-          if (result && typeof result.then === "function") return result;
-          return Promise.resolve(result);
-        } catch (err) { return Promise.resolve({ data: null, error: err }); }
-      };
-    }
+  const supabase = createSupabaseClient(supabaseUrl, supabaseKey, {
+    auth: { persistSession: true, autoRefreshToken: true }
   });
 
   return {
     from(table) {
-      const originalQuery = supabase.from(table);
-      return new Proxy(originalQuery, {
+      const original = supabase.from(table);
+      return new Proxy(original, {
         get(target, prop) {
-
-          if (prop === "select") return (query = "*") => new QueryBuilder(table, supabase).select(query);
-
-          if (prop === "insert") return (data) => wrapQuery(target.insert(data));
-          if (prop === "upsert") return (data) => wrapQuery(target.upsert(data));
-
-          if (prop === "update") return (data) => wrapQuery(target.update(data));
-          if (prop === "delete") return () => wrapQuery(target.delete());
-
+          if (prop === "select") return (q = "*") => new QueryBuilder(table, supabase).select(q);
+          if (prop === "insert") return data => target.insert(data);
+          if (prop === "upsert") return data => target.upsert(data);
+          if (prop === "update") return data => target.update(data);
+          if (prop === "delete") return () => target.delete();
+          if (prop === "maybeSingle") return () => new QueryBuilder(table, supabase).maybeSingle();
+          if (prop === "single") return () => new QueryBuilder(table, supabase).single();
           return target[prop];
-        },
+        }
       });
     },
-    auth: wrappedAuth,
+    auth: supabase.auth,
     storage: supabase.storage,
-    functions: supabase.functions,
     rpc: (...args) => supabase.rpc(...args),
+    functions: supabase.functions,
+    _raw: supabase
   };
 }
 
-// ---------------------------------------------
-// 🔹 Sync queued mutations when online again
-// ---------------------------------------------
-async function processMutationQueue(supabase) {
-  const db = await getDB();
-  const tx = db.transaction(QUEUE_STORE, "readwrite");
-  const store = tx.objectStore(QUEUE_STORE);
 
-  let cursor = await store.openCursor();
-  while (cursor) {
-    const { method, path, data } = cursor.value;
-    try {
-      if (method === "INSERT") await supabase.from(path).insert(data);
-      if (method === "UPSERT") await supabase.from(path).upsert(data);
-      if (method === "UPDATE") { const { id, ...rest } = data || {}; await supabase.from(path).update(rest).eq("id", id); }
-      if (method === "DELETE") { const [{ id }] = data || []; await supabase.from(path).delete().eq("id", id); }
-      await store.delete(cursor.key);
-    } catch (err) {
-      console.error("Failed queued mutation:", err);
+/* Utility */
+function findTempIdInPayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  if (payload.id?.startsWith?.("__tmp_")) return payload.id;
+  for (const [k, v] of Object.entries(payload)) if (typeof v === "string" && v.startsWith("__tmp_")) return v;
+  return null;
+}
+
+// Add near the bottom of offlineClient.js
+export async function syncOfflineChanges(supabaseClient) {
+  try {
+    const mutations = await getMutations();
+    for (const mutation of mutations) {
+      // Reconstruct payload including any pending files
+      const files = await getFilesForMutation(mutation.id);
+      const payload = { ...mutation.payload };
+      for (const f of files) {
+        payload[f.fieldName] = f.file;
+      }
+
+      try {
+        const { data, error } = await supabaseClient.from(mutation.path)[mutation.method](payload);
+        if (!error) {
+          // Remove mutation and associated files
+          await deleteFilesForMutation(mutation.id);
+          const db = await getDB();
+          await db.delete(MUTATIONS_STORE, mutation.id);
+        }
+      } catch (err) {
+        console.warn("[offlineClient] sync mutation failed", err);
+      }
     }
-    cursor = await cursor.continue();
+  } catch (err) {
+    console.warn("[offlineClient] syncOfflineChanges error", err);
   }
-  await tx.done;
 }
 
-export async function syncOfflineChanges(supabase) {
-  await processMutationQueue(supabase);
-  await cleanupCache();
+
+/* Background Sync */
+export function registerBackgroundSync() {
+  if ("serviceWorker" in navigator && "SyncManager" in window) {
+    navigator.serviceWorker.ready.then(reg => reg.sync.register("sync-mutations")).catch(err => console.warn("background sync failed", err));
+  }
 }
+
+export default {
+  getDB,
+  cacheResponse,
+  getCachedResponse,
+  cleanupCache,
+  queueMutation,
+  getMutations,
+  getFilesForMutation,
+  deleteFilesForMutation,
+  createOfflineClient,
+  registerBackgroundSync,
+  getTableCached: getCachedResponse,
+  syncOfflineChanges
+};

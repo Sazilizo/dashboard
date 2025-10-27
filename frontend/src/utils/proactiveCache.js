@@ -8,7 +8,7 @@ export async function cacheFormSchemasIfOnline() {
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       return; // don't try while offline
     }
-    const tablesToCache = ["form_schemas", "schools", "workers", "students", "meals"];
+    const tablesToCache = ["form_schemas", "schools", "workers", "students", "meals","academic_sessions","academic_session_participants", "pe_sessions", "pe_session_participants", "assessments", "attendance_records", "meal_distributions"];
     for (const table of tablesToCache) {
       try {
         const { data, error } = await api.from(table).select("*");

@@ -133,7 +133,6 @@ export default function useOfflineTable(
     }
   }
 
-  /** 🎯 Refetch when dependencies change */
   useEffect(() => {
     setPage(1);
     fetchTable(1, true);
@@ -149,7 +148,7 @@ export default function useOfflineTable(
     }
   };
 
-  /** ✳️ Add row (online/offline aware) */
+  /** Add row (online/offline aware) */
   async function addRow(payload) {
     try {
       if (isOnline) {
@@ -186,7 +185,7 @@ export default function useOfflineTable(
     }
   }
 
-  /** ♻️ Update row */
+  /** Update row */
   async function updateRow(id, data) {
     try {
       if (isOnline) {
@@ -216,7 +215,7 @@ export default function useOfflineTable(
     }
   }
 
-  /** 🗑 Delete row */
+  /**  Delete row */
   async function deleteRow(id) {
     try {
       if (isOnline) {

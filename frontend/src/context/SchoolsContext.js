@@ -6,8 +6,8 @@ import { openDB, deleteDB } from "idb";
 
 const SchoolsContext = createContext();
 
-const DB_NAME = "offline-dashboard";
-const DB_VERSION = 1;
+const DB_NAME = "GCU_Schools_offline";
+const DB_VERSION = 2;
 const STORE_NAME = "schools";
 
 // 🔹 Open (or create) IndexedDB store safely

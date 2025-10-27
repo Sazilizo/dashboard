@@ -1,64 +1,53 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import Photos from "../profiles/Photos";
 
-function FallbackImage({ bucketName, folderName, id, photoCount }) {
-  const [hasError, setHasError] = useState(false);
-  const validImageExtensions = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
-  const isValid = (url) =>
-    validImageExtensions.some((ext) => url?.toLowerCase().endsWith(ext));
-  if (hasError) {
-    return (
-      <div className="w-full h-full bg-gray-300 rounded flex items-center justify-center">
-        <span className="text-gray-500 text-sm">No image</span>
-      </div>
-    );
-  }
+function FallbackImage({ url }) {
   return (
-    <Photos
-      bucketName={bucketName}
-      folderName={folderName}
-      id={id}
-      photoCount={photoCount}
-      onError={() => setHasError(true)}
-      isValidUrl={isValid}
-    />
+    <div className="w-full h-full flex items-center justify-center bg-gray-100 rounded overflow-hidden">
+      {url ? (
+        <img
+          src={url}
+          alt="Student"
+          loading="lazy"
+          className="w-full h-full object-cover"
+        />
+      ) : (
+        <span className="text-gray-500 text-sm">No image</span>
+      )}
+    </div>
   );
 }
 
-export default function ListItems({ students, onDelete, onUpdate }) {
+export default function ListItems({ students, onDelete, onUpdate, photoMap }) {
   const [editId, setEditId] = useState(null);
   const [editName, setEditName] = useState("");
 
-  React.useEffect(() => {
-    const bc = typeof window !== "undefined" && "BroadcastChannel" in window ? new BroadcastChannel("offline-sync") : null;
-    // refresh could be handled higher up; we just listen so badges update when sync completes
-    return () => { if (bc) bc.close(); };
-  }, []);
-
   if (!students || students.length === 0) return <p>No students found.</p>;
 
+  console.log("Rendering ListItems with students:", students);
   return (
     <ul className="app-list">
       {students.map((s) => (
         <li key={s.id}>
           <Link to={`/dashboard/students/${s.id}`}>
             <div className="app-profile-photo">
-              <FallbackImage
-                bucketName="student-uploads"
-                folderName="students"
-                id={s.id}
-                photoCount={1}
-              />
+              <FallbackImage url={photoMap?.[s.id]} />
             </div>
             <div className="app-list-item-details">
               <p>
                 <strong>{s.full_name}</strong>
               </p>
-              <p>Grade: {s.grade} {s.__queued && <span style={{ color: "orange", marginLeft: 8 }}>(Queued)</span>}</p>
+              <p>
+                Grade: {s.grade}{" "}
+                {s.__queued && (
+                  <span style={{ color: "orange", marginLeft: 8 }}>
+                    (Queued)
+                  </span>
+                )}
+              </p>
             </div>
           </Link>
-          {/* Delete button */}
+
           {onDelete && (
             <button
               className="btn btn-danger"
@@ -68,14 +57,14 @@ export default function ListItems({ students, onDelete, onUpdate }) {
               Delete
             </button>
           )}
-          {/* Simple inline edit for name */}
+
           {onUpdate && (
             <span style={{ marginLeft: 8 }}>
               {editId === s.id ? (
                 <>
                   <input
                     value={editName}
-                    onChange={e => setEditName(e.target.value)}
+                    onChange={(e) => setEditName(e.target.value)}
                     style={{ width: 120 }}
                   />
                   <button
