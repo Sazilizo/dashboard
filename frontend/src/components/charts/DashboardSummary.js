@@ -11,7 +11,7 @@ import {
   ResponsiveContainer
 } from "recharts";
 
-const GradeDistributionBarChart = ({ title, students, height = 300 }) => {
+const GradeDistributionBarChart = React.memo(({ title, students, height = 300 }) => {
   // Aggregate students into grade counts
   const data = useMemo(() => {
     if (!students || students.length === 0) return [];
@@ -45,7 +45,9 @@ const GradeDistributionBarChart = ({ title, students, height = 300 }) => {
       </ResponsiveContainer>
     </div>
   );
-};
+});
+
+GradeDistributionBarChart.displayName = 'GradeDistributionBarChart';
 
 export default GradeDistributionBarChart;
 

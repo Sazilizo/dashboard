@@ -1,32 +1,48 @@
-import React, { use, useEffect, useMemo } from "react";
+import React, { useMemo, useEffect } from "react";
 import DashboardSummary from "../components/charts/DashboardSummary";
 import { Outlet } from "react-router-dom";
 import FiltersPanel from "../components/filters/FiltersPanel";
 import { useAuth } from "../context/AuthProvider";
 import { useSchools } from "../context/SchoolsContext";
 import { useFilters } from "../context/FiltersContext";
-import { useSupabaseWorkers } from "../hooks/useSupabaseWorkers";
-import useOfflineTable from "../hooks/useOfflineTable";
+import { useData } from "../context/DataContext";
 import PieChartStats from "../components/charts/PieChart";
 import StackedCategoryGradeChart from "../components/charts/StackedChart";
 import StackedStudentsGradeChart from "../components/charts/StackedStudentsGradeCharts";
 import SkeletonList from "../components/widgets/SkeletonList";
-import ListItems from "../components/widgets/ListItems";
 
 
 export default function DashboardHome() {
   const {user} = useAuth();
-  const {schools} = useSchools();
-  const {filters, setFilters} = useFilters()
+  const {schools, loading: schoolsLoading} = useSchools();
+  const {filters, setFilters} = useFilters();
+  const { workers, students, meals, schools: schoolsData, loading, fetchData } = useData();
+
+  console.log('[DashboardHome] Schools:', schools?.length || 0, 'schools loaded');
 
   const isAllSchoolRole = ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles.name);
   const schoolIds = useMemo(() => (isAllSchoolRole ? schools.map((s) => s.id) : [user?.profile?.school_id]).filter(Boolean), [isAllSchoolRole, schools, user]);
 
-  // Use offline table hooks so counts and lists work offline too
-  const { rows: workers = [], loading: loadingWorkers } = useOfflineTable("workers", { school_id: schoolIds }, "*, roles:roles(name)");
-  const { rows: students = [], loading: loadingStudents } = useOfflineTable("students", { school_id: schoolIds }, "*");
-  const { rows: meals = [], loading: loadingMeals } = useOfflineTable("meals", { school_id: schoolIds }, "*");
-  const { rows: schoolsRows = [], loading: loadingSchools } = useOfflineTable("schools", {}, "*");
+  console.log('[DashboardHome] School IDs for query:', schoolIds);
+
+  // Fetch data when schoolIds change
+  useEffect(() => {
+    console.log('[DashboardHome] useEffect triggered, schoolIds:', schoolIds);
+    if (schoolIds.length > 0) {
+      fetchData(schoolIds);
+    }
+  }, [schoolIds, fetchData]);
+
+  // Debug log to see what data we have
+  useEffect(() => {
+    console.log('[DashboardHome] Data state:', {
+      workers: workers?.length || 0,
+      students: students?.length || 0,
+      meals: meals?.length || 0,
+      schoolsData: schoolsData?.length || 0,
+      loading
+    });
+  }, [workers, students, meals, schoolsData, loading]);
 
   // Prepare chart data
   const rolePieData = useMemo(() => {
@@ -59,7 +75,7 @@ export default function DashboardHome() {
 
   const totalWorkers = workers?.length || 0;
   const totalStudents = students?.length || 0;
-  const totalSchools = (schoolIds && schoolIds.length) ? schoolIds.length : (schoolsRows?.length || 0);
+  const totalSchools = (schoolIds && schoolIds.length) ? schoolIds.length : (schoolsData?.length || 0);
   const totalMeals = meals?.length || 0;
   return (
     <div>

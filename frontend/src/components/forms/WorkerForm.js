@@ -6,6 +6,8 @@ import RoleSelect from "../../hooks/RoleSelect";
 import { queueMutation } from "../../utils/tableCache";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { autoResizeTextarea } from "../../utils/autoResizeTextarea";
+import useToast from "../../hooks/useToast";
+import ToastContainer from "../ToastContainer";
 
 export default function WorkerForm() {
   const { schools } = useSchools();
@@ -15,6 +17,7 @@ export default function WorkerForm() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const textareaRefs = useRef({});
+  const { toasts, showToast, removeToast } = useToast();
 
   // Load Worker schema
   useEffect(() => {
@@ -133,11 +136,11 @@ export default function WorkerForm() {
           if (updateError) throw updateError;
         }
 
-        alert("Worker created successfully!");
+        showToast("Worker created successfully!", "success");
       } else {
         // Offline: queue mutation (queueMutation will extract file blobs into FILE_STORE)
         await queueMutation("workers", "insert", insertData);
-        alert("You are offline. The worker has been queued and will sync when back online.");
+        showToast("You are offline. The worker has been queued and will sync when back online.", "info");
       }
 
       // Reset form
@@ -158,7 +161,9 @@ export default function WorkerForm() {
   if (!fields.length) return <p>Loading form...</p>;
 
   return (
-    <form onSubmit={handleSubmit}>
+    <>
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
+      <form onSubmit={handleSubmit}>
       {fields.map((f) => {
         let inputType = "text";
         if (f.format === "file") inputType = "file";
@@ -243,6 +248,7 @@ export default function WorkerForm() {
         {loading ? "Creating..." : "Create Worker"}
       </button>
     </form>
+    </>
   );
 }
 

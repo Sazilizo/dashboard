@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import api from "../../api/client";
 import UploadFileHelper from "./UploadHelper";
+import useToast from "../../hooks/useToast";
+import ToastContainer from "../ToastContainer";
 
 export default function EditProfile({ user,onAvatarUpdated }) {
   const [form, setForm] = useState({
@@ -16,6 +18,7 @@ export default function EditProfile({ user,onAvatarUpdated }) {
   const [schools, setSchools] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const { toasts, showToast, removeToast } = useToast();
 
   // avatar states
   const [pendingFile, setPendingFile] = useState(null);
@@ -108,9 +111,10 @@ export default function EditProfile({ user,onAvatarUpdated }) {
 
       if (profileError) throw profileError;
 
-      alert("Profile updated successfully!");
+      showToast("Profile updated successfully!", "success");
     } catch (err) {
       setError(err.message || "Update failed");
+      showToast(err.message || "Update failed", "error");
     } finally {
       setLoading(false);
     }
@@ -118,6 +122,7 @@ export default function EditProfile({ user,onAvatarUpdated }) {
 
   return (
     <div className="edit-profile-container">
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
       <form onSubmit={handleSubmit} className="edit-profile-form">
         <label>Email:</label>
         <input

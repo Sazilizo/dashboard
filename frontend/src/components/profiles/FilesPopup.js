@@ -83,8 +83,15 @@ export default function FilesPopup({ bucketName, folderName, id, onClose }) {
 
       // Merge files from both folders
       // Root folder contains PDFs and other documents (siblings to profile-picture)
+      // Note: Folders have an 'id' property set to null, files have metadata but we check for actual file objects
       const rootFiles = (rootRes.data || [])
-        .filter((f) => f.name && f.name !== ".emptyFolderPlaceholder" && !f.id) // exclude folders and placeholders
+        .filter((f) => {
+          // Exclude the profile-picture folder itself and empty placeholders
+          if (!f.name || f.name === ".emptyFolderPlaceholder") return false;
+          if (f.name === "profile-picture") return false; // This is a folder, not a file
+          // Include everything else (documents, PDFs, etc.)
+          return true;
+        })
         .map((f) => ({ ...f, fullPath: `${basePath}/${f.name}` }));
 
       // Profile-picture folder contains images

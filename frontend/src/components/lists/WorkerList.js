@@ -1,8 +1,8 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo } from "react";
 import { useAuth } from "../../context/AuthProvider";
 import { useSchools } from "../../context/SchoolsContext";
+import { useData } from "../../context/DataContext";
 import FiltersPanel from "../filters/FiltersPanel";
-import useOfflineTable from "../../hooks/useOfflineTable";
 import { useFilters } from "../../context/FiltersContext";
 import StudentStats from "./StudentStats";
 import "../../styles/main.css"
@@ -19,9 +19,12 @@ export default function WorkerList() {
   const { user } = useAuth();
   const { schools } = useSchools();
   const { filters, setFilters } = useFilters();
+  const { workers: allWorkers, loading, isOnline, fetchData } = useData();
   const [showList, setShowList] = React.useState(true);
   const [sortBy, setSortBy] = React.useState("id");
   const [sortOrder, setSortOrder] = React.useState("asc");
+  const [page, setPage] = React.useState(1);
+  const pageSize = 50;
 
   const isAllSchoolRole = ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles?.name);
 
@@ -37,33 +40,52 @@ export default function WorkerList() {
     return user?.profile?.school_id ? [user.profile.school_id] : [];
   }, [user?.profile?.roles?.name, user?.profile?.school_id, schools, filters.school_id]);
 
-  const normalizedFilters = React.useMemo(() => {
-    const f = { school_id: schoolIds };
-    if (Array.isArray(filters.group_by) && filters.group_by.length > 0) f.group_by = filters.group_by;
-    if (Array.isArray(filters.deleted) && filters.deleted.length > 0) f.deleted = filters.deleted;
-    return f;
-  }, [schoolIds, filters.group_by, filters.deleted]);
+  // Fetch data when school IDs change
+  useEffect(() => {
+    if (schoolIds.length > 0) {
+      fetchData(schoolIds);
+    }
+  }, [schoolIds, fetchData]);
 
-  // Use the offline hook for workers. Include relation fields as needed (roles)
-  const {
-    rows: workers,
-    loading,
-    error,
-    addRow,
-    updateRow,
-    deleteRow,
-    isOnline,
-    page,
-    hasMore,
-    loadMore,
-  } = useOfflineTable(
-    "workers",
-    normalizedFilters,
-    `*, roles:roles(name)`,
-    50,
-    sortBy,
-    sortOrder
-  );
+  // Filter and sort workers in memory
+  const workers = React.useMemo(() => {
+    if (!allWorkers) return [];
+    
+    let filtered = [...allWorkers];
+    
+    // Apply group_by filter if exists
+    if (Array.isArray(filters.group_by) && filters.group_by.length > 0) {
+      filtered = filtered.filter(w => {
+        const roleName = w.roles?.name?.toLowerCase() || '';
+        return filters.group_by.some(g => roleName.includes(g.toLowerCase()));
+      });
+    }
+    
+    // Apply deleted filter if exists
+    if (Array.isArray(filters.deleted) && filters.deleted.length > 0) {
+      filtered = filtered.filter(w => filters.deleted.includes(w.deleted));
+    }
+    
+    // Sort
+    filtered.sort((a, b) => {
+      const aVal = a[sortBy];
+      const bVal = b[sortBy];
+      const comparison = aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
+      return sortOrder === "asc" ? comparison : -comparison;
+    });
+    
+    return filtered;
+  }, [allWorkers, filters.group_by, filters.deleted, sortBy, sortOrder]);
+
+  // Paginate workers
+  const paginatedWorkers = React.useMemo(() => {
+    const start = (page - 1) * pageSize;
+    const end = start + pageSize;
+    return workers.slice(start, end);
+  }, [workers, page, pageSize]);
+
+  const totalPages = Math.ceil(workers.length / pageSize);
+  const hasMore = page < totalPages;
 
   return (
   <div className="app-list-container">
@@ -108,19 +130,22 @@ export default function WorkerList() {
             </div>
 
             {loading && <div>Loading...</div>}
-            {!loading && error && <div style={{ color: "red" }}>{error.message || error}</div>}
-            {!loading && !error && (
+            {!loading && workers && workers.length > 0 && (
               <>
-                  <WorkerListItems workers={workers} />
-
+                <WorkerListItems workers={paginatedWorkers} />
                 <Pagination
                   page={page}
                   hasMore={hasMore}
-                  loadMore={loadMore}
+                  loadMore={() => setPage(p => p + 1)}
+                  loadLess={() => setPage(p => Math.max(1, p - 1))}
                   loading={loading}
+                  totalItems={workers.length}
+                  itemsPerPage={pageSize}
                 />
-                <QueuedList table="workers" />
               </>
+            )}
+            {!loading && (!workers || workers.length === 0) && (
+              <p>No workers found.</p>
             )}
           </div>
 

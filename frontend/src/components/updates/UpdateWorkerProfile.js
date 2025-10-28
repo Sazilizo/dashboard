@@ -6,6 +6,8 @@ import UploadFileHelper from "../profiles/UploadHelper";
 import { useSchools } from "../../context/SchoolsContext";
 import { useAuth } from "../../context/AuthProvider";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
+import useToast from "../../hooks/useToast";
+import ToastContainer from "../ToastContainer";
 
 export default function UpdateWorkerProfile() {
   const { id } = useParams();
@@ -14,6 +16,7 @@ export default function UpdateWorkerProfile() {
   const { isOnline } = useOnlineStatus();
   const [worker, setWorker] = useState(null);
   const [loading, setLoading] = useState(true);
+  const { toasts, showToast, removeToast } = useToast();
 
   // Compute allowed school IDs based on user role
   const schoolIds = useMemo(() => {
@@ -51,6 +54,7 @@ export default function UpdateWorkerProfile() {
 
   return (
     <div className="p-6">
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
       <div className="profile-learner-print mb-4">
         <button className="btn btn-primary" onClick={() => window.history.back()}>
           Back to Workers
@@ -108,10 +112,10 @@ export default function UpdateWorkerProfile() {
               }
 
               console.log("UpdateWorkerProfile: update successful", data);
-              alert("Worker profile updated successfully!");
+              showToast("Worker profile updated successfully!", "success");
             } catch (err) {
               console.error("UpdateWorkerProfile: Error during update", err);
-              alert(`Failed to update worker profile: ${err.message || JSON.stringify(err)}`);
+              showToast(`Failed to update worker profile: ${err.message || JSON.stringify(err)}`, "error");
             }
           }}
         />

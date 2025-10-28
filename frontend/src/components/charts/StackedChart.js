@@ -16,7 +16,7 @@ const COLORS = [
   "#169a59"  // green
 ];
 
-export default function StackedCategoryGradeChart({ students, height = 300 }) {
+export default React.memo(function StackedCategoryGradeChart({ students, height = 300 }) {
   // Process students to build data for stacked bars
   const data = useMemo(() => {
     if (!students?.length) return [];
@@ -96,5 +96,4 @@ export default function StackedCategoryGradeChart({ students, height = 300 }) {
       </ResponsiveContainer>
     </div>
   );
-}
-
+});

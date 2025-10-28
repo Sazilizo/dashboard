@@ -16,7 +16,7 @@ const COLORS = [
   "#f1c40f", // yellow
 ];
 
-const PieChartStats = ({ title, data, dataKey = 'value', labelKey = 'label', height = 300 }) => {
+const PieChartStats = React.memo(({ title, data, dataKey = 'value', labelKey = 'label', height = 300 }) => {
   if (!data || data.length === 0) return null;
 
   // Custom label to display value inside each slice
@@ -61,7 +61,8 @@ const PieChartStats = ({ title, data, dataKey = 'value', labelKey = 'label', hei
       </ResponsiveContainer>
     </div>
   );
+});
 
-};
+PieChartStats.displayName = 'PieChartStats';
 
 export default PieChartStats;

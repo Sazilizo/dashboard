@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { onlineApi } from "../api/client";
 import tableCache from "../utils/tableCache";
+import { cachedFetch, LONG_TTL } from "../utils/requestCache";
 
 const FilterContext = createContext();
 
@@ -28,6 +29,8 @@ export function FilterProvider({ children }) {
   });
 
   const [loadingOptions, setLoadingOptions] = useState(false);
+  const lastLoadTime = useRef(0);
+  const DEBOUNCE_MS = 60000; // Only reload options every 60 seconds
 
   const getDistinctLocal = useCallback(async (table, field) => {
     try {
@@ -44,25 +47,48 @@ export function FilterProvider({ children }) {
   }, []);
 
   const getDistinctRemote = useCallback(async (table, field) => {
-    try {
-      // fetch up to 2000 rows and derive distinct values (safe for small tables)
-      const { data, error } = await onlineApi.from(table).select(field).limit(2000);
-      if (error) return [];
-      const set = new Set();
-      (data || []).forEach(d => {
-        const v = d?.[field];
-        if (v !== undefined && v !== null) set.add(v);
-      });
-      return Array.from(set).filter(Boolean).sort();
-    } catch (err) {
-      return [];
-    }
+    const cacheKey = `filters_${table}_${field}`;
+    
+    return cachedFetch(
+      cacheKey,
+      async () => {
+        try {
+          // fetch up to 2000 rows and derive distinct values (safe for small tables)
+          const { data, error } = await onlineApi.from(table).select(field).limit(2000);
+          if (error) {
+            console.warn(`[FiltersContext] Error fetching ${table}.${field}:`, error.message);
+            return [];
+          }
+          const set = new Set();
+          (data || []).forEach(d => {
+            const v = d?.[field];
+            if (v !== undefined && v !== null) set.add(v);
+          });
+          return Array.from(set).filter(Boolean).sort();
+        } catch (err) {
+          console.warn(`[FiltersContext] Exception fetching ${table}.${field}:`, err);
+          return [];
+        }
+      },
+      LONG_TTL // 5 minute cache for filter options
+    );
   }, []);
 
   async function loadOptionsForResource(resource) {
+    const now = Date.now();
+    
+    // Debounce rapid reloads
+    if (now - lastLoadTime.current < DEBOUNCE_MS) {
+      console.log('[FiltersContext] Skipping options load - too soon');
+      return;
+    }
+    
+    lastLoadTime.current = now;
     setLoadingOptions(true);
+    
     try {
       const online = typeof navigator !== 'undefined' ? navigator.onLine : false;
+      console.log('[FiltersContext] Loading filter options...', { resource, online });
 
       // default grade options used in various lists
       const gradeOptions = [
@@ -83,42 +109,28 @@ export function FilterProvider({ children }) {
       let dayOptions = [];
       let monthOptions = [];
 
-      // Students: session types (derive from sessions / academic_sessions if available)
+      // Students: session types (derive from academic_sessions and pe_sessions)
       if (resource === "students" || !resource) {
-        if (online) {
-          // try sessions table first
-          sessionTypeOptions = await getDistinctRemote("sessions", "session_type");
-          if (!sessionTypeOptions.length) {
-            // fallback: common values
-            sessionTypeOptions = ["academic", "pe"].map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }));
-          } else {
-            // normalize to {value,label}
-            sessionTypeOptions = sessionTypeOptions.map(s => ({ value: s, label: String(s).charAt(0).toUpperCase() + String(s).slice(1) }));
-          }
-        } else {
-          const local = await getDistinctLocal("sessions", "session_type");
-          if (local.length) {
-            sessionTypeOptions = local.map(s => ({ value: s, label: String(s).charAt(0).toUpperCase() + String(s).slice(1) }));
-          } else {
-            sessionTypeOptions = ["academic", "pe"].map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }));
-          }
-        }
+        // Instead of querying non-existent "sessions" table, use hardcoded options
+        // Or query academic_sessions and pe_sessions separately if needed
+        sessionTypeOptions = [
+          { value: "academic_sessions", label: "Academic" },
+          { value: "pe_sessions", label: "PE" }
+        ];
       }
 
-      // Workers: training options derived from training_records.name
+      // Workers: training options - DISABLED (no training column in workers table)
+      // Training data is in separate training_sessions/worker_trainings table
       if (resource === "workers" || !resource) {
-        if (online) {
-          trainingOptions = await getDistinctRemote("training_records", "name");
-        } else {
-          trainingOptions = await getDistinctLocal("training_records", "name");
-        }
+        // TODO: Fetch from correct table when training filter is needed
+        trainingOptions = [];
       }
 
-      // Meals: type, day, month
+      // Meals: type, day, month (meals table uses distributed_at, not date)
       if (resource === "meals" || !resource) {
         if (online) {
-          typeOptions = await getDistinctRemote("meals", "type");
-          const dates = await getDistinctRemote("meals", "date");
+          typeOptions = await getDistinctRemote("meals", "meal_type");
+          const dates = await getDistinctRemote("meals", "distributed_at");
           // derive day/month from dates if they're ISO strings
           const dSet = new Set();
           const mSet = new Set();
@@ -134,12 +146,12 @@ export function FilterProvider({ children }) {
           dayOptions = Array.from(dSet).sort((a, b) => a - b).map(String);
           monthOptions = Array.from(mSet).sort();
         } else {
-          typeOptions = await getDistinctLocal("meals", "type");
+          typeOptions = await getDistinctLocal("meals", "meal_type");
           const rows = await tableCache.getTable("meals");
           const dSet = new Set();
           const mSet = new Set();
           (rows || []).forEach(r => {
-            const dt = r?.date;
+            const dt = r?.distributed_at;
             if (!dt) return;
             const dd = new Date(dt);
             if (!isNaN(dd)) {

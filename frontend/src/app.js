@@ -5,6 +5,7 @@ import router from "./router";
 import { AuthProvider } from "./context/AuthProvider";
 import { SchoolsProvider } from "./context/SchoolsContext";
 import { FilterProvider } from "./context/FiltersContext";
+import { DataProvider } from "./context/DataContext";
 import OfflineIndicator from "./components/OfflineIndicator";
 import "./styles/main.css";
 import "./styles/graphs.css";
@@ -15,8 +16,10 @@ function App() {
     <AuthProvider>
       <FilterProvider>
         <SchoolsProvider>
-          <OfflineIndicator />
-          <RouterProvider router={router} />
+          <DataProvider>
+            <OfflineIndicator />
+            <RouterProvider router={router} />
+          </DataProvider>
         </SchoolsProvider>
       </FilterProvider>
     </AuthProvider>

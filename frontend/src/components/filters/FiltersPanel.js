@@ -21,17 +21,17 @@ export default function FiltersPanel({
   monthOptions = [],
   showDeletedOption = false
 }) {
-  const [loading, setIsLoading] = useState(true);
+  // ✅ MUST call useFilters hook FIRST before any conditional hooks
+  const ctx = useFilters();
+  const ctxOpts = ctx?.options || {};
+  
+  const [loading, setIsLoading] = useState(false); // Start false to prevent flash
 
   useEffect(() => {
-    if (schools && schools.length > 0) {
-      setIsLoading(false);
-    } else {
-      setIsLoading(true);
-    }
+    console.log('[FiltersPanel] Schools updated:', schools?.length || 0);
   }, [schools]);
 
-  // ✅ Wrap setFilters here so children don’t cause infinite updates
+  // ✅ Wrap setFilters here so children don't cause infinite updates
   const safeSetFilters = useCallback(
     (update) => {
       setFilters((prev) => {
@@ -52,8 +52,6 @@ export default function FiltersPanel({
   }
 
   // Allow consuming context options by default when parent does not provide specific ones
-  const ctx = useFilters();
-  const ctxOpts = ctx?.options || {};
   const finalGradeOptions = (gradeOptions && gradeOptions.length) ? gradeOptions : (ctxOpts.gradeOptions || []);
   const finalSessionTypeOptions = (sessionTypeOptions && sessionTypeOptions.length) ? sessionTypeOptions : (ctxOpts.sessionTypeOptions || []);
   const finalGroupByOptions = (groupByOptions && groupByOptions.length) ? groupByOptions : (ctxOpts.groupByOptions || []);

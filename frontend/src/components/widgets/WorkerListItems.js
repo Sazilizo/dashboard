@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import Photos from "../profiles/Photos";
 
 export default function WorkerListItems({ workers, bucketName = "worker-uploads", folderName = "workers" }) {
-  if (!workers || workers.length === 0) return <p>No workers found.</p>;
+  if (!workers || workers.length === 0) return <p className="no-data-message">No workers found.</p>;
 
   return (
     <ul className="app-list wave-list">
@@ -20,15 +20,24 @@ export default function WorkerListItems({ workers, bucketName = "worker-uploads"
               />
             </div>
             <div className="app-list-item-details">
-              <p>
-                <strong>{`${w.name} ${w.last_name}`}</strong>
-              </p>
-              <p>role: {w?.roles?.name}</p>
-              {w.__queued && (
-                <span style={{ color: "orange", marginLeft: 8 }}>
-                  (Queued)
-                </span>
-              )}
+              <div className="item-info">
+                <p className="item-name">
+                  <strong>{`${w.name} ${w.last_name}`}</strong>
+                </p>
+                <p className="item-details">
+                  Role: {w?.roles?.name || '—'}
+                  {w.__queued && (
+                    <span className="queued-badge">
+                      (Queued)
+                    </span>
+                  )}
+                </p>
+                {w.school && (
+                  <p className="item-school">
+                    School: {w.school.name || w.school_name || '—'}
+                  </p>
+                )}
+              </div>
             </div>
           </Link>
         </li>

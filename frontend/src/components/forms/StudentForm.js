@@ -8,6 +8,8 @@ import DynamicBulkForm from "../forms/DynamicBulkForm";
 import { useSchools } from "../../context/SchoolsContext";
 import { useAuth } from "../../context/AuthProvider";
 import api from "../../api/client";
+import useToast from "../../hooks/useToast";
+import ToastContainer from "../ToastContainer";
 
 export default function StudentForm() {
   const navigate = useNavigate();
@@ -18,6 +20,7 @@ export default function StudentForm() {
   const [studentId, setStudentId] = useState();
   const [tutorOptions, setTutorOptions] = useState([]);
   const [coachOptions, setCoachOptions] = useState([]);
+  const { toasts, showToast, removeToast } = useToast();
 
   const schoolIds = React.useMemo(() => {
       const roleName = user?.profile?.roles?.name;
@@ -124,6 +127,7 @@ export default function StudentForm() {
 
   return (
     <div className="p-6">
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
       <h2 className="text-xl font-bold mb-4">Create Student</h2>
       <DynamicBulkForm
         schema_name="Student"

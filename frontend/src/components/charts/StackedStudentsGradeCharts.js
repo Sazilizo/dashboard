@@ -52,7 +52,7 @@ function LetterLegend({ letters }) {
   );
 }
 
-export default function StackedStudentsGradeChart({ students, height = 300 }) {
+export default React.memo(function StackedStudentsGradeChart({ students, height = 300 }) {
   const data = useMemo(() => {
     if (!students?.length) return [];
 
@@ -160,4 +160,4 @@ export default function StackedStudentsGradeChart({ students, height = 300 }) {
       <LetterLegend letters={subgradeLetters} />
     </div>
   );
-}
+});

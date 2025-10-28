@@ -2,17 +2,20 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import Photos from "../profiles/Photos";
 
-export default function ListItems({ students, onDelete, onUpdate, bucketName = "student-uploads", folderName = "students" }) {
+export default function ListItems({ students, items, onDelete, onUpdate, resource = "students", bucketName = "student-uploads", folderName = "students" }) {
   const [editId, setEditId] = useState(null);
   const [editName, setEditName] = useState("");
 
-  if (!students || students.length === 0) return <p>No students found.</p>;
+  // Support both 'students' and 'items' props for flexibility
+  const data = students || items || [];
+
+  if (!data || data.length === 0) return <p className="no-data-message">No {resource} found.</p>;
 
   return (
     <ul className="app-list wave-list">
-      {students.map((s) => (
+      {data.map((s) => (
         <li key={s.id}>
-          <Link to={`/dashboard/students/${s.id}`}>
+          <Link to={`/dashboard/${resource}/${s.id}`}>
             <div className="app-profile-photo">
               <Photos
                 bucketName={bucketName}
@@ -23,43 +26,57 @@ export default function ListItems({ students, onDelete, onUpdate, bucketName = "
               />
             </div>
             <div className="app-list-item-details">
-              <p>
-                <strong>{s.full_name}</strong>
-              </p>
-              <p>
-                Grade:{ `${s.grade} (${s.category})`}{" "}
-                {s.__queued && (
-                  <span style={{ color: "orange", marginLeft: 8 }}>
-                    (Queued)
-                  </span>
+              <div className="item-info">
+                <p className="item-name">
+                  <strong>{s.full_name || s.name}</strong>
+                </p>
+                <p className="item-details">
+                  {s.grade && `Grade: ${s.grade}`}
+                  {s.category && ` (${s.category})`}
+                  {s.group_by && `Group: ${s.group_by}`}
+                  {s.__queued && (
+                    <span className="queued-badge">
+                      (Queued)
+                    </span>
+                  )}
+                </p>
+                {s.school && (
+                  <p className="item-school">
+                    School: {s.school.name || s.school_name || '—'}
+                  </p>
                 )}
-              </p>
+              </div>
             </div>
-            <p>School: {s.school.name}</p>
           </Link>
 
           {onDelete && (
             <button
-              className="btn btn-danger"
-              onClick={() => onDelete(s.id)}
-              style={{ marginLeft: 8 }}
+              className="btn btn-danger btn-sm"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onDelete(s.id);
+              }}
             >
               Delete
             </button>
           )}
 
           {onUpdate && (
-            <span style={{ marginLeft: 8 }}>
+            <span className="edit-controls">
               {editId === s.id ? (
                 <>
                   <input
+                    className="edit-input"
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
-                    style={{ width: 120 }}
+                    onClick={(e) => e.stopPropagation()}
                   />
                   <button
-                    className="btn btn-primary"
-                    onClick={() => {
+                    className="btn btn-primary btn-sm"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       onUpdate(s.id, { full_name: editName });
                       setEditId(null);
                     }}
@@ -67,16 +84,22 @@ export default function ListItems({ students, onDelete, onUpdate, bucketName = "
                     Save
                   </button>
                   <button
-                    className="btn btn-secondary"
-                    onClick={() => setEditId(null)}
+                    className="btn btn-secondary btn-sm"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setEditId(null);
+                    }}
                   >
                     Cancel
                   </button>
                 </>
               ) : (
                 <button
-                  className="btn btn-secondary"
-                  onClick={() => {
+                  className="btn btn-secondary btn-sm"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
                     setEditId(s.id);
                     setEditName(s.full_name);
                   }}

@@ -33,10 +33,8 @@ export const UploadFileHelper = async (file, folder, id) => {
       }
     }
 
-    const ext = file.name.split(".").pop();
-    const uniqueName = `${Date.now()}_${Math.random()
-      .toString(36)
-      .substring(2)}.${ext}`;
+    // Use original filename directly
+    const uniqueName = file.name;
 
     // ✅ If folder is a known resource, use bucket + folder/id
     // ✅ Otherwise, treat folder as a custom folder inside student-uploads

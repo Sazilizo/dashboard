@@ -11,6 +11,8 @@ import { useSupabaseStudents } from "../../hooks/useSupabaseStudents";
 import { cacheTable, getTable } from "../../utils/tableCache";
 import FiltersPanel from "../filters/FiltersPanel";
 import { useFilters } from "../../context/FiltersContext";
+import useToast from "../../hooks/useToast";
+import ToastContainer from "../ToastContainer";
 
 const gradeOptions = [
   "R1", "R2", "R3",
@@ -29,6 +31,7 @@ export default function SessionForm() {
   const [selectedStudents, setSelectedStudents] = useState([]);
   const { filters, setFilters } = useFilters();
   const [sessionType, setSessionType] = useState("");
+  const { toasts, showToast, removeToast } = useToast();
 
   // const { students } = useSupabaseStudents({
   //   school_id: ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles.name)
@@ -97,6 +100,7 @@ export default function SessionForm() {
 
   return (
     <div className="p-6">
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
       {/* {!id && (
         <div className="page-filters">
           <FiltersPanel

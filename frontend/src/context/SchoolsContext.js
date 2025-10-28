@@ -66,66 +66,119 @@ export function SchoolsProvider({ children }) {
   const [error, setError] = useState(null);
   const { filters } = useFilters();
   const { isOnline } = useOnlineStatus();
+  const lastFetchTime = React.useRef(0);
+  const FETCH_DEBOUNCE_MS = 10000; // 10 seconds debounce
 
-  const refreshSchools = async () => {
-    setLoading(true);
+  const refreshSchools = async (forceRefresh = false) => {
+    const now = Date.now();
+    
+    // Debounce rapid refreshes unless forced
+    if (!forceRefresh && now - lastFetchTime.current < FETCH_DEBOUNCE_MS) {
+      console.log('[SchoolsContext] Skipping refresh - too soon since last fetch');
+      return;
+    }
+
+    // Load cached data immediately for instant display
+    const cached = await loadCachedSchoolsSafe();
+    if (cached && cached.length > 0) {
+      console.log('[SchoolsContext] Loaded', cached.length, 'schools from cache');
+      setSchools(cached);
+      setLoading(false);
+    }
+
+    if (!isOnline) {
+      console.log('[SchoolsContext] Offline - using cached schools only');
+      setLoading(false);
+      return;
+    }
+
+    // Fetch fresh data in background if online
     try {
-      if (!isOnline) {
-        console.log("Offline — loading schools from cache");
-        const cached = await loadCachedSchoolsSafe();
-        setSchools(cached || []);
-        setLoading(false);
-        return;
-      }
-
-      // Fetch online
+      console.log('[SchoolsContext] Fetching schools from Supabase');
+      
+      // Simplified query without aggregates for faster loading
       let query = api
         .from("schools")
-        .select(`
-          *,
-          workers:workers(count),
-          students:students(count),
-          users:users(count),
-          meals:meal_distributions(count)
-        `)
+        .select("*")
         .order("name", { ascending: true });
 
-      if (filters.role_id) query = query.eq("role_id", filters.role_id);
-      if (filters.id) query = query.eq("worker_id", filters.id);
+      console.log('[SchoolsContext] Executing query...');
 
       const { data, error } = await query;
+      
+      console.log('[SchoolsContext] Query response:', { dataCount: data?.length || 0, error: error?.message });
+      
       if (error) throw error;
 
       const dataArr = data || [];
 
-      const schoolsWithCounts = dataArr.map((school) => ({
+      // Simple mapping without complex counts for now
+      const schoolsData = dataArr.map((school) => ({
         ...school,
-        workers_count: school.workers?.[0]?.count ?? 0,
-        students_count: school.students?.[0]?.count ?? 0,
-        users_count: school.users?.[0]?.count ?? 0,
-        meals_count: school.meals?.[0]?.count ?? 0,
+        workers_count: 0, // Can be populated later if needed
+        students_count: 0,
+        users_count: 0,
+        meals_count: 0,
       }));
 
-      setSchools(schoolsWithCounts);
+      console.log('[SchoolsContext] Fetched', schoolsData.length, 'schools from Supabase');
+      setSchools(schoolsData);
       setError(null);
+      lastFetchTime.current = now;
 
       // Cache for offline use
-      await cacheSchoolsOffline(schoolsWithCounts);
+      await cacheSchoolsOffline(schoolsData);
     } catch (err) {
-      console.error("Failed to load schools", err);
+      console.error('[SchoolsContext] Failed to load schools from Supabase:', err);
       setError(err);
-      const cached = await loadCachedSchoolsSafe();
-      if (cached.length > 0) {
-        setSchools(cached);
+      
+      // Keep showing cached data even on error
+      if (!cached || cached.length === 0) {
+        const fallbackCached = await loadCachedSchoolsSafe();
+        if (fallbackCached.length > 0) {
+          console.log('[SchoolsContext] Using cached schools after fetch error');
+          setSchools(fallbackCached);
+        }
       }
     } finally {
       setLoading(false);
     }
   };
 
+  // Initial load
   useEffect(() => {
-    refreshSchools();
-  }, [filters, isOnline]);
+    console.log('[SchoolsContext] Initial mount - loading schools');
+    refreshSchools(true);
+  }, []);
+
+  // Refresh when filters change
+  useEffect(() => {
+    if (Object.keys(filters).length > 0) {
+      refreshSchools(false);
+    }
+  }, [filters]);
+
+  // Refresh when coming back online
+  useEffect(() => {
+    if (isOnline) {
+      console.log('[SchoolsContext] Back online - refreshing schools');
+      refreshSchools(true);
+    }
+  }, [isOnline]);
+
+  // Listen for connectivity restored event
+  useEffect(() => {
+    const handleConnectivityRestored = () => {
+      console.log('[SchoolsContext] Connectivity restored - refreshing schools');
+      refreshSchools(true);
+    };
+
+    window.addEventListener('connectivity-restored', handleConnectivityRestored);
+    
+    return () => {
+      window.removeEventListener('connectivity-restored', handleConnectivityRestored);
+    };
+  }, []);
 
   return (
     <SchoolsContext.Provider

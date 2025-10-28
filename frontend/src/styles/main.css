@@ -356,20 +356,24 @@ html, body {
   scrollbar-width: none;     /* Firefox */
 }
  .app-list li {
-  margin:.5rem 0.02rem;
+  margin: 0.5rem 0.02rem;
   background-color: #ecedee;
   border-radius: 5px;
-  height:5rem
-  
-}
- .app-list li a{
-  color:black;
+  min-height: 5rem;
+  padding: 0.75rem;
   display: flex;
-  width:100%;
-  justify-content: space-between;
-  place-items: center;
-  place-self: center;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+ .app-list li a {
+  color: black;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 1rem;
   text-decoration: none;
+  flex: 1;
 }
 
 /* Wave fill effect for list items */
@@ -450,27 +454,92 @@ html, body {
   font-size: 1.2rem;
 }
 
-.app-profile-photo{
-  height:4rem;
-  width:4rem;
-  place-content: center;
-  place-self: center;
-  place-self: center;
+.app-profile-photo {
+  height: 4rem;
+  width: 4rem;
+  min-width: 4rem;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #f0f0f0;
+  flex-shrink: 0;
 }
-img{
+
+.app-profile-photo img {
   width: 100%;
-  height:100%;
-  object-fit: contain;
+  height: 100%;
+  object-fit: cover;
   object-position: center;
 }
- .app-list li a .app-list-item-details{
-  width:100%;
-  padding-left: .5rem;
-  flex-wrap: wrap;
+
+ .app-list li a .app-list-item-details {
+  width: 100%;
+  padding: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.25rem;
 }
-.photo-skeleton{
-  width:3rem;
-  height:3rem;
+
+.app-list-item-details .item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.app-list-item-details .item-name {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.app-list-item-details .item-details,
+.app-list-item-details .item-school {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #666;
+  line-height: 1.2;
+}
+
+.queued-badge {
+  color: #ff8c00;
+  font-weight: 600;
+  margin-left: 0.5rem;
+}
+
+.edit-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.edit-input {
+  padding: 0.375rem 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  width: 150px;
+}
+
+.btn-sm {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+}
+
+.no-data-message {
+  text-align: center;
+  padding: 2rem;
+  color: #666;
+  font-size: 1rem;
+}
+.photo-skeleton {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
   background: linear-gradient(
     -90deg,
     #e0e0e0 0%,
@@ -479,6 +548,62 @@ img{
   );
   background-size: 400% 400%;
   animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Pagination Container */
+.pagination-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.5rem 0;
+  margin-top: 1rem;
+}
+
+.pagination-info {
+  font-size: 0.875rem;
+  color: #666;
+  font-weight: 500;
+}
+
+.pagination-buttons {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.load-more-btn,
+.load-less-btn {
+  padding: 0.75rem 2rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  border: none;
+  cursor: pointer;
+}
+
+.load-more-btn {
+  background-color: #0f766e;
+  color: white;
+}
+
+.load-more-btn:hover {
+  background-color: #0d6560;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.load-less-btn {
+  background-color: #6b7280;
+  color: white;
+}
+
+.load-less-btn:hover {
+  background-color: #4b5563;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }
 
  .app-stats-container{

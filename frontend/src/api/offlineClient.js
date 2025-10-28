@@ -133,6 +133,7 @@ class QueryBuilder {
     this.filters = {};
     this.rangeStart = null;
     this.rangeEnd = null;
+    this.limitValue = null;
     this.isSingleFlag = false;
     this.isMaybeSingleFlag = false;
   }
@@ -140,6 +141,7 @@ class QueryBuilder {
   select(q = "*") { this.queryString = q; return this; }
   order(field, { ascending = true } = {}) { this.orderField = field; this.orderAscending = ascending; return this; }
   range(s, e) { this.rangeStart = s; this.rangeEnd = e; return this; }
+  limit(n) { this.limitValue = n; return this; }
   eq(f, v) { this.filters[f] = { type: "eq", value: v }; return this; }
   in(f, vals) { this.filters[f] = { type: "in", value: vals }; return this; }
   single() { this.isSingleFlag = true; return this; }
@@ -153,6 +155,7 @@ class QueryBuilder {
       order: this.orderField,
       ascending: this.orderAscending,
       range: [this.rangeStart, this.rangeEnd],
+      limit: this.limitValue,
       single: this.isSingleFlag,
       maybeSingle: this.isMaybeSingleFlag,
     });
@@ -175,6 +178,9 @@ class QueryBuilder {
     }
     if (this.rangeStart !== null && this.rangeEnd !== null) {
       offlineResult = offlineResult.slice(this.rangeStart, this.rangeEnd + 1);
+    }
+    if (this.limitValue !== null) {
+      offlineResult = offlineResult.slice(0, this.limitValue);
     }
 
     let finalResult;
@@ -203,6 +209,7 @@ class QueryBuilder {
       });
       if (this.orderField) q = q.order(this.orderField, { ascending: this.orderAscending });
       if (this.rangeStart !== null && this.rangeEnd !== null) q = q.range(this.rangeStart, this.rangeEnd);
+      if (this.limitValue !== null) q = q.limit(this.limitValue);
       if (this.isSingleFlag) q = q.single();
       if (this.isMaybeSingleFlag && typeof q.maybeSingle === "function") q = q.maybeSingle();
 
