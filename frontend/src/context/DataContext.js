@@ -11,12 +11,53 @@ export function DataProvider({ children }) {
   const [students, setStudents] = useState([]);
   const [meals, setMeals] = useState([]);
   const [schools, setSchools] = useState([]);
+  const [roles, setRoles] = useState([]);
   const [photoCache, setPhotoCache] = useState(new Map()); // Cache photo URLs
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const { isOnline } = useOnlineStatus();
   const lastFetchTime = useRef(0);
   const FETCH_DEBOUNCE_MS = 30000; // 30 seconds
+
+  // Fetch roles immediately on mount (not dependent on school selection)
+  useEffect(() => {
+    async function fetchRoles() {
+      try {
+        console.log('[DataContext] Fetching roles...');
+        
+        if (!isOnline) {
+          // Offline: load from cache
+          const cachedRoles = await getTable("roles");
+          setRoles(cachedRoles || []);
+          console.log('[DataContext] Loaded roles from cache:', cachedRoles?.length || 0);
+        } else {
+          // Online: fetch from Supabase
+          const { data, error } = await api.from("roles").select("*");
+          if (error) throw error;
+          
+          setRoles(data || []);
+          console.log('[DataContext] Fetched roles from API:', data?.length || 0);
+          
+          // Cache for offline use
+          if (data) {
+            await cacheTable("roles", data);
+          }
+        }
+      } catch (err) {
+        console.error('[DataContext] Failed to fetch roles:', err);
+        // Try cache as fallback
+        try {
+          const cachedRoles = await getTable("roles");
+          setRoles(cachedRoles || []);
+          console.log('[DataContext] Recovered roles from cache:', cachedRoles?.length || 0);
+        } catch (cacheErr) {
+          console.error('[DataContext] Cache fallback failed:', cacheErr);
+        }
+      }
+    }
+    
+    fetchRoles();
+  }, [isOnline]);
 
   // Helper function to get photo URL from cache or fetch
   const getPhotoUrl = useCallback((bucketName, folder, id) => {
@@ -96,6 +137,7 @@ export function DataProvider({ children }) {
         setStudents([]);
         setMeals([]);
         setSchools([]);
+        setRoles([]);
         setLoading(false);
         return;
       }
@@ -105,40 +147,55 @@ export function DataProvider({ children }) {
       let studentsData = [];
       let mealsData = [];
       let schoolsData = [];
+      let rolesData = [];
 
       if (!isOnline) {
         // Offline: load from IndexedDB
         console.log('[DataContext] Offline - loading from cache');
-        const [cachedWorkers, cachedStudents, cachedMeals, cachedSchools] = await Promise.all([
+        const [cachedWorkers, cachedStudents, cachedMeals, cachedSchools, cachedRoles] = await Promise.all([
           getTable("workers"),
           getTable("students"),
           getTable("meals"),
           getTable("schools"),
+          getTable("roles"),
         ]);
 
+        // Filter by school IDs and ensure data integrity
         workersData = (cachedWorkers || []).filter(w => schoolIds.includes(w.school_id));
         studentsData = (cachedStudents || []).filter(s => schoolIds.includes(s.school_id));
         mealsData = (cachedMeals || []).filter(m => schoolIds.includes(m.school_id));
         schoolsData = (cachedSchools || []).filter(s => schoolIds.includes(s.id));
+        rolesData = cachedRoles || []; // Roles are not school-specific
+
+        console.log('[DataContext] Loaded from cache:', {
+          workers: workersData.length,
+          students: studentsData.length,
+          meals: mealsData.length,
+          schools: schoolsData.length,
+          roles: rolesData.length,
+        });
       } else {
         // Online: fetch from Supabase in parallel
         console.log('[DataContext] Online - fetching from Supabase');
-        const [workersRes, studentsRes, mealsRes, schoolsRes] = await Promise.all([
-          api.from("workers").select("*, roles:roles(name)").in("school_id", schoolIds).limit(2000),
+        const [workersRes, studentsRes, mealsRes, schoolsRes, rolesRes] = await Promise.all([
+          api.from("workers").select("*, roles:role_id(name)").in("school_id", schoolIds).limit(2000),
           api.from("students").select("*").in("school_id", schoolIds).limit(2000),
           api.from("meals").select("*").in("school_id", schoolIds).limit(2000),
           api.from("schools").select("*").in("id", schoolIds),
+          api.from("roles").select("*"),
         ]);
 
         if (workersRes.error) throw workersRes.error;
         if (studentsRes.error) throw studentsRes.error;
         if (mealsRes.error) throw mealsRes.error;
         if (schoolsRes.error) throw schoolsRes.error;
+        if (rolesRes.error) throw rolesRes.error;
 
         workersData = workersRes.data || [];
         studentsData = studentsRes.data || [];
         mealsData = mealsRes.data || [];
         schoolsData = schoolsRes.data || [];
+        rolesData = rolesRes.data || [];
 
         // Cache for offline use
         await Promise.all([
@@ -146,6 +203,7 @@ export function DataProvider({ children }) {
           cacheTable("students", studentsData),
           cacheTable("meals", mealsData),
           cacheTable("schools", schoolsData),
+          cacheTable("roles", rolesData),
         ]);
       }
 
@@ -154,12 +212,19 @@ export function DataProvider({ children }) {
         students: studentsData.length,
         meals: mealsData.length,
         schools: schoolsData.length,
+        roles: rolesData.length,
       });
+
+      // Log sample worker to verify data structure
+      if (workersData.length > 0) {
+        console.log('[DataContext] Sample worker:', workersData[0]);
+      }
 
       setWorkers(workersData);
       setStudents(studentsData);
       setMeals(mealsData);
       setSchools(schoolsData);
+      setRoles(rolesData);
       setError(null);
       lastFetchTime.current = now;
 
@@ -192,6 +257,7 @@ export function DataProvider({ children }) {
         students,
         meals,
         schools,
+        roles,
         photoCache,
         getPhotoUrl,
         loading,

@@ -16,12 +16,28 @@ export default function DashboardHome() {
   const {user} = useAuth();
   const {schools, loading: schoolsLoading} = useSchools();
   const {filters, setFilters} = useFilters();
-  const { workers, students, meals, schools: schoolsData, loading, fetchData } = useData();
+  const { workers: allWorkers, students: allStudents, meals: allMeals, schools: schoolsData, loading, fetchData } = useData();
 
   console.log('[DashboardHome] Schools:', schools?.length || 0, 'schools loaded');
 
-  const isAllSchoolRole = ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles.name);
-  const schoolIds = useMemo(() => (isAllSchoolRole ? schools.map((s) => s.id) : [user?.profile?.school_id]).filter(Boolean), [isAllSchoolRole, schools, user]);
+  const isAllSchoolRole = ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles?.name);
+  
+  // Determine school IDs based on role and filter selection
+  const schoolIds = useMemo(() => {
+    const roleName = user?.profile?.roles?.name;
+    
+    if (["superuser", "admin", "hr", "viewer"].includes(roleName)) {
+      // If user has selected schools in filters, use those
+      if (Array.isArray(filters.school_id) && filters.school_id.length > 0) {
+        return filters.school_id.map(id => typeof id === 'number' ? id : Number(id)).filter(Boolean);
+      }
+      // Otherwise show all schools
+      return schools.map(s => s.id).filter(Boolean);
+    }
+    
+    // Single school role - only their school
+    return user?.profile?.school_id ? [user.profile.school_id] : [];
+  }, [user?.profile?.roles?.name, user?.profile?.school_id, schools, filters.school_id]);
 
   console.log('[DashboardHome] School IDs for query:', schoolIds);
 
@@ -31,7 +47,26 @@ export default function DashboardHome() {
     if (schoolIds.length > 0) {
       fetchData(schoolIds);
     }
-  }, [schoolIds, fetchData]);
+  }, [schoolIds.join(',')]); // Use join to avoid array reference changes
+
+  // Filter data by selected schools
+  const workers = useMemo(() => {
+    if (!allWorkers) return [];
+    if (schoolIds.length === 0) return allWorkers;
+    return allWorkers.filter(w => schoolIds.includes(w.school_id));
+  }, [allWorkers, schoolIds]);
+
+  const students = useMemo(() => {
+    if (!allStudents) return [];
+    if (schoolIds.length === 0) return allStudents;
+    return allStudents.filter(s => schoolIds.includes(s.school_id));
+  }, [allStudents, schoolIds]);
+
+  const meals = useMemo(() => {
+    if (!allMeals) return [];
+    if (schoolIds.length === 0) return allMeals;
+    return allMeals.filter(m => schoolIds.includes(m.school_id));
+  }, [allMeals, schoolIds]);
 
   // Debug log to see what data we have
   useEffect(() => {

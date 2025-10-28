@@ -38,16 +38,32 @@ export default function StudentForm() {
         try {
           const cached = await getTable("workers");
           const data = (cached || []).filter((w) => schoolIds.includes(w.school_id));
+          
+          console.log('[StudentForm] Cached workers sample:', data[0]);
+          
           setTutorOptions(
             data
-              .filter((w) => w.role?.name === "tutor")
+              .filter((w) => {
+                // Handle both 'role' and 'roles' field names
+                const roleName = w.role?.name || w.roles?.name || '';
+                return /tutor/i.test(roleName);
+              })
               .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id }))
           );
           setCoachOptions(
             data
-              .filter((w) => w.role?.name === "coach")
+              .filter((w) => {
+                // Handle both 'role' and 'roles' field names
+                const roleName = w.role?.name || w.roles?.name || '';
+                return /coach/i.test(roleName);
+              })
               .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id }))
           );
+          
+          console.log('[StudentForm] Loaded from cache:', {
+            tutors: tutorOptions.length,
+            coaches: coachOptions.length
+          });
           return;
         } catch (err) {
           console.warn("Failed to read cached workers", err);
@@ -56,7 +72,7 @@ export default function StudentForm() {
 
       const { data, error } = await api
         .from("workers")
-        .select("id, name, last_name, role:roles(name),school_id")
+        .select("id, name, last_name, roles:role_id(name), school_id")
         .in("school_id", schoolIds);
 
       if (error) {
@@ -64,15 +80,23 @@ export default function StudentForm() {
         return;
       }
 
+      console.log('[StudentForm] Fetched workers sample:', data[0]);
+
       setTutorOptions(
         data
-          .filter((w) => w.role?.name === "tutor")
+          .filter((w) => {
+            const roleName = w.roles?.name || '';
+            return /tutor/i.test(roleName);
+          })
           .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id}))
       );
 
       setCoachOptions(
         data
-          .filter((w) => w.role?.name === "coach")
+          .filter((w) => {
+            const roleName = w.roles?.name || '';
+            return /coach/i.test(roleName);
+          })
           .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id }))
       );
 
@@ -85,12 +109,10 @@ export default function StudentForm() {
     }
 
     fetchWorkers();
-  }, [schoolIds]);
+  }, [schoolIds, isOnline]);
 
   const presetFields = {
     studentId,
-    // tutorOptions,
-    // coachOptions,
     ...(user?.profile?.school_id && !["superuser","admin","hr","viewer"].includes(user?.profile?.roles?.name)
       ? { school_id: user.profile.school_id }
       : {}),
@@ -120,14 +142,6 @@ export default function StudentForm() {
       throw err;
     }
   };
-
-  useEffect(() => {
-    console.log("user", user)
-  },[user])
-
-  console.log("tutorOptions", tutorOptions);
-  console.log("coachOptions", coachOptions);
-
   return (
     <div className="p-6">
       <ToastContainer toasts={toasts} removeToast={removeToast} />

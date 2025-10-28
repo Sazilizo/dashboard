@@ -334,19 +334,15 @@ html, body {
   font-size: 1.4vw;
 }
 
-/* Chart Filters */
-.dropdown-chart-filters{
-  display:flex;
-  width:100%;
-  justify-content: space-between;
-  gap: 1rem;
-}
+/* Chart Filters - see graphs.css for detailed dropdown styles */
 .app-list{
   list-style: none;
   scroll-behavior: smooth;
-  overflow-y: scroll;
+  overflow-y: auto;
   font-size: 12px;
-  height:850px;
+  max-height: 70vh;
+  height: auto;
+  min-height: 200px;
 }
 .app-list::-webkit-scrollbar {
   display: none;
@@ -684,15 +680,90 @@ html, body {
 .skeleton-chart {
   width: 100%;
   height: 300px;
+  position: relative;
+  background: #f5f5f5;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  padding: 20px;
+}
+
+/* Add animated shimmer overlay */
+.skeleton-chart::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
   background: linear-gradient(
-    -90deg,
-    #e0e0e0 0%,
-    #f0f0f0 50%,
-    #e0e0e0 100%
+    90deg,
+    rgba(255,255,255,0) 0%,
+    rgba(255,255,255,0.6) 50%,
+    rgba(255,255,255,0) 100%
   );
-  background-size: 400% 400%;
-  animation: shimmer 1.5s ease-in-out infinite;
-  border-radius: 8px;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* Add chart-like elements to skeleton */
+.skeleton-chart::after {
+  content: "";
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  right: 20px;
+  height: 60%;
+  background: linear-gradient(
+    to top,
+    #e0e0e0 0%,
+    #e0e0e0 20%,
+    transparent 20%,
+    transparent 30%,
+    #e0e0e0 30%,
+    #e0e0e0 45%,
+    transparent 45%,
+    transparent 55%,
+    #e0e0e0 55%,
+    #e0e0e0 65%,
+    transparent 65%,
+    transparent 75%,
+    #e0e0e0 75%,
+    #e0e0e0 90%
+  );
+  border-radius: 4px;
+  opacity: 0.5;
+}
+
+/* Specific heights for different chart types */
+.stacked-chart-stats.skeleton-chart {
+  height: 400px;
+}
+
+.bar-chart-stats.skeleton-chart {
+  height: 250px;
+}
+
+.pie-chart-stats.skeleton-chart {
+  height: 300px;
+}
+
+/* Pie chart specific styling */
+.pie-chart-stats.skeleton-chart::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  background: conic-gradient(
+    #e0e0e0 0deg 90deg,
+    #d0d0d0 90deg 180deg,
+    #c0c0c0 180deg 270deg,
+    #e0e0e0 270deg 360deg
+  );
+  opacity: 0.6;
 }
 
 .page-stats{
@@ -750,9 +821,10 @@ html, body {
   display: grid;
   height:fit-content;
   grid-template-columns: repeat(9 ,1fr);
-  grid-template-rows: repeat(2,auto) ;
+  grid-template-rows: auto;
   grid-gap: 0.5rem;
   border-radius: 10px;
+  align-items: start;
 }
 
 .grid-item{
@@ -774,6 +846,8 @@ html, body {
   grid-column-start: 1;
   grid-column-end: 4;
   grid-row: 2;
+  height: fit-content;
+  min-height: 200px;
 }
 
 .stats-container{
@@ -781,6 +855,7 @@ html, body {
   grid-column-start: 4;
   grid-column-end: 10;
   grid-row: 2;
+  height: fit-content;
 }
 
 /* ============================================
@@ -892,10 +967,10 @@ html, body {
 
 @keyframes shimmer {
   0% {
-    background-position: 200% 0;
+    transform: translateX(0);
   }
   100% {
-    background-position: -200% 0;
+    transform: translateX(200%);
   }
 }
 
@@ -1015,30 +1090,9 @@ html, body {
   grid-column-end: 6;
   grid-row: 2;
 }
-.dropdown-chart-filters{
-  position: relative;
-  display: inline-block;
-  text-align: left;
-  width: 100%;
-  font-size: var(--fs-2);
-  }
 
-.dropdown-chart-filters-list {
-  display:flex;
-  flex-direction: column;
-  background-color: white;
-  font-size: var(--fs-1);
-}
-.dropdown-chart-filters-item{
-  display: inline-flex;
-  align-items: center;
-  padding: .2rem .5rem;
-  cursor: pointer;
-  flex-wrap: wrap;
-  background-color: white;
-  width:fit-content; 
-  font-size: var(--fs-1);
-}
+/* Chart filters - removed duplicate, see graphs.css for main styles */
+
 .specs-filters{
   display: flex;
   justify-content: space-evenly;
@@ -1081,9 +1135,10 @@ html, body {
   display: grid;
   height:fit-content;
   grid-template-columns: repeat(9 ,1fr);
-  grid-template-rows: repeat(2,auto) ;
+  grid-template-rows: auto;
   grid-gap: 0.5rem;
   border-radius: 10px;
+  align-items: start;
 }
 
 .grid-item{
@@ -1104,12 +1159,15 @@ html, body {
   grid-column-start: 1;
   grid-column-end: 4;
   grid-row: 2;
+  height: fit-content;
+  min-height: 200px;
 }
 .stats-container{
   width:100%;
   grid-column-start: 4;
   grid-column-end: 10;
   grid-row: 2;
+  height: fit-content;
 }
 
 /* ============================================

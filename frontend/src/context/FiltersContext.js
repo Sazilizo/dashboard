@@ -13,9 +13,9 @@ const FilterContext = createContext();
  */
 export function FilterProvider({ children }) {
   const [filters, setFilters] = useState({
-    school_id: null,
-    grade: null,
-    category: null,
+    school_id: [],  // Changed from null to empty array
+    grade: [],
+    category: [],
   });
 
   const [options, setOptions] = useState({

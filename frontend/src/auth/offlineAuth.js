@@ -7,18 +7,23 @@ const STORE_NAME = 'auth';
 const SESSION_STORE = 'session';
 
 async function getAuthDB() {
-  return openDB(DB_NAME, DB_VERSION, {
-    upgrade(db, oldVersion, newVersion, transaction) {
-      // Create auth store if it doesn't exist
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME);
-      }
-      // Create session store if it doesn't exist
-      if (!db.objectStoreNames.contains(SESSION_STORE)) {
-        db.createObjectStore(SESSION_STORE);
-      }
-    },
-  });
+  try {
+    return await openDB(DB_NAME, DB_VERSION, {
+      upgrade(db, oldVersion, newVersion, transaction) {
+        // Create auth store if it doesn't exist
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME);
+        }
+        // Create session store if it doesn't exist
+        if (!db.objectStoreNames.contains(SESSION_STORE)) {
+          db.createObjectStore(SESSION_STORE);
+        }
+      },
+    });
+  } catch (err) {
+    console.error('[offlineAuth] Failed to open IndexedDB:', err);
+    throw err;
+  }
 }
 
 export async function storeAuthData(authData) {
@@ -27,8 +32,11 @@ export async function storeAuthData(authData) {
     await db.put(STORE_NAME, authData, 'current-user');
     await db.put(STORE_NAME, Date.now(), 'last-sync');
     console.log('[offlineAuth] Stored auth data successfully');
+    return true;
   } catch (err) {
     console.error('[offlineAuth] Failed to store auth data:', err);
+    // Don't throw - just return false to indicate failure
+    return false;
   }
 }
 
@@ -50,8 +58,11 @@ export async function clearStoredAuthData() {
     await db.delete(STORE_NAME, 'current-user');
     await db.delete(STORE_NAME, 'last-sync');
     console.log('[offlineAuth] Cleared auth data');
+    return true;
   } catch (err) {
     console.error('[offlineAuth] Failed to clear auth data:', err);
+    // Don't throw - clearing is not critical
+    return false;
   }
 }
 
@@ -62,8 +73,11 @@ export async function storeSessionData(session) {
     await db.put(SESSION_STORE, session, 'current-session');
     await db.put(SESSION_STORE, Date.now(), 'session-timestamp');
     console.log('[offlineAuth] Stored session data successfully');
+    return true;
   } catch (err) {
     console.error('[offlineAuth] Failed to store session data:', err);
+    // Don't throw - just return false to indicate failure
+    return false;
   }
 }
 
@@ -91,7 +105,10 @@ export async function clearStoredSession() {
     await db.delete(SESSION_STORE, 'current-session');
     await db.delete(SESSION_STORE, 'session-timestamp');
     console.log('[offlineAuth] Cleared session data');
+    return true;
   } catch (err) {
     console.error('[offlineAuth] Failed to clear session data:', err);
+    // Don't throw - clearing is not critical
+    return false;
   }
 }

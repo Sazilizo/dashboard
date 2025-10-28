@@ -347,6 +347,10 @@ export default function DynamicBulkFormRHF({
     if (externalTutorOptions?.length || externalCoachOptions?.length) {
       if (externalTutorOptions?.length) setTutorOptions(externalTutorOptions);
       if (externalCoachOptions?.length) setCoachOptions(externalCoachOptions);
+      console.log("[DynamicBulkForm] Using external tutor/coach options:", {
+        tutors: externalTutorOptions?.length,
+        coaches: externalCoachOptions?.length
+      });
       return;
     }
 
@@ -396,7 +400,7 @@ export default function DynamicBulkFormRHF({
     }
 
     fetchWorkers();
-  }, [schoolIds, isOnline]);
+  }, [schoolIds, isOnline, externalTutorOptions, externalCoachOptions]);
 
   // Reset dependent fields when school changes
   useEffect(() => {
@@ -494,12 +498,19 @@ export default function DynamicBulkFormRHF({
     if (field.name === "school_id") options = schools;
     if (field.name === "role" || field.name === "role_id") options = roleOptions;
     if (field.name === "category") options = catOptions;
-    if (field.name === "tutor_id")
+    if (field.name === "tutor_id") {
       // tutorOptions already has { value, label, school_id }
-      // allow loose equality because selectedSchool may be string/number
-      options = tutorOptions.filter((t) => t.school_id == selectedSchool);
-    if (field.name === "coach_id" && schema_name === "students" )
-      options = coachOptions.filter((c) => c.school_id == selectedSchool);
+      // Filter by selectedSchool if a school is selected, otherwise show all
+      options = selectedSchool 
+        ? tutorOptions.filter((t) => t.school_id == selectedSchool)
+        : tutorOptions;
+    }
+    if (field.name === "coach_id" && schema_name === "students") {
+      // Filter by selectedSchool if a school is selected, otherwise show all
+      options = selectedSchool
+        ? coachOptions.filter((c) => c.school_id == selectedSchool)
+        : coachOptions;
+    }
     
     if (field.name === "race") options = raceOptions;
     if (field.name === "gender") options = genderOptions;

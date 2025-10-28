@@ -63,6 +63,17 @@ export function AuthProvider({ children }) {
 
       if (userError || !supabaseUser) {
         console.log('[AuthProvider] No authenticated user found');
+        
+        // Check if we have stored data before logging out
+        const { user: storedUser } = await getStoredAuthData();
+        if (storedUser) {
+          console.log('[AuthProvider] Using stored user - server unreachable but user exists locally');
+          setUser(storedUser);
+          cachedUser.current = storedUser;
+          setLoading(false);
+          return;
+        }
+        
         setUser(null);
         cachedUser.current = null;
         lastFetchTime.current = 0;
@@ -74,28 +85,48 @@ export function AuthProvider({ children }) {
 
       console.log('[AuthProvider] User authenticated:', supabaseUser.email);
 
-      // Fetch profile and join roles to get role name
-      const { data: profile, error: profileError } = await api
-        .from("profiles")
-        .select("id, username, role_id, school_id, avatar_url, roles(name)")
-        .eq("auth_uid", supabaseUser.id)
-        .maybeSingle();
+      // Fetch profile - with fallback to stored data
+      let profile = null;
+      try {
+        const { data: profileData, error: profileError } = await api
+          .from("profiles")
+          .select("id, username, role_id, school_id, avatar_url, roles:role_id(name)")
+          .eq("auth_uid", supabaseUser.id)
+          .maybeSingle();
 
-      if (profileError) {
-        console.error("[AuthProvider] Failed to fetch user profile:", profileError);
-        setUser(null);
-        cachedUser.current = null;
-        lastFetchTime.current = 0;
-        await clearStoredAuthData();
-        await clearStoredSession();
-      } else {
-        const fullUser = { ...supabaseUser, profile };
-        console.log('[AuthProvider] Full user data loaded:', fullUser.email, fullUser.profile?.roles?.name);
-        setUser(fullUser);
-        cachedUser.current = fullUser;
-        lastFetchTime.current = now;
+        if (profileError) {
+          console.warn("[AuthProvider] Failed to fetch profile from DB:", profileError);
+          
+          // Fallback to stored profile
+          const { user: storedUser } = await getStoredAuthData();
+          if (storedUser?.profile) {
+            console.log('[AuthProvider] Using stored profile data');
+            profile = storedUser.profile;
+          } else {
+            console.warn("[AuthProvider] No stored profile available");
+          }
+        } else {
+          profile = profileData;
+        }
+      } catch (profileErr) {
+        console.error("[AuthProvider] Profile fetch error:", profileErr);
         
-        // Store auth data for offline use
+        // Fallback to stored profile
+        const { user: storedUser } = await getStoredAuthData();
+        if (storedUser?.profile) {
+          console.log('[AuthProvider] Using stored profile due to fetch error');
+          profile = storedUser.profile;
+        }
+      }
+
+      const fullUser = { ...supabaseUser, profile };
+      console.log('[AuthProvider] Full user data loaded:', fullUser.email, fullUser.profile?.roles?.name || fullUser.profile?.role_id);
+      setUser(fullUser);
+      cachedUser.current = fullUser;
+      lastFetchTime.current = now;
+      
+      // Store auth data for offline use (don't fail if storage fails)
+      try {
         await storeAuthData(fullUser);
         
         // Store session data
@@ -103,20 +134,32 @@ export function AuthProvider({ children }) {
         if (session) {
           await storeSessionData(session);
         }
+      } catch (storeErr) {
+        console.warn('[AuthProvider] Failed to store auth data, continuing anyway:', storeErr);
       }
     } catch (err) {
       console.error("[AuthProvider] refreshUser error:", err);
       
-      // Fallback to stored data on error
-      const { user: storedUser } = await getStoredAuthData();
-      if (storedUser) {
-        console.log('[AuthProvider] Using stored user due to fetch error');
-        setUser(storedUser);
-        cachedUser.current = storedUser;
-      } else {
-        setUser(null);
-        cachedUser.current = null;
-        lastFetchTime.current = 0;
+      // Fallback to stored data on error (CRITICAL: don't lock users out)
+      try {
+        const { user: storedUser } = await getStoredAuthData();
+        if (storedUser) {
+          console.log('[AuthProvider] Using stored user due to fetch error');
+          setUser(storedUser);
+          cachedUser.current = storedUser;
+        } else {
+          console.warn('[AuthProvider] No stored user available, logging out');
+          setUser(null);
+          cachedUser.current = null;
+          lastFetchTime.current = 0;
+        }
+      } catch (fallbackErr) {
+        console.error('[AuthProvider] Even fallback failed:', fallbackErr);
+        // Last resort: keep current user if exists, otherwise null
+        if (!cachedUser.current) {
+          setUser(null);
+          cachedUser.current = null;
+        }
       }
     } finally {
       setLoading(false);
@@ -140,16 +183,26 @@ export function AuthProvider({ children }) {
       console.log('[AuthProvider] Auth state changed:', _event);
       
       if (session?.user) {
-        // Store session immediately
-        await storeSessionData(session);
+        // Store session immediately (don't fail if storage fails)
+        try {
+          await storeSessionData(session);
+        } catch (storeErr) {
+          console.warn('[AuthProvider] Failed to store session, continuing anyway:', storeErr);
+        }
         refreshUser(true);
-      } else {
+      } else if (_event === 'SIGNED_OUT') {
+        // Only clear on explicit sign out
         setUser(null);
         cachedUser.current = null;
         lastFetchTime.current = 0;
-        await clearStoredAuthData();
-        await clearStoredSession();
+        try {
+          await clearStoredAuthData();
+          await clearStoredSession();
+        } catch (clearErr) {
+          console.warn('[AuthProvider] Failed to clear stored data:', clearErr);
+        }
       }
+      // Don't clear user on other events (like TOKEN_REFRESHED failures)
     });
 
     // Handle both return patterns

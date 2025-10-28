@@ -34,7 +34,11 @@ const WorkerProfile = () => {
     const fetchWorker = async () => {
       try {
         // 1️⃣ Fetch worker base
-        const { data: workerData, error: workerError } = await api
+        let workerData = null;
+        let workerError = null;
+        
+        // Try API first
+        const response = await api
           .from("workers")
           .select(`
             *,
@@ -42,8 +46,28 @@ const WorkerProfile = () => {
           `)
           .eq("id", id)
           .single();
+        
+        workerData = response.data;
+        workerError = response.error;
 
-        if (workerError) throw workerError;
+        // If API failed, try cache
+        if (workerError || !workerData) {
+          console.warn('WorkerProfile: API fetch failed, trying cache', workerError?.message);
+          try {
+            const { getTable } = await import('../../utils/tableCache');
+            const cachedWorkers = await getTable('workers');
+            workerData = cachedWorkers?.find(w => w.id === parseInt(id));
+            
+            if (workerData) {
+              console.log('WorkerProfile: Found worker in cache');
+              workerError = null; // Clear error since we found it in cache
+            }
+          } catch (cacheErr) {
+            console.warn('WorkerProfile: Cache lookup failed', cacheErr);
+          }
+        }
+
+        if (workerError || !workerData) throw workerError || new Error('Worker not found');
 
         const roleName = workerData?.roles?.name?.toLowerCase();
 
@@ -84,14 +108,39 @@ const WorkerProfile = () => {
 
         else if (roleName === "tutor" || roleName === "head_tutor") {
           // 3️⃣ Tutor logic: fetch both sessions and participants
-          const [{ data: sessions }, { data: participants }] = await Promise.all([
-            api.from("academic_sessions").select("*"),
-            api.from("academic_session_participants").select("*")
-          ]);
+          let sessions = [];
+          let participants = [];
+          
+          try {
+            const [sessionsRes, participantsRes] = await Promise.all([
+              api.from("academic_sessions").select("*"),
+              api.from("academic_session_participants").select("*")
+            ]);
+            
+            sessions = sessionsRes.data || [];
+            participants = participantsRes.data || [];
+          } catch (err) {
+            console.warn('WorkerProfile: Failed to fetch sessions/participants from API, trying cache', err);
+            
+            // Try cache as fallback
+            try {
+              const { getTable } = await import('../../utils/tableCache');
+              const [cachedSessions, cachedParticipants] = await Promise.all([
+                getTable('academic_sessions'),
+                getTable('academic_session_participants')
+              ]);
+              
+              sessions = cachedSessions || [];
+              participants = cachedParticipants || [];
+              console.log('WorkerProfile: Loaded sessions/participants from cache');
+            } catch (cacheErr) {
+              console.warn('WorkerProfile: Cache lookup for sessions failed', cacheErr);
+            }
+          }
 
-          const userId =workerData.id || workerData.profile.user_id ;
+          const userId = workerData.id || workerData.profile?.user_id;
           const joined = sessions.filter((s) =>
-            participants.some((p,w) => p.user_id || w.id === userId && p.session_id === s.id)
+            participants.some((p) => (p.user_id === userId || p.worker_id === userId) && p.session_id === s.id)
           );
 
           setWorker(workerData);

@@ -36,48 +36,69 @@ export default function StudentList() {
   const [page, setPage] = useState(1);
   const pageSize = 20;
 
-
-  // Determine school IDs based on role
+  // Determine school IDs based on role and filter selection
   const schoolIds = useMemo(() => {
-  const roleName = user?.profile?.roles?.name;
+    const roleName = user?.profile?.roles?.name;
+    
     if (["superuser", "admin", "hr", "viewer"].includes(roleName)) {
-      // If user has selected schools in filters, use those; else, show all
+      // If user has selected schools in filters, use those
       if (Array.isArray(filters.school_id) && filters.school_id.length > 0) {
-        return filters.school_id.map(Number); // ensure numbers
+        return filters.school_id.map(id => typeof id === 'number' ? id : Number(id)).filter(Boolean);
       }
+      // Otherwise show all schools
       return schools.map(s => s.id).filter(Boolean);
     }
-    // Access to only their school
+    
+    // Single school role - only their school
     return user?.profile?.school_id ? [user.profile.school_id] : [];
   }, [user?.profile?.roles?.name, user?.profile?.school_id, schools, filters.school_id]);
 
-  // Fetch data when school IDs change
+  // Fetch data when school IDs change (debounced by DataContext)
   useEffect(() => {
-    console.log('[StudentList] useEffect triggered, schoolIds:', schoolIds);
+    console.log('[StudentList] Fetching data for schools:', schoolIds);
     if (schoolIds.length > 0) {
       fetchData(schoolIds);
     }
-  }, [schoolIds, fetchData]);
+  }, [schoolIds.join(',')]); // Use join to avoid array reference changes
 
   // Debug what data we're getting
   useEffect(() => {
     console.log('[StudentList] allStudents from context:', allStudents?.length || 0);
   }, [allStudents]);
 
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setPage(1);
+  }, [schoolIds.join(','), filters.grade, filters.category]);
+
   // Filter and sort students in memory
   const students = useMemo(() => {
     if (!allStudents) return [];
     
+    console.log('[StudentList] Filtering students:', {
+      total: allStudents.length,
+      selectedSchools: schoolIds,
+      filters
+    });
+    
     let filtered = [...allStudents];
+    
+    // CRITICAL: Filter by selected schools first
+    if (schoolIds.length > 0) {
+      filtered = filtered.filter(s => schoolIds.includes(s.school_id));
+      console.log('[StudentList] After school filter:', filtered.length);
+    }
     
     // Apply grade filter
     if (Array.isArray(filters.grade) && filters.grade.length > 0) {
       filtered = filtered.filter(s => filters.grade.includes(s.grade));
+      console.log('[StudentList] After grade filter:', filtered.length);
     }
     
     // Apply category filter
     if (Array.isArray(filters.category) && filters.category.length > 0) {
       filtered = filtered.filter(s => filters.category.includes(s.category));
+      console.log('[StudentList] After category filter:', filtered.length);
     }
     
     // Sort
@@ -89,7 +110,7 @@ export default function StudentList() {
     });
     
     return filtered;
-  }, [allStudents, filters.grade, filters.category, sortBy, sortOrder]);
+  }, [allStudents, schoolIds, filters.grade, filters.category, sortBy, sortOrder]);
 
   // Paginate students
   const paginatedStudents = useMemo(() => {

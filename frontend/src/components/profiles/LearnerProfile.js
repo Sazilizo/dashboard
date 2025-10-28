@@ -338,6 +338,8 @@ const LearnerProfile = () => {
           console.warn('LearnerProfile: no variant returned data — falling back to separate queries');
           // Try to fetch base student
           let base = null;
+          
+          // Try online first
           try {
             if (typeof navigator !== 'undefined' && navigator.onLine && typeof onlineApi !== 'undefined') {
               const r = await onlineApi.from('students').select('*').eq('id', id).single();
@@ -346,9 +348,29 @@ const LearnerProfile = () => {
           } catch (e) {
             console.warn('LearnerProfile: online base fetch failed', e?.message || e);
           }
+          
+          // Try offline API if online failed
           if (!base) {
-            const r2 = await api.from('students').select('*').eq('id', id).single();
-            if (!r2?.error && r2?.data) base = r2.data;
+            try {
+              const r2 = await api.from('students').select('*').eq('id', id).single();
+              if (!r2?.error && r2?.data) base = r2.data;
+            } catch (e) {
+              console.warn('LearnerProfile: offline API fetch failed', e?.message || e);
+            }
+          }
+          
+          // Last resort: check IndexedDB cache directly
+          if (!base) {
+            try {
+              const { getTable } = await import('../../utils/tableCache');
+              const cachedStudents = await getTable('students');
+              base = cachedStudents?.find(s => s.id === parseInt(id));
+              if (base) {
+                console.log('LearnerProfile: Found student in IndexedDB cache');
+              }
+            } catch (e) {
+              console.warn('LearnerProfile: IndexedDB cache lookup failed', e?.message || e);
+            }
           }
 
           if (!base) throw new Error('No student base row returned');
@@ -365,7 +387,23 @@ const LearnerProfile = () => {
             try {
               const r2 = await api.from(table).select(select).eq(filterField, id);
               if (!r2?.error && r2?.data) return r2.data;
-            } catch (e) { console.warn('LearnerProfile: offline relation fetch failed', table, e?.message || e); }
+            } catch (e) { 
+              console.warn('LearnerProfile: offline relation fetch failed', table, e?.message || e);
+            }
+            
+            // Last resort: try to get from IndexedDB cache
+            try {
+              const { getTable } = await import('../../utils/tableCache');
+              const cached = await getTable(table);
+              const filtered = (cached || []).filter(item => item[filterField] === parseInt(id));
+              if (filtered.length > 0) {
+                console.log(`LearnerProfile: Found ${filtered.length} ${table} records in cache`);
+                return filtered;
+              }
+            } catch (e) {
+              console.warn(`LearnerProfile: cache lookup failed for ${table}`, e?.message || e);
+            }
+            
             return [];
           };
 
@@ -379,8 +417,24 @@ const LearnerProfile = () => {
               } catch (e) { console.warn('LearnerProfile: online tutor fetch failed', e?.message || e); }
             }
             if (!tutorObj) {
-              const r2 = await api.from('workers').select('id, name, last_name, photo, role_id').eq('id', base.tutor_id).single();
-              if (!r2?.error && r2?.data) tutorObj = r2.data;
+              try {
+                const r2 = await api.from('workers').select('id, name, last_name, photo, role_id').eq('id', base.tutor_id).single();
+                if (!r2?.error && r2?.data) tutorObj = r2.data;
+              } catch (e) { console.warn('LearnerProfile: offline tutor API fetch failed', e?.message || e); }
+            }
+            
+            // Last resort: check cache
+            if (!tutorObj) {
+              try {
+                const { getTable } = await import('../../utils/tableCache');
+                const cachedWorkers = await getTable('workers');
+                tutorObj = cachedWorkers?.find(w => w.id === base.tutor_id);
+                if (tutorObj) {
+                  console.log('LearnerProfile: Found tutor in cache');
+                }
+              } catch (e) {
+                console.warn('LearnerProfile: tutor cache lookup failed', e?.message || e);
+              }
             }
           }
 

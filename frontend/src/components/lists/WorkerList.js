@@ -33,25 +33,44 @@ export default function WorkerList() {
     const roleName = user?.profile?.roles?.name;
     if (["superuser", "admin", "hr", "viewer"].includes(roleName)) {
       if (Array.isArray(filters.school_id) && filters.school_id.length > 0) {
-        return filters.school_id.map(Number);
+        return filters.school_id.map(id => typeof id === 'number' ? id : Number(id)).filter(Boolean);
       }
       return schools.map((s) => s.id).filter(Boolean);
     }
     return user?.profile?.school_id ? [user.profile.school_id] : [];
   }, [user?.profile?.roles?.name, user?.profile?.school_id, schools, filters.school_id]);
 
-  // Fetch data when school IDs change
+  // Fetch data when school IDs change (debounced by DataContext)
   useEffect(() => {
+    console.log('[WorkerList] Fetching data for schools:', schoolIds);
     if (schoolIds.length > 0) {
       fetchData(schoolIds);
     }
-  }, [schoolIds, fetchData]);
+  }, [schoolIds.join(',')]); // Use join to avoid array reference changes
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setPage(1);
+  }, [schoolIds.join(','), filters.group_by, filters.deleted]);
 
   // Filter and sort workers in memory
   const workers = React.useMemo(() => {
     if (!allWorkers) return [];
     
+    console.log('[WorkerList] Filtering workers:', {
+      total: allWorkers.length,
+      selectedSchools: schoolIds,
+      filters: filters,
+      isOnline
+    });
+    
     let filtered = [...allWorkers];
+    
+    // CRITICAL: Filter by selected schools first
+    if (schoolIds.length > 0) {
+      filtered = filtered.filter(w => schoolIds.includes(w.school_id));
+      console.log('[WorkerList] After school filter:', filtered.length);
+    }
     
     // Apply group_by filter if exists
     if (Array.isArray(filters.group_by) && filters.group_by.length > 0) {
@@ -59,11 +78,13 @@ export default function WorkerList() {
         const roleName = w.roles?.name?.toLowerCase() || '';
         return filters.group_by.some(g => roleName.includes(g.toLowerCase()));
       });
+      console.log('[WorkerList] After group_by filter:', filtered.length);
     }
     
     // Apply deleted filter if exists
     if (Array.isArray(filters.deleted) && filters.deleted.length > 0) {
       filtered = filtered.filter(w => filters.deleted.includes(w.deleted));
+      console.log('[WorkerList] After deleted filter:', filtered.length);
     }
     
     // Sort
@@ -74,8 +95,9 @@ export default function WorkerList() {
       return sortOrder === "asc" ? comparison : -comparison;
     });
     
+    console.log('[WorkerList] Final filtered workers:', filtered.length);
     return filtered;
-  }, [allWorkers, filters.group_by, filters.deleted, sortBy, sortOrder]);
+  }, [allWorkers, schoolIds, filters.group_by, filters.deleted, sortBy, sortOrder, isOnline]);
 
   // Paginate workers
   const paginatedWorkers = React.useMemo(() => {
@@ -145,7 +167,14 @@ export default function WorkerList() {
               </>
             )}
             {!loading && (!workers || workers.length === 0) && (
-              <p>No workers found.</p>
+              <div>
+                <p>No workers found.</p>
+                {allWorkers && allWorkers.length > 0 && (
+                  <p className="text-sm text-gray-600">
+                    ({allWorkers.length} workers available but filtered out)
+                  </p>
+                )}
+              </div>
             )}
           </div>
 
