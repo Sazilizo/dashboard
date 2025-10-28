@@ -52,19 +52,19 @@ export default function DashboardHome() {
   // Filter data by selected schools
   const workers = useMemo(() => {
     if (!allWorkers) return [];
-    if (schoolIds.length === 0) return allWorkers;
+    if (schoolIds.length === 0 || schoolIds.includes(-1)) return allWorkers;
     return allWorkers.filter(w => schoolIds.includes(w.school_id));
   }, [allWorkers, schoolIds]);
 
   const students = useMemo(() => {
     if (!allStudents) return [];
-    if (schoolIds.length === 0) return allStudents;
+    if (schoolIds.length === 0 || schoolIds.includes(-1)) return allStudents;
     return allStudents.filter(s => schoolIds.includes(s.school_id));
   }, [allStudents, schoolIds]);
 
   const meals = useMemo(() => {
     if (!allMeals) return [];
-    if (schoolIds.length === 0) return allMeals;
+    if (schoolIds.length === 0 || schoolIds.includes(-1)) return allMeals;
     return allMeals.filter(m => schoolIds.includes(m.school_id));
   }, [allMeals, schoolIds]);
 

@@ -67,8 +67,8 @@ export default function WorkerList() {
     
     let filtered = [...allWorkers];
     
-    // CRITICAL: Filter by selected schools first
-    if (schoolIds.length > 0) {
+    // CRITICAL: Filter by selected schools first (skip if sentinel -1 present => All Schools)
+    if (schoolIds.length > 0 && !schoolIds.includes(-1)) {
       filtered = filtered.filter(w => schoolIds.includes(w.school_id));
       console.log('[WorkerList] After school filter:', filtered.length);
     }

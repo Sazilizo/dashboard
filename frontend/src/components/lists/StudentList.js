@@ -84,8 +84,8 @@ export default function StudentList() {
     
     let filtered = [...allStudents];
     
-    // CRITICAL: Filter by selected schools first
-    if (schoolIds.length > 0) {
+    // CRITICAL: Filter by selected schools first (skip if sentinel -1 present => All Schools)
+    if (schoolIds.length > 0 && !schoolIds.includes(-1)) {
       filtered = filtered.filter(s => schoolIds.includes(s.school_id));
       console.log('[StudentList] After school filter:', filtered.length);
     }

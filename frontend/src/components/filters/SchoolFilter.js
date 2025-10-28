@@ -27,6 +27,12 @@ export default function SchoolFilter({ user, schools, onChange }) {
       setSelectedSchools(allSchoolIds);
       onChange(allSchoolIds);
       setInitialized(true);
+    } else if (isAllSchoolRole && schools.length === 0) {
+      // Fallback for mobile/initial runs when schools haven't loaded yet
+      // Use sentinel -1 meaning "All Schools"
+      setSelectedSchools([-1]);
+      onChange([-1]);
+      setInitialized(true);
     }
   }, [isAllSchoolRole, user, schools, onChange, initialized]);
 
@@ -64,25 +70,49 @@ export default function SchoolFilter({ user, schools, onChange }) {
   return (
     <div className="school-filter">
       <label>Schools:</label>
-      <ul className="filter-list-schools filter-list">
-        {schools.map((school) => (
-          <li key={school.id} className="filter-list-item">
-            <input
-              type="checkbox"
-              id={`school-${school.id}`}
-              className="filter-checkbox"
-              checked={selectedSchools.includes(school.id)}
-              onChange={() => toggleOption(school.id)}
-            />
-            <label
-              htmlFor={`school-${school.id}`}
-              className="filter-label-text"
-            >
-              {school.name}
-            </label>
-          </li>
-        ))}
-      </ul>
+      {schools.length === 0 ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="checkbox"
+            id="school-all-fallback"
+            className="filter-checkbox"
+            checked={selectedSchools.includes(-1)}
+            onChange={() => {
+              // Toggle the sentinel value
+              setSelectedSchools((prev) => {
+                const hasAll = prev.includes(-1);
+                const updated = hasAll ? [] : [-1];
+                onChange(updated);
+                return updated;
+              });
+            }}
+          />
+          <label htmlFor="school-all-fallback" className="filter-label-text">
+            All Schools
+          </label>
+          <span style={{ fontSize: 12, color: '#777' }}>(fallback - schools not loaded yet)</span>
+        </div>
+      ) : (
+        <ul className="filter-list-schools filter-list">
+          {schools.map((school) => (
+            <li key={school.id} className="filter-list-item">
+              <input
+                type="checkbox"
+                id={`school-${school.id}`}
+                className="filter-checkbox"
+                checked={selectedSchools.includes(school.id)}
+                onChange={() => toggleOption(school.id)}
+              />
+              <label
+                htmlFor={`school-${school.id}`}
+                className="filter-label-text"
+              >
+                {school.name}
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

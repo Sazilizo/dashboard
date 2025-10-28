@@ -127,7 +127,8 @@ export function DataProvider({ children }) {
       return;
     }
 
-    console.log('[DataContext] Fetching data for schools:', schoolIds);
+    const allSchoolsRequested = Array.isArray(schoolIds) && schoolIds.includes(-1);
+    console.log('[DataContext] Fetching data for schools:', schoolIds, 'allSchoolsRequested:', allSchoolsRequested);
     setLoading(true);
 
     try {
@@ -160,11 +161,18 @@ export function DataProvider({ children }) {
           getTable("roles"),
         ]);
 
-        // Filter by school IDs and ensure data integrity
-        workersData = (cachedWorkers || []).filter(w => schoolIds.includes(w.school_id));
-        studentsData = (cachedStudents || []).filter(s => schoolIds.includes(s.school_id));
-        mealsData = (cachedMeals || []).filter(m => schoolIds.includes(m.school_id));
-        schoolsData = (cachedSchools || []).filter(s => schoolIds.includes(s.id));
+        // Filter by school IDs unless "All Schools" sentinel present
+        if (allSchoolsRequested) {
+          workersData = cachedWorkers || [];
+          studentsData = cachedStudents || [];
+          mealsData = cachedMeals || [];
+          schoolsData = cachedSchools || [];
+        } else {
+          workersData = (cachedWorkers || []).filter(w => schoolIds.includes(w.school_id));
+          studentsData = (cachedStudents || []).filter(s => schoolIds.includes(s.school_id));
+          mealsData = (cachedMeals || []).filter(m => schoolIds.includes(m.school_id));
+          schoolsData = (cachedSchools || []).filter(s => schoolIds.includes(s.id));
+        }
         rolesData = cachedRoles || []; // Roles are not school-specific
 
         console.log('[DataContext] Loaded from cache:', {
@@ -177,11 +185,16 @@ export function DataProvider({ children }) {
       } else {
         // Online: fetch from Supabase in parallel
         console.log('[DataContext] Online - fetching from Supabase');
+        const workersQuery = api.from("workers").select("*, roles:role_id(name)").limit(2000);
+        const studentsQuery = api.from("students").select("*").limit(2000);
+        const mealsQuery = api.from("meals").select("*").limit(2000);
+        const schoolsQuery = api.from("schools").select("*");
+
         const [workersRes, studentsRes, mealsRes, schoolsRes, rolesRes] = await Promise.all([
-          api.from("workers").select("*, roles:role_id(name)").in("school_id", schoolIds).limit(2000),
-          api.from("students").select("*").in("school_id", schoolIds).limit(2000),
-          api.from("meals").select("*").in("school_id", schoolIds).limit(2000),
-          api.from("schools").select("*").in("id", schoolIds),
+          allSchoolsRequested ? workersQuery : workersQuery.in("school_id", schoolIds),
+          allSchoolsRequested ? studentsQuery : studentsQuery.in("school_id", schoolIds),
+          allSchoolsRequested ? mealsQuery : mealsQuery.in("school_id", schoolIds),
+          allSchoolsRequested ? schoolsQuery : schoolsQuery.in("id", schoolIds),
           api.from("roles").select("*"),
         ]);
 
