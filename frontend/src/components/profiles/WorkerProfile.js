@@ -9,6 +9,7 @@ import { useAuth } from "../../context/AuthProvider";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
 import BirthdayConfetti from "../widgets/BirthdayConfetti";
 import { isBirthdayFromId } from "../../utils/birthdayUtils";
+import Loader from "../widgets/Loader";
 import "../../styles/Profile.css";
 
 const WorkerProfile = () => {
@@ -175,7 +176,7 @@ const WorkerProfile = () => {
     console.log("Worker profile loaded:", worker); 
   }, [worker]);
 
-  if (loading) return <p>Loading worker profile...</p>;
+  if (loading) return <Loader variant="dots" size="xlarge" text="Loading worker profile..." fullScreen />;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
   if (!worker) return <p>No worker found</p>;
 

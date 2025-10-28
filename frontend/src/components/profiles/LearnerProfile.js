@@ -13,6 +13,7 @@ import StatsDashboard from "../StatsDashboard";
 import { useAuth } from "../../context/AuthProvider";
 import BirthdayConfetti from "../widgets/BirthdayConfetti";
 import { isBirthday } from "../../utils/birthdayUtils";
+import Loader from "../widgets/Loader";
 import "../../styles/Profile.css"
 // import InfoCount from "../widgets/infoCount";
 
@@ -547,9 +548,9 @@ const LearnerProfile = () => {
     console.log("Student: ", student)
   })
 
-  if (loading) return <p>Loading student data...</p>;
+  if (loading) return <Loader variant="pulse" size="xlarge" text="Loading student profile..." fullScreen />;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
-  if (!student) return <p>No student found</p>;
+  if (!student) return <p>Student not found</p>;
 
   return (
     <>

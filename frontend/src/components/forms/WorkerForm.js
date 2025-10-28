@@ -236,7 +236,7 @@ export default function WorkerForm() {
     }
   };
 
-  if (!fields.length) return <p>Loading form...</p>;
+  if (!fields.length) return <Loader variant="bars" size="large" text="Loading form..." />;
 
   return (
     <>

@@ -5,6 +5,7 @@ import { useData } from "../../context/DataContext";
 import FiltersPanel from "../filters/FiltersPanel";
 import { useFilters } from "../../context/FiltersContext";
 import StudentStats from "./StudentStats";
+import Loader from "../widgets/Loader";
 import "../../styles/main.css"
 import { Link } from "react-router-dom";
 import WorkerStats from "./WorkerStats";
@@ -151,7 +152,7 @@ export default function WorkerList() {
               </span>
             </div>
 
-            {loading && <div>Loading...</div>}
+            {loading && <Loader variant="spinner" size="large" text="Loading workers..." />}
             {!loading && workers && workers.length > 0 && (
               <>
                 <WorkerListItems workers={paginatedWorkers} />

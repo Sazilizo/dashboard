@@ -1,0 +1,360 @@
+/* ============================================
+   LOADER / SPINNER STYLES
+   Colors: #0077BE (Blue), #196A59 (Green), #EA333F (Red)
+   ============================================ */
+
+/* Container Styles */
+.loader-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 20px;
+}
+
+.loader-fullscreen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(255, 255, 255, 0.95);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  z-index: 9999;
+  backdrop-filter: blur(4px);
+}
+
+.loader-text {
+  font-size: 16px;
+  font-weight: 500;
+  color: #333;
+  margin: 0;
+  animation: loader-text-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes loader-text-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+/* Size Variants */
+.loader-small { width: 32px; height: 32px; }
+.loader-medium { width: 48px; height: 48px; }
+.loader-large { width: 64px; height: 64px; }
+.loader-xlarge { width: 96px; height: 96px; }
+
+/* ============================================
+   VARIANT 1: SPINNER (3 Rotating Rings)
+   ============================================ */
+.loader-spinner {
+  position: relative;
+}
+
+.spinner {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.spinner-ring {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  animation: spinner-rotate 1.5s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite;
+}
+
+.spinner-ring:nth-child(1) {
+  border-top-color: #0077BE;
+  animation-delay: 0s;
+}
+
+.spinner-ring:nth-child(2) {
+  border-right-color: #196A59;
+  animation-delay: 0.15s;
+  width: 80%;
+  height: 80%;
+  top: 10%;
+  left: 10%;
+}
+
+.spinner-ring:nth-child(3) {
+  border-bottom-color: #EA333F;
+  animation-delay: 0.3s;
+  width: 60%;
+  height: 60%;
+  top: 20%;
+  left: 20%;
+}
+
+@keyframes spinner-rotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Spinner Letters (G.C.U) */
+.spinner-letters {
+  position: absolute;
+  bottom: -40px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 2px;
+}
+
+.spinner-letter {
+  display: inline-block;
+  animation: letter-pulse 1.5s ease-in-out infinite;
+}
+
+.letter-g {
+  color: #0077BE;
+  animation-delay: 0s;
+}
+
+.letter-c {
+  color: #196A59;
+  animation-delay: 0.2s;
+}
+
+.letter-u {
+  color: #EA333F;
+  animation-delay: 0.4s;
+}
+
+@keyframes letter-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+}
+
+/* Adjust spinner container to accommodate letters */
+.loader-spinner {
+  position: relative;
+  padding-bottom: 50px;
+}
+
+/* ============================================
+   VARIANT 2: BOUNCING DOTS
+   ============================================ */
+.dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+}
+
+.dot {
+  width: 25%;
+  height: 25%;
+  border-radius: 50%;
+  animation: dot-bounce 1.4s ease-in-out infinite;
+}
+
+.dot-1 {
+  background: #0077BE;
+  animation-delay: 0s;
+}
+
+.dot-2 {
+  background: #196A59;
+  animation-delay: 0.2s;
+}
+
+.dot-3 {
+  background: #EA333F;
+  animation-delay: 0.4s;
+}
+
+@keyframes dot-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.8) translateY(0);
+    opacity: 0.7;
+  }
+  40% {
+    transform: scale(1.2) translateY(-20px);
+    opacity: 1;
+  }
+}
+
+/* ============================================
+   VARIANT 3: PULSE RINGS
+   ============================================ */
+.pulse {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pulse-ring {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  opacity: 0;
+  animation: pulse-expand 2s ease-out infinite;
+}
+
+.pulse-ring-1 {
+  border: 3px solid #0077BE;
+  animation-delay: 0s;
+}
+
+.pulse-ring-2 {
+  border: 3px solid #196A59;
+  animation-delay: 0.6s;
+}
+
+.pulse-ring-3 {
+  border: 3px solid #EA333F;
+  animation-delay: 1.2s;
+}
+
+.pulse-core {
+  width: 30%;
+  height: 30%;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0077BE, #196A59, #EA333F);
+  animation: pulse-core-beat 2s ease-in-out infinite;
+}
+
+@keyframes pulse-expand {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1.2);
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-core-beat {
+  0%, 100% {
+    transform: scale(0.8);
+    box-shadow: 0 0 10px rgba(0, 119, 190, 0.5);
+  }
+  50% {
+    transform: scale(1.1);
+    box-shadow: 0 0 20px rgba(0, 119, 190, 0.8);
+  }
+}
+
+/* ============================================
+   VARIANT 4: ANIMATED BARS
+   ============================================ */
+.bars {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8%;
+  width: 100%;
+  height: 100%;
+}
+
+.bar {
+  width: 12%;
+  height: 100%;
+  border-radius: 4px;
+  animation: bar-scale 1.2s ease-in-out infinite;
+}
+
+.bar-1 {
+  background: linear-gradient(to bottom, #0077BE, #0088DD);
+  animation-delay: 0s;
+}
+
+.bar-2 {
+  background: linear-gradient(to bottom, #196A59, #22836F);
+  animation-delay: 0.15s;
+}
+
+.bar-3 {
+  background: linear-gradient(to bottom, #EA333F, #FF4455);
+  animation-delay: 0.3s;
+}
+
+.bar-4 {
+  background: linear-gradient(to bottom, #0077BE, #0088DD);
+  animation-delay: 0.45s;
+}
+
+.bar-5 {
+  background: linear-gradient(to bottom, #196A59, #22836F);
+  animation-delay: 0.6s;
+}
+
+@keyframes bar-scale {
+  0%, 100% {
+    transform: scaleY(0.4);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+/* ============================================
+   RESPONSIVE & ACCESSIBILITY
+   ============================================ */
+@media (prefers-reduced-motion: reduce) {
+  .spinner-ring,
+  .dot,
+  .pulse-ring,
+  .pulse-core,
+  .bar,
+  .loader-text {
+    animation: none !important;
+  }
+  
+  /* Simple fade for reduced motion */
+  .loader-container::after,
+  .loader-fullscreen::after {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    animation: simple-fade 2s ease-in-out infinite;
+  }
+  
+  @keyframes simple-fade {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+  }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .loader-fullscreen {
+    background: rgba(20, 20, 20, 0.95);
+  }
+  
+  .loader-text {
+    color: #e0e0e0;
+  }
+}

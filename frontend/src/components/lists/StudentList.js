@@ -7,6 +7,7 @@ import { useFilters } from "../../context/FiltersContext";
 import StudentStats from "./StudentStats";
 import SkeletonList from "../widgets/SkeletonList";
 import ListItems from "../widgets/ListItems";
+import Loader from "../widgets/Loader";
 import "../../styles/main.css";
 import { Link } from "react-router-dom";
 import SortDropdown from "../widgets/SortDropdown"
@@ -162,7 +163,7 @@ export default function StudentList() {
                 {isOnline ? "Online" : "Offline (changes will sync when online)"}
               </span>
             </div>
-            {loading && <SkeletonList count={10} />}
+            {loading && <Loader variant="pulse" size="large" text="Loading students..." />}
             {!loading && students && students.length > 0 && (
               <>
                 <ListItems items={paginatedStudents} resource="students" onClick={() => setShowList(true)} />

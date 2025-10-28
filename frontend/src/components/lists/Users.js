@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import api from "../../api/client";
 import EditProfile from "../profiles/EditUserProfile";
 import { useAuth } from "../../context/AuthProvider";
+import Loader from "../widgets/Loader";
 import "../../styles/Users.css";
 import { Link } from "react-router-dom";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
@@ -178,7 +179,7 @@ export default function Users() {
   );
 
   if (!isPrivileged) return <div>Access denied</div>;
-  if (loading) return <div>Loading users...</div>;
+  if (loading) return <Loader variant="dots" size="large" text="Loading users..." />;
   if (error) return <div>Error: {error}</div>;
 
   return (
