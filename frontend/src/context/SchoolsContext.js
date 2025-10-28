@@ -78,90 +78,115 @@ export function SchoolsProvider({ children }) {
       return;
     }
 
-    // Load cached data immediately for instant display
-    const cached = await loadCachedSchoolsSafe();
-    if (cached && cached.length > 0) {
-      console.log('[SchoolsContext] Loaded', cached.length, 'schools from cache');
-      setSchools(cached);
+    console.log('[SchoolsContext] Starting school refresh, isOnline:', isOnline);
+
+    // CRITICAL: ALWAYS load cache first and set it immediately
+    let cached = [];
+    try {
+      cached = await loadCachedSchoolsSafe();
+      console.log('[SchoolsContext] Cache loaded:', cached?.length || 0, 'schools');
+      
+      if (cached && cached.length > 0) {
+        console.log('[SchoolsContext] Setting schools from cache immediately');
+        setSchools(cached);
+        setLoading(false);
+        setError(null); // Clear any previous errors
+      } else {
+        console.warn('[SchoolsContext] No cached schools found - IndexedDB may be empty');
+        setLoading(false); // Still stop loading even if cache is empty
+      }
+    } catch (cacheErr) {
+      console.error('[SchoolsContext] Critical: Failed to load from cache:', cacheErr);
       setLoading(false);
+      setError(cacheErr);
+      // Continue anyway - maybe API will work
     }
 
+    // If offline, stop here - we've already loaded cache
     if (!isOnline) {
-      console.log('[SchoolsContext] Offline - using cached schools only');
-      setLoading(false);
+      console.log('[SchoolsContext] Offline mode - using cached schools only');
       return;
     }
 
-    // Fetch fresh data in background if online
+    // Online: try to fetch fresh data in background (non-blocking)
+    console.log('[SchoolsContext] Online - attempting background refresh from API');
+    
     try {
-      console.log('[SchoolsContext] Fetching schools from Supabase');
-      
-      // Simplified query without aggregates for faster loading
-      let query = api
+      const { data, error } = await api
         .from("schools")
         .select("*")
         .order("name", { ascending: true });
-
-      console.log('[SchoolsContext] Executing query...');
-
-      const { data, error } = await query;
       
-      console.log('[SchoolsContext] Query response:', { dataCount: data?.length || 0, error: error?.message });
+      console.log('[SchoolsContext] API response:', { 
+        dataCount: data?.length || 0, 
+        hasError: !!error,
+        errorMessage: error?.message 
+      });
       
-      if (error) throw error;
+      if (error) {
+        console.warn('[SchoolsContext] API error - keeping cached data:', error.message);
+        // Don't throw - just keep using cached data
+        return;
+      }
 
       const dataArr = data || [];
 
-      // Simple mapping without complex counts for now
+      if (dataArr.length === 0) {
+        console.warn('[SchoolsContext] API returned 0 schools - keeping cached data');
+        return;
+      }
+
+      // Map to consistent format
       const schoolsData = dataArr.map((school) => ({
         ...school,
-        workers_count: 0, // Can be populated later if needed
+        workers_count: 0,
         students_count: 0,
         users_count: 0,
         meals_count: 0,
       }));
 
-      console.log('[SchoolsContext] Fetched', schoolsData.length, 'schools from Supabase');
+      console.log('[SchoolsContext] Successfully fetched', schoolsData.length, 'schools from API');
+      
+      // Update state with fresh data
       setSchools(schoolsData);
       setError(null);
       lastFetchTime.current = now;
 
       // Cache for offline use
-      await cacheSchoolsOffline(schoolsData);
-    } catch (err) {
-      console.error('[SchoolsContext] Failed to load schools from Supabase:', err);
-      setError(err);
-      
-      // Keep showing cached data even on error
-      if (!cached || cached.length === 0) {
-        const fallbackCached = await loadCachedSchoolsSafe();
-        if (fallbackCached.length > 0) {
-          console.log('[SchoolsContext] Using cached schools after fetch error');
-          setSchools(fallbackCached);
-        }
+      try {
+        await cacheSchoolsOffline(schoolsData);
+        console.log('[SchoolsContext] Cached', schoolsData.length, 'schools to IndexedDB');
+      } catch (cacheErr) {
+        console.warn('[SchoolsContext] Failed to cache schools (non-critical):', cacheErr);
       }
-    } finally {
-      setLoading(false);
+      
+    } catch (err) {
+      console.error('[SchoolsContext] API fetch failed - keeping cached data:', err);
+      // Don't set error state if we have cached data
+      if (!cached || cached.length === 0) {
+        setError(err);
+      }
+      // Keep using cached data that we loaded earlier
     }
   };
 
-  // Initial load
+  // Initial load - ALWAYS load on mount
   useEffect(() => {
-    console.log('[SchoolsContext] Initial mount - loading schools');
+    console.log('[SchoolsContext] Initial mount - loading schools from cache/API');
     refreshSchools(true);
   }, []);
 
-  // Refresh when filters change
-  useEffect(() => {
-    if (Object.keys(filters).length > 0) {
-      refreshSchools(false);
-    }
-  }, [filters]);
+  // Don't refresh on filter changes - filters consume schools, not trigger refresh
+  // useEffect(() => {
+  //   if (Object.keys(filters).length > 0) {
+  //     refreshSchools(false);
+  //   }
+  // }, [filters]);
 
   // Refresh when coming back online
   useEffect(() => {
     if (isOnline) {
-      console.log('[SchoolsContext] Back online - refreshing schools');
+      console.log('[SchoolsContext] Back online - refreshing schools from API');
       refreshSchools(true);
     }
   }, [isOnline]);

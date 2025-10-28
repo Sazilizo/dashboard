@@ -5,6 +5,7 @@ import cacheFormSchemasIfOnline from "./utils/proactiveCache";
 import { preloadFaceApiModels } from "./utils/FaceApiLoader";
 import { syncOfflineChanges } from "./api/offlineClient";
 import { onlineApi } from "./api/client";
+import { seedSchoolsCache, verifySchoolsCache } from "./utils/seedSchoolsCache";
 
 
 const container = document.getElementById("root");
@@ -16,6 +17,17 @@ cacheFormSchemasIfOnline().catch((err) => console.warn("[index] cache error", er
 
 // Preload face-api models in background (useful for biometric flows)
 preloadFaceApiModels().catch((err) => console.warn("[index] faceapi preload failed", err));
+
+// Make seed utilities available globally for debugging (mobile & web)
+if (typeof window !== 'undefined') {
+  window.seedSchoolsCache = seedSchoolsCache;
+  window.verifySchoolsCache = verifySchoolsCache;
+  window.enableSchoolsDebug = () => {
+    localStorage.setItem('showSchoolsDebug', 'true');
+    window.location.reload();
+  };
+  console.log('[GCU Debug] School utilities available: window.seedSchoolsCache(), window.verifySchoolsCache(), window.enableSchoolsDebug()');
+}
 
 // Register service worker
 if ('serviceWorker' in navigator) {

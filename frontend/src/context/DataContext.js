@@ -153,13 +153,32 @@ export function DataProvider({ children }) {
       if (!isOnline) {
         // Offline: load from IndexedDB
         console.log('[DataContext] Offline - loading from cache');
-        const [cachedWorkers, cachedStudents, cachedMeals, cachedSchools, cachedRoles] = await Promise.all([
-          getTable("workers"),
-          getTable("students"),
-          getTable("meals"),
-          getTable("schools"),
-          getTable("roles"),
-        ]);
+        let cachedWorkers, cachedStudents, cachedMeals, cachedSchools, cachedRoles;
+        
+        try {
+          [cachedWorkers, cachedStudents, cachedMeals, cachedSchools, cachedRoles] = await Promise.all([
+            getTable("workers"),
+            getTable("students"),
+            getTable("meals"),
+            getTable("schools"),
+            getTable("roles"),
+          ]);
+          
+          console.log('[DataContext] Raw cache results:', {
+            workers: cachedWorkers?.length || 0,
+            students: cachedStudents?.length || 0,
+            meals: cachedMeals?.length || 0,
+            schools: cachedSchools?.length || 0,
+            roles: cachedRoles?.length || 0,
+          });
+        } catch (cacheErr) {
+          console.error('[DataContext] Failed to load from cache:', cacheErr);
+          cachedWorkers = [];
+          cachedStudents = [];
+          cachedMeals = [];
+          cachedSchools = [];
+          cachedRoles = [];
+        }
 
         // Filter by school IDs unless "All Schools" sentinel present
         if (allSchoolsRequested) {
@@ -175,7 +194,7 @@ export function DataProvider({ children }) {
         }
         rolesData = cachedRoles || []; // Roles are not school-specific
 
-        console.log('[DataContext] Loaded from cache:', {
+        console.log('[DataContext] Filtered data from cache:', {
           workers: workersData.length,
           students: studentsData.length,
           meals: mealsData.length,
@@ -185,39 +204,100 @@ export function DataProvider({ children }) {
       } else {
         // Online: fetch from Supabase in parallel
         console.log('[DataContext] Online - fetching from Supabase');
-        const workersQuery = api.from("workers").select("*, roles:role_id(name)").limit(2000);
-        const studentsQuery = api.from("students").select("*").limit(2000);
-        const mealsQuery = api.from("meals").select("*").limit(2000);
-        const schoolsQuery = api.from("schools").select("*");
+        
+        try {
+          const workersQuery = api.from("workers").select("*, roles:role_id(name)").limit(2000);
+          const studentsQuery = api.from("students").select("*").limit(2000);
+          const mealsQuery = api.from("meals").select("*").limit(2000);
+          const schoolsQuery = api.from("schools").select("*");
 
-        const [workersRes, studentsRes, mealsRes, schoolsRes, rolesRes] = await Promise.all([
-          allSchoolsRequested ? workersQuery : workersQuery.in("school_id", schoolIds),
-          allSchoolsRequested ? studentsQuery : studentsQuery.in("school_id", schoolIds),
-          allSchoolsRequested ? mealsQuery : mealsQuery.in("school_id", schoolIds),
-          allSchoolsRequested ? schoolsQuery : schoolsQuery.in("id", schoolIds),
-          api.from("roles").select("*"),
-        ]);
+          const [workersRes, studentsRes, mealsRes, schoolsRes, rolesRes] = await Promise.all([
+            allSchoolsRequested ? workersQuery : workersQuery.in("school_id", schoolIds),
+            allSchoolsRequested ? studentsQuery : studentsQuery.in("school_id", schoolIds),
+            allSchoolsRequested ? mealsQuery : mealsQuery.in("school_id", schoolIds),
+            allSchoolsRequested ? schoolsQuery : schoolsQuery.in("id", schoolIds),
+            api.from("roles").select("*"),
+          ]);
 
-        if (workersRes.error) throw workersRes.error;
-        if (studentsRes.error) throw studentsRes.error;
-        if (mealsRes.error) throw mealsRes.error;
-        if (schoolsRes.error) throw schoolsRes.error;
-        if (rolesRes.error) throw rolesRes.error;
+          console.log('[DataContext] API responses:', {
+            workersError: workersRes.error?.message,
+            studentsError: studentsRes.error?.message,
+            mealsError: mealsRes.error?.message,
+            schoolsError: schoolsRes.error?.message,
+            rolesError: rolesRes.error?.message,
+          });
 
-        workersData = workersRes.data || [];
-        studentsData = studentsRes.data || [];
-        mealsData = mealsRes.data || [];
-        schoolsData = schoolsRes.data || [];
-        rolesData = rolesRes.data || [];
+          if (workersRes.error) throw workersRes.error;
+          if (studentsRes.error) throw studentsRes.error;
+          if (mealsRes.error) throw mealsRes.error;
+          if (schoolsRes.error) throw schoolsRes.error;
+          if (rolesRes.error) throw rolesRes.error;
 
-        // Cache for offline use
-        await Promise.all([
-          cacheTable("workers", workersData),
-          cacheTable("students", studentsData),
-          cacheTable("meals", mealsData),
-          cacheTable("schools", schoolsData),
-          cacheTable("roles", rolesData),
-        ]);
+          workersData = workersRes.data || [];
+          studentsData = studentsRes.data || [];
+          mealsData = mealsRes.data || [];
+          schoolsData = schoolsRes.data || [];
+          rolesData = rolesRes.data || [];
+
+          console.log('[DataContext] API data counts:', {
+            workers: workersData.length,
+            students: studentsData.length,
+            meals: mealsData.length,
+            schools: schoolsData.length,
+            roles: rolesData.length,
+          });
+
+          // Cache for offline use
+          try {
+            await Promise.all([
+              cacheTable("workers", workersData),
+              cacheTable("students", studentsData),
+              cacheTable("meals", mealsData),
+              cacheTable("schools", schoolsData),
+              cacheTable("roles", rolesData),
+            ]);
+            console.log('[DataContext] Successfully cached all data to IndexedDB');
+          } catch (cacheErr) {
+            console.warn('[DataContext] Failed to cache data (non-critical):', cacheErr);
+          }
+        } catch (apiErr) {
+          console.error('[DataContext] API fetch failed, falling back to cache:', apiErr);
+          
+          // Fallback to cache if API fails
+          try {
+            const [cachedWorkers, cachedStudents, cachedMeals, cachedSchools, cachedRoles] = await Promise.all([
+              getTable("workers"),
+              getTable("students"),
+              getTable("meals"),
+              getTable("schools"),
+              getTable("roles"),
+            ]);
+
+            if (allSchoolsRequested) {
+              workersData = cachedWorkers || [];
+              studentsData = cachedStudents || [];
+              mealsData = cachedMeals || [];
+              schoolsData = cachedSchools || [];
+            } else {
+              workersData = (cachedWorkers || []).filter(w => schoolIds.includes(w.school_id));
+              studentsData = (cachedStudents || []).filter(s => schoolIds.includes(s.school_id));
+              mealsData = (cachedMeals || []).filter(m => schoolIds.includes(m.school_id));
+              schoolsData = (cachedSchools || []).filter(s => schoolIds.includes(s.id));
+            }
+            rolesData = cachedRoles || [];
+            
+            console.log('[DataContext] Recovered from cache after API failure:', {
+              workers: workersData.length,
+              students: studentsData.length,
+              meals: mealsData.length,
+              schools: schoolsData.length,
+              roles: rolesData.length,
+            });
+          } catch (fallbackErr) {
+            console.error('[DataContext] Cache fallback also failed:', fallbackErr);
+            throw apiErr; // Re-throw original API error
+          }
+        }
       }
 
       console.log('[DataContext] Data loaded:', {
