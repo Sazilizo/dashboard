@@ -99,11 +99,12 @@ export default function StackedStudentsGradeChart({ students, height = 300 }) {
   }, [students]);
 
   useEffect(() => {
+    // kept for debugging; can be removed in production
     console.log("StackedStudentsGradeChart data:", data);
   }, [data]);
 
   if (!students?.length) {
-    return <div>No data available</div>;
+    return <div className="graphs">No data available</div>;
   }
 
   // Determine unique subgrades (2A, 3B, etc.)
@@ -142,13 +143,14 @@ export default function StackedStudentsGradeChart({ students, height = 300 }) {
           <YAxis allowDecimals={false} />
           <Tooltip />
           {/* Disable built-in legend to avoid duplicates */}
-          <Legend content={() => null} />
+          <Legend verticalAlign="bottom" height={36} />
           {subgradeKeys.map((subgrade) => (
             <Bar
               key={subgrade}
               dataKey={subgrade}
               stackId="a"
               fill={getColorForSubgrade(subgrade)}
+              radius={[6, 6, 0, 0]}
               name={subgrade}
             />
           ))}

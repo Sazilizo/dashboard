@@ -81,6 +81,7 @@ export default function StudentList() {
     sortOrder
   );
 
+  console.log("Students:", students[0]);
   return (
     <div className="app-list-container">
       <div>

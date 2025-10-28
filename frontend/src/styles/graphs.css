@@ -1,6 +1,207 @@
 .graphs{
-    width:100%;
-    object-fit: cover;
-    padding:0;
-    margin:0;
+    width: 100%;
+    padding: 8px;
+    margin: 0;
+    box-sizing: border-box;
+}
+
+.chart-title{
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin: 0 0 8px 0;
+    text-align: center;
+}
+
+/* Remove default focus/outline/stroke added by browsers or recharts when elements are focused/clicked */
+.recharts-wrapper svg,
+.recharts-surface,
+.recharts-wrapper {
+    outline: none !important;
+}
+
+.recharts-bar-rectangle,
+.recharts-pie-sector,
+.recharts-pie-label-text,
+.recharts-radar-polygon {
+    stroke: none !important;
+}
+
+/* Make pie labels clear and visible */
+.recharts-text.recharts-pie-label-text {
+    fill: #fff;
+    font-weight: 700;
+}
+
+/* Filters area -- responsive */
+.chart-filters,
+.specs-filters {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.chart-filters label,
+.specs-filters label {
+    font-weight: 600;
+    margin-right: 6px;
+}
+
+.chart-filters select,
+.specs-filters select,
+.chart-filters input,
+.specs-filters input {
+    min-width: 140px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(16,24,40,0.08);
+    background: #fff;
+}
+
+/* Responsive tweaks */
+@media (max-width: 700px) {
+    .chart-filters,
+    .specs-filters {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .chart-title {
+        font-size: 1rem;
+    }
+}
+
+/* Dropdown multi-select specific styles */
+.dropdown-chart-filters {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.dropdown-chart-filters .relative {
+    position: relative;
+}
+
+.dropdown-chart-filters-list {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: #fff;
+    border: 1px solid rgba(16,24,40,0.06);
+    box-shadow: 0 6px 18px rgba(15,23,42,0.06);
+    padding: 8px;
+    border-radius: 8px;
+    margin-top: 6px;
+    z-index: 40;
+    max-height: 220px;
+    overflow: auto;
+    min-width: 160px;
+}
+
+.dropdown-chart-filters-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    cursor: pointer;
+}
+
+.dropdown-chart-filters-item:hover {
+    background: rgba(99,102,241,0.06);
+    border-radius: 6px;
+}
+
+/* Remove focus outlines for input/select inside charts area */
+.graphs select:focus,
+.graphs input:focus,
+.dropdown-chart-filters .border:focus,
+.dropdown-chart-filters .form-checkbox:focus {
+    outline: none !important;
+    box-shadow: none !important;
+    border-color: rgba(99,102,241,0.6);
+}
+
+/* Make the dropdown trigger box look nicer */
+.dropdown-chart-filters > .relative > .border,
+.dropdown-chart-filters > .relative > .cursor-pointer {
+    min-width: 160px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(16,24,40,0.06);
+    background: #fff;
+}
+
+@media (max-width: 500px) {
+    .dropdown-chart-filters > .relative > .border,
+    .dropdown-chart-filters > .relative > .cursor-pointer {
+        width: 100%;
+    }
+}
+
+/* Card wrapper for charts to give natural spacing and elevation */
+.chart-card {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 12px;
+    box-shadow: 0 6px 20px rgba(15,23,42,0.06);
+}
+
+/* Softer grid lines */
+.recharts-cartesian-grid line {
+    stroke: rgba(15,23,42,0.06) !important;
+}
+
+/* Tooltip styling */
+.recharts-tooltip-wrapper {
+    z-index: 60;
+}
+.recharts-default-tooltip {
+    border-radius: 8px;
+    box-shadow: 0 8px 30px rgba(15,23,42,0.08);
+    padding: 8px 10px;
+    background: #fff;
+    color: #111827;
+    font-size: 0.95rem;
+}
+
+/* Legend adjustments */
+.recharts-legend-wrapper {
+    font-size: 0.95rem;
+}
+
+/* Make bars slightly rounded and clickable cursor */
+.recharts-bar-rectangle {
+    rx: 6;
+    ry: 6;
+    cursor: pointer;
+}
+
+/* Radar-specific wrapper to keep chart centered and avoid layout shifts */
+.specs-radar {
+    position: relative;
+}
+.specs-radar .radar-wrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    height: 100%;
+}
+.specs-radar .recharts-wrapper {
+    margin: 0 auto;
+    display: block;
+    width: 100% !important;
+    max-width: 100% !important;
+}
+.specs-radar svg {
+    display: block;
+    overflow: visible !important; /* allow markers/labels not to be clipped */
+}
+
+/* Ensure the radar wrapper itself doesn't clip the svg */
+.specs-radar, .specs-radar .radar-wrapper {
+    overflow: visible !important;
 }

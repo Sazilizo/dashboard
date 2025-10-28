@@ -730,8 +730,38 @@ if (typeof window !== "undefined") {
 export async function cacheFiles(key, files) {
   const db = await getDB();
   const tx = db.transaction("cached_files", "readwrite");
-  await tx.store.put({ key, files, timestamp: Date.now() });
-  await tx.done;
+  const payload = { key: String(key), files, timestamp: Date.now() };
+  try {
+    // If the object store uses a keyPath, ensure the payload contains that keyPath value
+    const store = tx.store;
+    try {
+      const kp = store.keyPath;
+      if (kp) {
+        // support compound keyPath (array) or single keyPath
+        if (Array.isArray(kp)) {
+          // for compound keys, we won't try to populate — rely on explicit key param
+        } else if (!(kp in payload)) {
+          // set the required keyPath value so put(payload) won't fail
+          payload[kp] = payload.key;
+        }
+      }
+    } catch (inner) {
+      // ignore introspection errors
+    }
+
+    // Try to put using explicit key (works for both autoIncrement and keyPath stores)
+    try {
+      await tx.store.put(payload, payload.key);
+    } catch (err) {
+      // If explicit-key put fails, attempt to put the payload (we ensured keyPath is present above)
+      await tx.store.put(payload);
+    }
+
+    await tx.done;
+  } catch (err) {
+    console.error('[tableCache] cacheFiles failed:', err);
+    throw err;
+  }
 }
 
 export async function getCachedFiles(key) {

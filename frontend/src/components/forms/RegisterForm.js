@@ -4,7 +4,7 @@ import { useSchools } from "../../context/SchoolsContext";
 import { useNavigate } from "react-router-dom";
 import "../../styles/registerForm.css";
 
-export default function RegisterForm({ onSuccess }) {
+export default function RegisterForm({ onSuccess, onCancel }) {
   const { schools, loading: schoolsLoading, error: schoolsError } = useSchools();
   const navigate = useNavigate();
 
@@ -70,7 +70,19 @@ export default function RegisterForm({ onSuccess }) {
       if (updateMetaError) throw updateMetaError;
 
       if (onSuccess) onSuccess(signUpData.user);
-      navigate("/login");
+      // After creating a user from the dashboard, go back to the previous page
+      // instead of forcing the current user to the login screen.
+      try {
+        // If there is history, navigate back one step; otherwise go to dashboard as a safe fallback
+        if (window?.history?.length > 1) {
+          navigate(-1);
+        } else {
+          navigate("/dashboard");
+        }
+      } catch (navErr) {
+        // Fallback to dashboard if navigate(-1) fails for any reason
+        navigate("/dashboard");
+      }
     } catch (err) {
       setError(err.message || "Registration failed");
     } finally {
@@ -148,9 +160,29 @@ export default function RegisterForm({ onSuccess }) {
 
         {error && <div className="form-error">{error}</div>}
 
-        <button type="submit" disabled={loading}>
-          {loading ? "Registering..." : "Register"}
-        </button>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button type="submit" className="btn btn-primary" disabled={loading}>
+            {loading ? "Registering..." : "Register"}
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
+              if (typeof onCancel === 'function') return onCancel();
+              try {
+                if (window?.history?.length > 1) {
+                  navigate(-1);
+                } else {
+                  navigate('/dashboard');
+                }
+              } catch (e) {
+                navigate('/dashboard');
+              }
+            }}
+          >
+            Cancel
+          </button>
+        </div>
       </form>
     </div>
   );

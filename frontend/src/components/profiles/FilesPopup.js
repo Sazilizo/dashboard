@@ -111,7 +111,12 @@ export default function FilesPopup({ bucketName, folderName, id, onClose }) {
       });
 
       const filesPayload = { files: allFiles, signedUrls: urls };
-      await cacheFiles(cacheKey, filesPayload);
+      try {
+        console.debug('[FilesPopup] caching files', { cacheKey, filesPayload });
+        await cacheFiles(cacheKey, filesPayload);
+      } catch (err) {
+        console.warn('[FilesPopup] cacheFiles failed, continuing without cache:', err?.message || err);
+      }
 
       if (!isCancelled) {
         setFiles(allFiles);

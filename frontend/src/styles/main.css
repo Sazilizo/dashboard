@@ -438,9 +438,15 @@ html, body {
    CHARTS & STATS
    ============================================ */
 .specs-radar{
-  min-width:50vw;
-  width:100%;
-  height:50vh;
+  /* Allow the radar container to flex and center without forcing a large minimum width
+     Previous min-width caused the chart to push right and overlap adjacent content. */
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  height: 50vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
   font-size: 1.2rem;
 }
 
@@ -510,6 +516,28 @@ img{
   margin-bottom: 1rem; /* mb-4 */
   color: #1f2937; /* gray-800 */
 }
+
+/* Stats dashboard grid used by StatsDashboard component */
+.stats-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-items: start;
+  width: 100%;
+}
+
+/* Chart card general styling (kept here for consistency) */
+.chart-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 6px 18px rgba(15,23,42,0.06);
+  border: 1px solid rgba(0,0,0,0.04);
+}
+.chart-card-inner {
+  width: 100%;
+  height: 100%;
+}
 .skeleton-chart {
   width: 100%;
   height: 300px;
@@ -536,7 +564,9 @@ img{
 
 /* this is from a different component StatsDashboard , keep*/
 .specs-radar-grid{
-  width:fit-content;
+  /* Make the grid cell full-width and allow the radar to center inside it */
+  width:100%;
+  max-width:100%;
   height:100%;
   grid-column-start: 1;
   grid-column-end: 3;
@@ -829,7 +859,9 @@ img{
 }
 /* this is from a different component StatsDashboard , keep*/
 .specs-radar-grid{
-  width:fit-content;
+  /* Make the grid cell full-width and allow the radar to center inside it */
+  width:100%;
+  max-width:100%;
   height:100%;
   grid-column-start: 1;
   grid-column-end: 3;
