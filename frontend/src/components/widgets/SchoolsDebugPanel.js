@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { useSchools } from '../context/SchoolsContext';
+import { useSchools } from '../../context/SchoolsContext';
 import { openDB } from 'idb';
-import '../styles/DebugPanel.css';
+import '../../styles/DebugPanel.css';
 
 export default function SchoolsDebugPanel() {
   const { schools, loading, error, refreshSchools, isOnline } = useSchools();
