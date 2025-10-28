@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import Photos from "../profiles/Photos";
+import { isBirthday } from "../../utils/birthdayUtils";
 
 export default function ListItems({ students, items, onDelete, onUpdate, resource = "students", bucketName = "student-uploads", folderName = "students" }) {
   const [editId, setEditId] = useState(null);
@@ -29,6 +30,9 @@ export default function ListItems({ students, items, onDelete, onUpdate, resourc
               <div className="item-info">
                 <p className="item-name">
                   <strong>{s.full_name || s.name}</strong>
+                  {isBirthday(s.date_of_birth) && (
+                    <span className="birthday-badge">🎂 Birthday Today!</span>
+                  )}
                 </p>
                 <p className="item-details">
                   {s.grade && `Grade: ${s.grade}`}

@@ -1,6 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import Photos from "../profiles/Photos";
+import { isBirthdayFromId } from "../../utils/birthdayUtils";
 
 export default function WorkerListItems({ workers, bucketName = "worker-uploads", folderName = "workers" }) {
   if (!workers || workers.length === 0) return <p className="no-data-message">No workers found.</p>;
@@ -23,6 +24,9 @@ export default function WorkerListItems({ workers, bucketName = "worker-uploads"
               <div className="item-info">
                 <p className="item-name">
                   <strong>{`${w.name} ${w.last_name}`}</strong>
+                  {isBirthdayFromId(w.id_number) && (
+                    <span className="birthday-badge">🎂 Birthday Today!</span>
+                  )}
                 </p>
                 <p className="item-details">
                   Role: {w?.roles?.name || '—'}

@@ -125,6 +125,9 @@ export default function StudentForm() {
     console.log("user", user)
   },[user])
 
+  console.log("tutorOptions", tutorOptions);
+  console.log("coachOptions", coachOptions);
+
   return (
     <div className="p-6">
       <ToastContainer toasts={toasts} removeToast={removeToast} />

@@ -17,21 +17,49 @@
 .profile-details-count-card{
   display: flex;
   flex-wrap: wrap;
-  padding:.5rem;
+  padding: 0.5rem;
   text-align: center;
+  gap: 0.5rem;
+  justify-content: space-between;
 }
+
 .info-count-card{
-  border:2px solid rgba(0, 0, 0, 0.2);
-  box-shadow: 5px 5px 10px 2px #a19f9f;
-  width:48%;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+  box-shadow: 3px 3px 6px 1px #a19f9f;
+  width: calc(33.333% - 0.35rem);
+  min-width: 120px;
   border-radius: 5px;
-  font-size: clamp(1rem, 2vw, 1.054rem);
+  font-size: clamp(0.75rem, 1.5vw, 0.875rem);
   display: inline-flex;
   justify-content: center;
+  padding: 0.5rem 0.25rem;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
+
+.info-count-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 4px 4px 8px 2px #8a8989;
+}
+
+.info-count-card .info-count-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
 .info-count-card .info-count-label{
   border-bottom: 2px solid teal;
-  padding-bottom: .2rem;
+  padding-bottom: 0.2rem;
+  font-size: clamp(0.7rem, 1.2vw, 0.8rem);
+  font-weight: 600;
+  margin: 0;
+}
+
+.info-count-card .info-count-number{
+  font-size: clamp(1.25rem, 2vw, 1.5rem);
+  font-weight: 700;
+  color: teal;
+  margin: 0;
 }
 .profile-details-card{
   display: flex;
@@ -568,6 +596,11 @@
     margin:.3rem 0;
   }
   
+  .info-count-card {
+    width: calc(50% - 0.25rem);
+    min-width: 100px;
+  }
+  
   .tutor-info {
     padding: 0.75rem;
   }
@@ -579,5 +612,11 @@
   
   .progress-report-card {
     padding: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .info-count-card {
+    width: 100%;
   }
 } 

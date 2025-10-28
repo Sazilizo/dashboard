@@ -11,6 +11,8 @@ import Card from "../widgets/Card";
 import ProfileInfoCard from "../widgets/ProfileInfoCard";
 import StatsDashboard from "../StatsDashboard";
 import { useAuth } from "../../context/AuthProvider";
+import BirthdayConfetti from "../widgets/BirthdayConfetti";
+import { isBirthday } from "../../utils/birthdayUtils";
 import "../../styles/Profile.css"
 // import InfoCount from "../widgets/infoCount";
 
@@ -226,6 +228,7 @@ const LearnerProfile = () => {
             id,
             student_id,
             specs,
+            score,
             session_id,
             academic_session:session_id (
               session_name,
@@ -252,6 +255,7 @@ const LearnerProfile = () => {
             id,
             student_id,
             specs,
+            score,
             session_id,
             academic_session:session_id (
               session_name,
@@ -278,6 +282,7 @@ const LearnerProfile = () => {
             id,
             student_id,
             specs,
+            score,
             session_id,
             academic_session:session_id (
               session_name,
@@ -390,13 +395,13 @@ const LearnerProfile = () => {
           let completed = [];
           try {
             if (typeof navigator !== 'undefined' && navigator.onLine && typeof onlineApi !== 'undefined') {
-              const r = await onlineApi.from('academic_session_participants').select('id, student_id, specs, session_id, academic_session:session_id(session_name, date)').eq('student_id', id);
+              const r = await onlineApi.from('academic_session_participants').select('id, student_id, specs, score, session_id, academic_session:session_id(session_name, date)').eq('student_id', id);
               if (!r?.error && r?.data) completed = r.data;
             }
           } catch (e) { console.warn('LearnerProfile: online completed fetch failed', e?.message || e); }
           if (!completed || completed.length === 0) {
             try {
-              const r2 = await api.from('academic_session_participants').select('id, student_id, specs, session_id, academic_session:session_id(session_name, date)').eq('student_id', id);
+              const r2 = await api.from('academic_session_participants').select('id, student_id, specs, score, session_id, academic_session:session_id(session_name, date)').eq('student_id', id);
               if (!r2?.error && r2?.data) completed = r2.data;
             } catch (e) { console.warn('LearnerProfile: offline completed fetch failed', e?.message || e); }
           }
@@ -494,6 +499,11 @@ const LearnerProfile = () => {
 
   return (
     <>
+      {/* Birthday Celebration - 5 second animation */}
+      {isBirthday(student?.date_of_birth) && (
+        <BirthdayConfetti duration={5000} persistent={false} />
+      )}
+
       <div className="profile-learner-print" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <button className="btn btn-primary" onClick={() => window.history.back()}>
           Back to Students
@@ -577,6 +587,74 @@ const LearnerProfile = () => {
               <div className="info-count-details">
                 <p className="info-count-label">Days Attended</p>
                 <p className="info-count-number">{student.attendance_records?.length || 0}</p>
+              </div>
+            </div>
+            <div className="info-count-card">
+              <div className="info-count-details">
+                <p className="info-count-label">Average Score</p>
+                <p className="info-count-number">
+                  {(() => {
+                    const completedSessions = student.completed_academic_sessions || [];
+                    const scores = completedSessions
+                      .map(s => s.score)
+                      .filter(score => typeof score === 'number' && !isNaN(score));
+                    
+                    if (scores.length === 0) return '—';
+                    
+                    const avgScore = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+                    return avgScore.toFixed(1);
+                  })()}
+                </p>
+              </div>
+            </div>
+            <div className="info-count-card">
+              <div className="info-count-details">
+                <p className="info-count-label">Average Specs</p>
+                <p className="info-count-number">
+                  {(() => {
+                    const completedSessions = student.completed_academic_sessions || [];
+                    const allSpecs = completedSessions
+                      .map(s => s.specs)
+                      .filter(specs => specs && typeof specs === 'object');
+                    
+                    if (allSpecs.length === 0) return '—';
+                    
+                    // Calculate average across all specs
+                    const specSums = {};
+                    const specCounts = {};
+                    
+                    allSpecs.forEach(specs => {
+                      Object.entries(specs).forEach(([key, value]) => {
+                        if (typeof value === 'number' && !isNaN(value)) {
+                          specSums[key] = (specSums[key] || 0) + value;
+                          specCounts[key] = (specCounts[key] || 0) + 1;
+                        }
+                      });
+                    });
+                    
+                    const specAverages = Object.keys(specSums).map(key => 
+                      specSums[key] / specCounts[key]
+                    );
+                    
+                    if (specAverages.length === 0) return '—';
+                    
+                    const overallAvg = specAverages.reduce((sum, avg) => sum + avg, 0) / specAverages.length;
+                    
+                    // Normalize to 0-10 scale if values are larger
+                    const maxAvg = Math.max(...specAverages);
+                    const normalizedAvg = maxAvg > 10 ? (overallAvg * 10 / maxAvg) : overallAvg;
+                    
+                    return `${normalizedAvg.toFixed(1)}/10`;
+                  })()}
+                </p>
+              </div>
+            </div>
+            <div className="info-count-card">
+              <div className="info-count-details">
+                <p className="info-count-label">Total Sessions</p>
+                <p className="info-count-number">
+                  {(student.completed_academic_sessions?.length || 0)}
+                </p>
               </div>
             </div>
             {/* <InfoCount label="Sessions Attended" count={student.academic_sessions?.length || 0} />
@@ -700,32 +778,130 @@ const LearnerProfile = () => {
           )}
           {toggleSessionList && (
               <ul className="app-list">
-                {student.academic_sessions?.map((s) => (
-                  <li key={s.id}>
-                    <Link to={`/dashboard/students/${s.id}`}>
-                      <div className="app-profile-photo"></div>
-                      <div className="app-list-item-details">
-                        <p>
-                          <strong>{s.session_name}</strong>
-                          <span style={{ padding: "5px 12px" }}>{s.category}</span>
-                        </p>
-                      </div>
-                    </Link>
-                  </li>
-                ))}
-                {student.pe_sessions?.map((s) => (
-                  <li key={`pe-${s.id}`}>
-                    <Link to={`/dashboard/students/${s.id}`}>
-                      <div className="app-profile-photo"></div>
-                      <div className="app-list-item-details">
-                        <p>
-                          <strong>{s.session_name}</strong>
-                          <span style={{ padding: "5px 12px" }}>{s.category}</span>
-                        </p>
-                      </div>
-                    </Link>
-                  </li>
-                ))}
+                {student.academic_sessions?.map((s) => {
+                  // Calculate date color based on days difference
+                  const getDateColor = (dateString) => {
+                    if (!dateString) return 'gray';
+                    const sessionDate = new Date(dateString);
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    sessionDate.setHours(0, 0, 0, 0);
+                    
+                    const diffTime = sessionDate - today;
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    
+                    if (diffDays >= 2) return '#22c55e'; // green - 2+ days in future
+                    if (diffDays === 1 || diffDays === 0) return '#f59e0b'; // orange - today or tomorrow
+                    if (diffDays === -1 || diffDays === -2) return '#f59e0b'; // orange - 1-2 days past
+                    return '#ef4444'; // red - 3+ days past
+                  };
+
+                  // Find the completed session data to get score and specs
+                  const completedSession = student.completed_academic_sessions?.find(
+                    cs => cs.session_id === s.id
+                  );
+
+                  // Calculate average spec score for this session
+                  const getSpecAverage = (specs) => {
+                    if (!specs || typeof specs !== 'object') return null;
+                    const values = Object.values(specs).filter(v => typeof v === 'number' && !isNaN(v));
+                    if (values.length === 0) return null;
+                    const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
+                    const maxVal = Math.max(...values);
+                    return maxVal > 10 ? (avg * 10 / maxVal) : avg;
+                  };
+
+                  const specAvg = completedSession?.specs ? getSpecAverage(completedSession.specs) : null;
+
+                  return (
+                    <li key={s.id}>
+                      <Link to={`/dashboard/students/${s.id}`}>
+                        <div className="app-profile-photo"></div>
+                        <div className="app-list-item-details">
+                          <p>
+                            <strong>{s.session_name}</strong>
+                          </p>
+                          {s.date && (
+                            <p className="session-date" style={{ color: getDateColor(s.date), fontWeight: 600, margin: '0.25rem 0' }}>
+                              {new Date(s.date).toLocaleDateString('en-US', { 
+                                month: 'short', 
+                                day: 'numeric', 
+                                year: 'numeric' 
+                              })}
+                            </p>
+                          )}
+                          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
+                            {completedSession?.score != null && (
+                              <span style={{ 
+                                fontSize: '0.75rem', 
+                                padding: '2px 8px', 
+                                background: '#dcfce7', 
+                                borderRadius: '4px',
+                                color: '#166534',
+                                fontWeight: 600
+                              }}>
+                                Score: {completedSession.score}
+                              </span>
+                            )}
+                            {specAvg != null && (
+                              <span style={{ 
+                                fontSize: '0.75rem', 
+                                padding: '2px 8px', 
+                                background: '#dbeafe', 
+                                borderRadius: '4px',
+                                color: '#1e40af',
+                                fontWeight: 600
+                              }}>
+                                Specs: {specAvg.toFixed(1)}/10
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
+                {student.pe_sessions?.map((s) => {
+                  // Same date color logic for PE sessions
+                  const getDateColor = (dateString) => {
+                    if (!dateString) return 'gray';
+                    const sessionDate = new Date(dateString);
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    sessionDate.setHours(0, 0, 0, 0);
+                    
+                    const diffTime = sessionDate - today;
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    
+                    if (diffDays >= 2) return '#22c55e'; // green - 2+ days in future
+                    if (diffDays === 1 || diffDays === 0) return '#f59e0b'; // orange - today or tomorrow
+                    if (diffDays === -1 || diffDays === -2) return '#f59e0b'; // orange - 1-2 days past
+                    return '#ef4444'; // red - 3+ days past
+                  };
+
+                  return (
+                    <li key={`pe-${s.id}`}>
+                      <Link to={`/dashboard/students/${s.id}`}>
+                        <div className="app-profile-photo"></div>
+                        <div className="app-list-item-details">
+                          <p>
+                            <strong>{s.session_name}</strong>
+                            <span className="session-badge" style={{ padding: "2px 8px", marginLeft: "8px", background: "#e0f2fe", borderRadius: "4px", fontSize: "0.75rem" }}>PE</span>
+                          </p>
+                          {s.date && (
+                            <p className="session-date" style={{ color: getDateColor(s.date), fontWeight: 600 }}>
+                              {new Date(s.date).toLocaleDateString('en-US', { 
+                                month: 'short', 
+                                day: 'numeric', 
+                                year: 'numeric' 
+                              })}
+                            </p>
+                          )}
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
               </ul>
           )}
         </div>

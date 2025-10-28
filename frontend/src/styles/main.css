@@ -536,6 +536,24 @@ html, body {
   color: #666;
   font-size: 1rem;
 }
+
+/* Session date styling */
+.session-date {
+  font-size: 0.75rem;
+  margin: 0.25rem 0 0 0;
+  font-weight: 600;
+}
+
+.session-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  margin-left: 8px;
+  background: #e0f2fe;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 .photo-skeleton {
   width: 3rem;
   height: 3rem;

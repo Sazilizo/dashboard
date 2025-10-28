@@ -7,6 +7,8 @@ import SpecsRadarChart from "../charts/SpecsRadarGraph";
 import StatsDashboard from "../StatsDashboard";
 import { useAuth } from "../../context/AuthProvider";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
+import BirthdayConfetti from "../widgets/BirthdayConfetti";
+import { isBirthdayFromId } from "../../utils/birthdayUtils";
 import "../../styles/Profile.css";
 
 const WorkerProfile = () => {
@@ -191,6 +193,11 @@ const WorkerProfile = () => {
 
   return (
     <div className="worker-profile">
+      {/* Birthday Celebration - 5 second animation */}
+      {isBirthdayFromId(worker?.id_number) && (
+        <BirthdayConfetti duration={5000} persistent={false} />
+      )}
+
       <div className="profile-learner-print">
         <button className="btn btn-primary" onClick={() => window.history.back()}>
           Back

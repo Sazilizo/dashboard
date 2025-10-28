@@ -196,10 +196,13 @@ class QueryBuilder {
       return { data: finalResult, error: null, fromCache: true };
     }
 
-    // Try network with aggressive timeout (3 seconds)
+    // Try network with timeout (longer for critical tables like form_schemas)
+    const criticalTables = ['form_schemas', 'roles', 'schools'];
+    const timeout = criticalTables.includes(this.table) ? 8000 : 3000;
+    
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
 
       let q = this.baseClient.from(this.table).select(this.queryString).abortSignal(controller.signal);
       
@@ -234,7 +237,7 @@ class QueryBuilder {
     } catch (err) {
       // Network failed (timeout, no internet, etc.) - use cached data
       if (err.name === 'AbortError') {
-        console.warn(`[offlineClient] ${this.table} query timed out (3s) - using cache`);
+        console.warn(`[offlineClient] ${this.table} query timed out (${timeout}ms) - using cache`);
       } else {
         console.warn(`[offlineClient] ${this.table} query failed - using cache:`, err.message);
       }

@@ -137,9 +137,31 @@ export default function DynamicBulkFormRHF({
 
     async function fetchSchema() {
       try {
-        const { data, error } = await api
+        // Try to get from cache first when offline
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          try {
+            const { getTable } = await import("../../utils/tableCache");
+            const cached = await getTable("form_schemas");
+            const schemaData = cached?.find(s => s.model_name === schema_name);
+            
+            if (schemaData) {
+              const fields = schemaData?.schema?.fields || [];
+              setSchema(fields);
+              const [defaults, yupSchema] = buildDefaultsAndSchema(fields);
+              reset({ ...defaults, ...presetFields });
+              setFormSchema(yupSchema);
+              console.log('[DynamicBulkForm] Using cached schema for', schema_name);
+              return;
+            }
+          } catch (cacheErr) {
+            console.warn('[DynamicBulkForm] Cache read failed:', cacheErr);
+          }
+        }
+
+        // Fetch from network
+        const { data, error, fromCache } = await api
           .from("form_schemas")
-          .select("schema")
+          .select("schema, model_name")
           .eq("model_name", schema_name)
           .single();
 
@@ -150,8 +172,40 @@ export default function DynamicBulkFormRHF({
         const [defaults, yupSchema] = buildDefaultsAndSchema(fields);
         reset({ ...defaults, ...presetFields });
         setFormSchema(yupSchema);
+
+        // Cache the schema for offline use (cache all schemas, not just this one)
+        if (!fromCache) {
+          try {
+            const { cacheTable } = await import("../../utils/tableCache");
+            const { data: allSchemas } = await api.from("form_schemas").select("*");
+            if (allSchemas) {
+              await cacheTable("form_schemas", allSchemas);
+              console.log('[DynamicBulkForm] Cached form schemas for offline use');
+            }
+          } catch (cacheErr) {
+            console.warn('[DynamicBulkForm] Failed to cache schemas:', cacheErr);
+          }
+        }
       } catch (err) {
         console.error("Failed to load schema:", err);
+        
+        // Last resort: try cache even when online (in case of network error)
+        try {
+          const { getTable } = await import("../../utils/tableCache");
+          const cached = await getTable("form_schemas");
+          const schemaData = cached?.find(s => s.model_name === schema_name);
+          
+          if (schemaData) {
+            const fields = schemaData?.schema?.fields || [];
+            setSchema(fields);
+            const [defaults, yupSchema] = buildDefaultsAndSchema(fields);
+            reset({ ...defaults, ...presetFields });
+            setFormSchema(yupSchema);
+            console.log('[DynamicBulkForm] Recovered from cache after error');
+          }
+        } catch (fallbackErr) {
+          console.error('[DynamicBulkForm] All schema loading attempts failed');
+        }
       }
     }
 
