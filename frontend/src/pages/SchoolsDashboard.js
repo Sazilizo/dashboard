@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo } from "react";
 import FiltersPanel from "../components/filters/FiltersPanel";
 import { useAuth } from "../context/AuthProvider";
 import { Link } from "react-router-dom";
@@ -14,28 +14,32 @@ export default function SchoolsDashboard() {
     user?.profile?.roles?.name
   );
 
-  // Normalize school_id filter to always be an array (or empty array if none)
-  const schoolIds = Array.isArray(filters.school_id)
-    ? filters.school_id
-    : filters.school_id
-    ? [filters.school_id]
-    : [];
+  // Determine school IDs based on role and filter selection
+  const schoolIds = useMemo(() => {
+    const roleName = user?.profile?.roles?.name;
+    
+    if (["superuser", "admin", "hr", "viewer"].includes(roleName)) {
+      // If user has selected schools in filters, use those
+      if (Array.isArray(filters.school_id) && filters.school_id.length > 0) {
+        return filters.school_id.map(id => typeof id === 'number' ? id : Number(id)).filter(Boolean);
+      }
+      // Otherwise show all schools
+      return schools.map(s => s.id).filter(Boolean);
+    }
+    
+    // Single school role - only their school
+    return user?.profile?.school_id ? [user.profile.school_id] : [];
+  }, [user?.profile?.roles?.name, user?.profile?.school_id, schools, filters.school_id]);
 
-  // Determines schools user is allowed to see
-  const allowedSchools = isAllSchoolRole
-    ? schools
-    : schools.filter((s) => s.id === user?.profile?.school_id);
+  // Filter schools to display based on selection
+  const displayedSchools = useMemo(() => {
+    if (schoolIds.length === 0) return schools;
+    return schools.filter(s => schoolIds.includes(s.id));
+  }, [schools, schoolIds]);
 
-  // If user has selected schools in filters, filter allowedSchools accordingly
-  // Otherwise, show all allowedSchools
-  const displayedSchools =
-    schoolIds.length > 0
-      ? allowedSchools.filter((s) => schoolIds.includes(s.id))
-      : allowedSchools;
-
-  useEffect(()=>{
-    console.log("schools: ", schools)
-  })
+  useEffect(() => {
+    console.log('[SchoolsDashboard] Displayed schools:', displayedSchools?.length || 0);
+  }, [displayedSchools]);
 
   return (
     <div>
@@ -47,14 +51,13 @@ export default function SchoolsDashboard() {
           schools={schools}
           filters={filters}
           setFilters={setFilters}
-          resource="students"
-          groupByOptions={["ww", "pr", "un"]}
-          showDeletedOption={allowedSchools}
+          resource="schools"
+          showDeletedOption={false}
         />
       </div>
 
-      {schools.length > 0 ? (
-        schools.map((school) => (
+      {displayedSchools.length > 0 ? (
+        displayedSchools.map((school) => (
           <Link to={`/dashboard/schools/${school.id}`} key={school.id}>
             <div style={{ border: "1px solid #ccc", margin: 12, padding: 12 }}>
               <h3>{school.name}</h3>

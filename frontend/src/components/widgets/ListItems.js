@@ -1,86 +1,86 @@
 import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import Photos from "../profiles/Photos";
+import { isBirthday } from "../../utils/birthdayUtils";
 
-function FallbackImage({ bucketName, folderName, id, photoCount }) {
-  const [hasError, setHasError] = useState(false);
-  const validImageExtensions = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
-  const isValid = (url) =>
-    validImageExtensions.some((ext) => url?.toLowerCase().endsWith(ext));
-  if (hasError) {
-    return (
-      <div className="w-full h-full bg-gray-300 rounded flex items-center justify-center">
-        <span className="text-gray-500 text-sm">No image</span>
-      </div>
-    );
-  }
-  return (
-    <Photos
-      bucketName={bucketName}
-      folderName={folderName}
-      id={id}
-      photoCount={photoCount}
-      onError={() => setHasError(true)}
-      isValidUrl={isValid}
-    />
-  );
-}
-
-export default function ListItems({ students, onDelete, onUpdate }) {
+export default function ListItems({ students, items, onDelete, onUpdate, resource = "students", bucketName = "student-uploads", folderName = "students" }) {
   const [editId, setEditId] = useState(null);
   const [editName, setEditName] = useState("");
 
-  React.useEffect(() => {
-    const bc = typeof window !== "undefined" && "BroadcastChannel" in window ? new BroadcastChannel("offline-sync") : null;
-    // refresh could be handled higher up; we just listen so badges update when sync completes
-    return () => { if (bc) bc.close(); };
-  }, []);
+  // Support both 'students' and 'items' props for flexibility
+  const data = students || items || [];
 
-  if (!students || students.length === 0) return <p>No students found.</p>;
+  if (!data || data.length === 0) return <p className="no-data-message">No {resource} found.</p>;
 
   return (
-    <ul className="app-list">
-      {students.map((s) => (
+    <ul className="app-list wave-list">
+      {data.map((s) => (
         <li key={s.id}>
-          <Link to={`/dashboard/students/${s.id}`}>
+          <Link to={`/dashboard/${resource}/${s.id}`}>
             <div className="app-profile-photo">
-              <FallbackImage
-                bucketName="student-uploads"
-                folderName="students"
+              <Photos
+                bucketName={bucketName}
+                folderName={folderName}
                 id={s.id}
                 photoCount={1}
+                restrictToProfileFolder={true}
               />
             </div>
             <div className="app-list-item-details">
-              <p>
-                <strong>{s.full_name}</strong>
-              </p>
-              <p>Grade: {s.grade} {s.__queued && <span style={{ color: "orange", marginLeft: 8 }}>(Queued)</span>}</p>
+              <div className="item-info">
+                <p className="item-name">
+                  <strong>{s.full_name || s.name}</strong>
+                  {isBirthday(s.date_of_birth) && (
+                    <span className="birthday-badge">🎂 Birthday Today!</span>
+                  )}
+                </p>
+                <p className="item-details">
+                  {s.grade && `Grade: ${s.grade}`}
+                  {s.category && ` (${s.category})`}
+                  {s.group_by && `Group: ${s.group_by}`}
+                  {s.__queued && (
+                    <span className="queued-badge">
+                      (Queued)
+                    </span>
+                  )}
+                </p>
+                {s.school && (
+                  <p className="item-school">
+                    School: {s.school.name || s.school_name || '—'}
+                  </p>
+                )}
+              </div>
             </div>
           </Link>
-          {/* Delete button */}
+
           {onDelete && (
             <button
-              className="btn btn-danger"
-              onClick={() => onDelete(s.id)}
-              style={{ marginLeft: 8 }}
+              className="btn btn-danger btn-sm"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onDelete(s.id);
+              }}
             >
               Delete
             </button>
           )}
-          {/* Simple inline edit for name */}
+
           {onUpdate && (
-            <span style={{ marginLeft: 8 }}>
+            <span className="edit-controls">
               {editId === s.id ? (
                 <>
                   <input
+                    className="edit-input"
                     value={editName}
-                    onChange={e => setEditName(e.target.value)}
-                    style={{ width: 120 }}
+                    onChange={(e) => setEditName(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
                   />
                   <button
-                    className="btn btn-primary"
-                    onClick={() => {
+                    className="btn btn-primary btn-sm"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
                       onUpdate(s.id, { full_name: editName });
                       setEditId(null);
                     }}
@@ -88,16 +88,22 @@ export default function ListItems({ students, onDelete, onUpdate }) {
                     Save
                   </button>
                   <button
-                    className="btn btn-secondary"
-                    onClick={() => setEditId(null)}
+                    className="btn btn-secondary btn-sm"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setEditId(null);
+                    }}
                   >
                     Cancel
                   </button>
                 </>
               ) : (
                 <button
-                  className="btn btn-secondary"
-                  onClick={() => {
+                  className="btn btn-secondary btn-sm"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
                     setEditId(s.id);
                     setEditName(s.full_name);
                   }}

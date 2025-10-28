@@ -8,6 +8,8 @@ import DynamicBulkForm from "../forms/DynamicBulkForm";
 import { useSchools } from "../../context/SchoolsContext";
 import { useAuth } from "../../context/AuthProvider";
 import api from "../../api/client";
+import useToast from "../../hooks/useToast";
+import ToastContainer from "../ToastContainer";
 
 export default function StudentForm() {
   const navigate = useNavigate();
@@ -18,6 +20,7 @@ export default function StudentForm() {
   const [studentId, setStudentId] = useState();
   const [tutorOptions, setTutorOptions] = useState([]);
   const [coachOptions, setCoachOptions] = useState([]);
+  const { toasts, showToast, removeToast } = useToast();
 
   const schoolIds = React.useMemo(() => {
       const roleName = user?.profile?.roles?.name;
@@ -35,16 +38,32 @@ export default function StudentForm() {
         try {
           const cached = await getTable("workers");
           const data = (cached || []).filter((w) => schoolIds.includes(w.school_id));
+          
+          console.log('[StudentForm] Cached workers sample:', data[0]);
+          
           setTutorOptions(
             data
-              .filter((w) => w.role?.name === "tutor")
+              .filter((w) => {
+                // Handle both 'role' and 'roles' field names
+                const roleName = w.role?.name || w.roles?.name || '';
+                return /tutor/i.test(roleName);
+              })
               .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id }))
           );
           setCoachOptions(
             data
-              .filter((w) => w.role?.name === "coach")
+              .filter((w) => {
+                // Handle both 'role' and 'roles' field names
+                const roleName = w.role?.name || w.roles?.name || '';
+                return /coach/i.test(roleName);
+              })
               .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id }))
           );
+          
+          console.log('[StudentForm] Loaded from cache:', {
+            tutors: tutorOptions.length,
+            coaches: coachOptions.length
+          });
           return;
         } catch (err) {
           console.warn("Failed to read cached workers", err);
@@ -53,7 +72,7 @@ export default function StudentForm() {
 
       const { data, error } = await api
         .from("workers")
-        .select("id, name, last_name, role:roles(name),school_id")
+        .select("id, name, last_name, roles:role_id(name), school_id")
         .in("school_id", schoolIds);
 
       if (error) {
@@ -61,15 +80,23 @@ export default function StudentForm() {
         return;
       }
 
+      console.log('[StudentForm] Fetched workers sample:', data[0]);
+
       setTutorOptions(
         data
-          .filter((w) => w.role?.name === "tutor")
+          .filter((w) => {
+            const roleName = w.roles?.name || '';
+            return /tutor/i.test(roleName);
+          })
           .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id}))
       );
 
       setCoachOptions(
         data
-          .filter((w) => w.role?.name === "coach")
+          .filter((w) => {
+            const roleName = w.roles?.name || '';
+            return /coach/i.test(roleName);
+          })
           .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id }))
       );
 
@@ -82,12 +109,10 @@ export default function StudentForm() {
     }
 
     fetchWorkers();
-  }, [schoolIds]);
+  }, [schoolIds, isOnline]);
 
   const presetFields = {
     studentId,
-    // tutorOptions,
-    // coachOptions,
     ...(user?.profile?.school_id && !["superuser","admin","hr","viewer"].includes(user?.profile?.roles?.name)
       ? { school_id: user.profile.school_id }
       : {}),
@@ -103,11 +128,13 @@ export default function StudentForm() {
   // when queued so the UI can reflect that state.
   const res = await addRow(payload);
       if (res && res.tempId) {
+        // queued (offline) — show temp id
         setStudentId(res.tempId);
+      } else if (res && res.id) {
+        // online insert returned created record — set the new id so UploadFile can upload
+        setStudentId(res.id);
       } else {
-        // If addRow didn't return a tempId, we're online; fetch the students
-        // table to discover the created id (or the render will update from
-        // the list refresh triggered by the hook).
+        // no id information available
         setStudentId(null);
       }
     } catch (err) {
@@ -115,13 +142,9 @@ export default function StudentForm() {
       throw err;
     }
   };
-
-  useEffect(() => {
-    console.log("user", user)
-  },[user])
-
   return (
     <div className="p-6">
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
       <h2 className="text-xl font-bold mb-4">Create Student</h2>
       <DynamicBulkForm
         schema_name="Student"
@@ -130,6 +153,7 @@ export default function StudentForm() {
         coachOptions={coachOptions}
         onSubmit={handleSubmit}
         studentId={studentId}
+        folder="students"
       />
     </div>
   );

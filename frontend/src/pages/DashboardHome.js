@@ -1,32 +1,83 @@
-import React, { use, useEffect, useMemo } from "react";
+import React, { useMemo, useEffect } from "react";
 import DashboardSummary from "../components/charts/DashboardSummary";
 import { Outlet } from "react-router-dom";
 import FiltersPanel from "../components/filters/FiltersPanel";
 import { useAuth } from "../context/AuthProvider";
 import { useSchools } from "../context/SchoolsContext";
 import { useFilters } from "../context/FiltersContext";
-import { useSupabaseWorkers } from "../hooks/useSupabaseWorkers";
-import useOfflineTable from "../hooks/useOfflineTable";
+import { useData } from "../context/DataContext";
 import PieChartStats from "../components/charts/PieChart";
 import StackedCategoryGradeChart from "../components/charts/StackedChart";
 import StackedStudentsGradeChart from "../components/charts/StackedStudentsGradeCharts";
 import SkeletonList from "../components/widgets/SkeletonList";
-import ListItems from "../components/widgets/ListItems";
 
 
 export default function DashboardHome() {
   const {user} = useAuth();
-  const {schools} = useSchools();
-  const {filters, setFilters} = useFilters()
+  const {schools, loading: schoolsLoading} = useSchools();
+  const {filters, setFilters} = useFilters();
+  const { workers: allWorkers, students: allStudents, meals: allMeals, schools: schoolsData, loading, fetchData } = useData();
 
-  const isAllSchoolRole = ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles.name);
-  const schoolIds = useMemo(() => (isAllSchoolRole ? schools.map((s) => s.id) : [user?.profile?.school_id]).filter(Boolean), [isAllSchoolRole, schools, user]);
+  console.log('[DashboardHome] Schools:', schools?.length || 0, 'schools loaded');
 
-  // Use offline table hooks so counts and lists work offline too
-  const { rows: workers = [], loading: loadingWorkers } = useOfflineTable("workers", { school_id: schoolIds }, "*, roles:roles(name)");
-  const { rows: students = [], loading: loadingStudents } = useOfflineTable("students", { school_id: schoolIds }, "*");
-  const { rows: meals = [], loading: loadingMeals } = useOfflineTable("meals", { school_id: schoolIds }, "*");
-  const { rows: schoolsRows = [], loading: loadingSchools } = useOfflineTable("schools", {}, "*");
+  const isAllSchoolRole = ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles?.name);
+  
+  // Determine school IDs based on role and filter selection
+  const schoolIds = useMemo(() => {
+    const roleName = user?.profile?.roles?.name;
+    
+    if (["superuser", "admin", "hr", "viewer"].includes(roleName)) {
+      // If user has selected schools in filters, use those
+      if (Array.isArray(filters.school_id) && filters.school_id.length > 0) {
+        return filters.school_id.map(id => typeof id === 'number' ? id : Number(id)).filter(Boolean);
+      }
+      // Otherwise show all schools
+      return schools.map(s => s.id).filter(Boolean);
+    }
+    
+    // Single school role - only their school
+    return user?.profile?.school_id ? [user.profile.school_id] : [];
+  }, [user?.profile?.roles?.name, user?.profile?.school_id, schools, filters.school_id]);
+
+  console.log('[DashboardHome] School IDs for query:', schoolIds);
+
+  // Fetch data when schoolIds change
+  useEffect(() => {
+    console.log('[DashboardHome] useEffect triggered, schoolIds:', schoolIds);
+    if (schoolIds.length > 0) {
+      fetchData(schoolIds);
+    }
+  }, [schoolIds.join(',')]); // Use join to avoid array reference changes
+
+  // Filter data by selected schools
+  const workers = useMemo(() => {
+    if (!allWorkers) return [];
+    if (schoolIds.length === 0 || schoolIds.includes(-1)) return allWorkers;
+    return allWorkers.filter(w => schoolIds.includes(w.school_id));
+  }, [allWorkers, schoolIds]);
+
+  const students = useMemo(() => {
+    if (!allStudents) return [];
+    if (schoolIds.length === 0 || schoolIds.includes(-1)) return allStudents;
+    return allStudents.filter(s => schoolIds.includes(s.school_id));
+  }, [allStudents, schoolIds]);
+
+  const meals = useMemo(() => {
+    if (!allMeals) return [];
+    if (schoolIds.length === 0 || schoolIds.includes(-1)) return allMeals;
+    return allMeals.filter(m => schoolIds.includes(m.school_id));
+  }, [allMeals, schoolIds]);
+
+  // Debug log to see what data we have
+  useEffect(() => {
+    console.log('[DashboardHome] Data state:', {
+      workers: workers?.length || 0,
+      students: students?.length || 0,
+      meals: meals?.length || 0,
+      schoolsData: schoolsData?.length || 0,
+      loading
+    });
+  }, [workers, students, meals, schoolsData, loading]);
 
   // Prepare chart data
   const rolePieData = useMemo(() => {
@@ -59,7 +110,7 @@ export default function DashboardHome() {
 
   const totalWorkers = workers?.length || 0;
   const totalStudents = students?.length || 0;
-  const totalSchools = (schoolIds && schoolIds.length) ? schoolIds.length : (schoolsRows?.length || 0);
+  const totalSchools = (schoolIds && schoolIds.length) ? schoolIds.length : (schoolsData?.length || 0);
   const totalMeals = meals?.length || 0;
   return (
     <div>

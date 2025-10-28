@@ -1,0 +1,10 @@
+{
+  "deploy": {
+    "exclude": [
+      ".git",
+      "node_modules",
+      "*.test.*",
+      "README.md"
+    ]
+  }
+}

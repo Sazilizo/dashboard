@@ -1,0 +1,201 @@
+/* Birthday Celebration Styles */
+.birthday-celebration {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 9999;
+  overflow: hidden;
+}
+
+/* Confetti Animation */
+.confetti-container {
+  position: absolute;
+  top: -10%;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.confetti {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  opacity: 0.8;
+  animation: confetti-fall linear infinite;
+  transform-origin: center;
+}
+
+@keyframes confetti-fall {
+  0% {
+    top: -10%;
+    transform: translateX(0) rotateZ(0deg);
+    opacity: 1;
+  }
+  100% {
+    top: 110%;
+    transform: translateX(50px) rotateZ(720deg);
+    opacity: 0;
+  }
+}
+
+/* Balloons Animation */
+.balloons-container {
+  position: absolute;
+  bottom: -100px;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.balloon {
+  position: absolute;
+  bottom: -100px;
+  width: 50px;
+  height: 70px;
+  border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+  animation: balloon-float 6s ease-in-out infinite;
+  box-shadow: inset -10px -10px 20px rgba(0, 0, 0, 0.1);
+}
+
+.balloon::before {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 12px solid currentColor;
+  opacity: 0.8;
+}
+
+.balloon-string {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 2px;
+  height: 100px;
+  background: linear-gradient(to bottom, currentColor, transparent);
+  transform: translateX(-50%);
+  opacity: 0.6;
+}
+
+@keyframes balloon-float {
+  0%, 100% {
+    bottom: -100px;
+    transform: translateX(0) rotate(0deg);
+  }
+  50% {
+    bottom: 100vh;
+    transform: translateX(20px) rotate(10deg);
+  }
+}
+
+/* Birthday Message */
+.birthday-message {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: clamp(2rem, 5vw, 4rem);
+  font-weight: 800;
+  color: #ff6b9d;
+  text-shadow: 
+    2px 2px 4px rgba(0, 0, 0, 0.2),
+    0 0 20px rgba(255, 107, 157, 0.5);
+  animation: birthday-message-pulse 1s ease-in-out infinite;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+@keyframes birthday-message-pulse {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.1);
+  }
+}
+
+/* Birthday Badge for List Items */
+.birthday-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: linear-gradient(135deg, #ff6b9d, #ffc93c);
+  color: white;
+  border-radius: 12px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  animation: birthday-badge-glow 2s ease-in-out infinite;
+  box-shadow: 0 2px 8px rgba(255, 107, 157, 0.4);
+  margin-left: 8px;
+}
+
+@keyframes birthday-badge-glow {
+  0%, 100% {
+    box-shadow: 0 2px 8px rgba(255, 107, 157, 0.4);
+  }
+  50% {
+    box-shadow: 0 4px 16px rgba(255, 107, 157, 0.8);
+  }
+}
+
+/* Sparkle effect for birthday items */
+.birthday-sparkle {
+  position: relative;
+}
+
+.birthday-sparkle::before,
+.birthday-sparkle::after {
+  content: '✨';
+  position: absolute;
+  font-size: 1.2rem;
+  animation: sparkle 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.birthday-sparkle::before {
+  top: -10px;
+  left: -10px;
+  animation-delay: 0s;
+}
+
+.birthday-sparkle::after {
+  top: -10px;
+  right: -10px;
+  animation-delay: 1s;
+}
+
+@keyframes sparkle {
+  0%, 100% {
+    opacity: 0;
+    transform: scale(0) rotate(0deg);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1) rotate(180deg);
+  }
+}
+
+/* Reduce motion for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .confetti,
+  .balloon,
+  .birthday-message,
+  .birthday-badge,
+  .birthday-sparkle::before,
+  .birthday-sparkle::after {
+    animation: none !important;
+  }
+  
+  .birthday-celebration {
+    display: none;
+  }
+}

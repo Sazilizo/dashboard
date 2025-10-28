@@ -1,12 +1,13 @@
 
 form {
-  max-width: 600px;
+  width: 80%;
+  max-width: 1200px;
   margin: 1.5rem auto;
   padding: 2rem;
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 6px 12px rgba(0,0,0,0.1);
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  font-family: var(--font-sans);
   color: #333;
   box-sizing: border-box;
 }
@@ -24,6 +25,7 @@ label {
   margin-bottom: 0.4rem;
   color: #222;
   user-select: none;
+  font-size: var(--fs-2);
 }
 
 /* Required asterisk */
@@ -38,10 +40,12 @@ input[type="text"],
 input[type="email"],
 input[type="number"],
 input[type="date"],
+input[type="password"],
 select,
+textarea,
 input[type="file"] {
-  font-size: 1rem;
-  padding: 0.45rem 0.75rem;
+  font-size: var(--fs-2);
+  padding: 0.65rem 0.85rem;
   border: 1.5px solid #cbd5e0; /* gray-300 */
   border-radius: 5px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -49,6 +53,24 @@ input[type="file"] {
   outline-color: transparent;
   color: #2d3748; /* gray-700 */
   box-sizing: border-box;
+  width: 100%;
+  font-family: var(--font-sans);
+}
+
+/* Textarea specific */
+textarea {
+  min-height: 100px;
+  max-height: 500px;
+  resize: vertical;
+  overflow-y: hidden; /* Hide scrollbar, let it grow instead */
+  line-height: 1.5;
+  transition: height 0.1s ease;
+}
+
+/* Auto-resize textareas */
+textarea[data-auto-resize="true"] {
+  overflow-y: hidden;
+  resize: none; /* Disable manual resize for auto-resize textareas */
 }
 
 /* On focus */
@@ -56,7 +78,9 @@ input[type="text"]:focus,
 input[type="email"]:focus,
 input[type="number"]:focus,
 input[type="date"]:focus,
+input[type="password"]:focus,
 select:focus,
+textarea:focus,
 input[type="file"]:focus {
   border-color: #3182ce; /* blue-600 */
   box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.4); /* blue shadow */
@@ -74,7 +98,8 @@ input[type="checkbox"] {
 
 /* Disabled inputs */
 input:disabled,
-select:disabled {
+select:disabled,
+textarea:disabled {
   background-color: #edf2f7; /* gray-100 */
   cursor: not-allowed;
   color: #a0aec0; /* gray-400 */
@@ -82,11 +107,13 @@ select:disabled {
 }
 
 /* Error message styling */
-p.text-red-600 {
+p.text-red-600,
+.error-message {
   color: #e53e3e; /* red-600 */
   font-weight: 600;
   margin: 1rem 0;
   text-align: center;
+  font-size: var(--fs-2);
 }
 
 /* Submit button styling */
@@ -94,12 +121,12 @@ button[type="submit"] {
   background-color: #3182ce; /* blue-600 */
   color: white;
   font-weight: 700;
-  font-size: 1.1rem;
-  padding: 0.65rem 1.5rem;
+  font-size: var(--fs-3);
+  padding: 0.75rem 1.75rem;
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  transition: background-color 0.25s ease;
+  transition: background-color 0.25s ease, box-shadow 0.25s ease;
   align-self: flex-start;
   box-shadow: 0 3px 6px rgba(49, 130, 206, 0.5);
   user-select: none;
@@ -116,17 +143,190 @@ button[type="submit"]:disabled {
   box-shadow: none;
 }
 
+/* Edit Profile Form Container */
+.edit-profile-container {
+  width: 100%;
+  padding: 0;
+}
+
+.edit-profile-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.edit-profile-form input,
+.edit-profile-form select {
+  width: 100%;
+}
+
+/* Avatar preview */
+.avatar-preview {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #e2e8f0;
+  margin-top: 0.5rem;
+}
+
+.avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-preview span {
+  font-size: 2rem;
+  font-weight: bold;
+  color: #4a5568;
+}
+
+/* Avatar comparison modal */
+.avatar-comparison {
+  display: flex;
+  gap: 2rem;
+  justify-content: center;
+  margin: 1.5rem 0;
+}
+
+.avatar-box {
+  text-align: center;
+}
+
+.avatar-box p {
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.avatar-box img,
+.avatar-box .placeholder {
+  width: 120px;
+  height: 120px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 2px solid #e2e8f0;
+}
+
+.avatar-box .placeholder {
+  background-color: #f7fafc;
+}
+
+/* Modal actions */
+.modal-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+
+.modal-actions button {
+  padding: 0.5rem 1.5rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.modal-actions button:first-child {
+  background-color: #e2e8f0;
+  color: #2d3748;
+  border: none;
+}
+
+.modal-actions button:first-child:hover {
+  background-color: #cbd5e0;
+}
+
+.modal-actions .confirm-btn {
+  background-color: #3182ce;
+  color: white;
+  border: none;
+}
+
+.modal-actions .confirm-btn:hover {
+  background-color: #2b6cb0;
+}
+
+/* Close button for modals */
+.close-btn {
+  background-color: #e2e8f0;
+  color: #2d3748;
+  padding: 0.5rem 1.5rem;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 1rem;
+  transition: background-color 0.2s ease;
+}
+
+.close-btn:hover {
+  background-color: #cbd5e0;
+}
+
 /* Responsive adjustments */
+@media (max-width: 768px) {
+  form {
+    width: 90%;
+    padding: 1.5rem;
+    margin: 1rem auto;
+  }
+
+  button[type="submit"] {
+    width: 100%;
+    padding: 0.85rem;
+  }
+
+  .avatar-comparison {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .modal-actions {
+    flex-direction: column;
+  }
+
+  .modal-actions button {
+    width: 100%;
+  }
+}
+
 @media (max-width: 480px) {
   form {
+    width: 95%;
     padding: 1.2rem;
-    margin: 1rem 0.5rem;
+    margin: 0.5rem auto;
+  }
+
+  label {
+    font-size: var(--fs-1);
+  }
+
+  input[type="text"],
+  input[type="email"],
+  input[type="number"],
+  input[type="date"],
+  input[type="password"],
+  select,
+  textarea {
+    font-size: var(--fs-1);
+    padding: 0.55rem 0.75rem;
+  }
+
+  button[type="submit"] {
+    font-size: var(--fs-2);
   }
 }
 
 /* Add smooth transitions for all inputs and button */
 input,
 select,
+textarea,
 button {
   transition: all 0.25s ease-in-out;
 }

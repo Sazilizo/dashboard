@@ -4,6 +4,7 @@ import StudentFilters from "./StudentFilters";
 import WorkerFilters from "./WorkerFilters";
 import MealFilters from "./MealFilters";
 import FiltersPanelSkeleton from "./FiltersPanelSkeleton";
+import { useFilters } from "../../context/FiltersContext";
 
 export default function FiltersPanel({
   user,
@@ -20,17 +21,17 @@ export default function FiltersPanel({
   monthOptions = [],
   showDeletedOption = false
 }) {
-  const [loading, setIsLoading] = useState(true);
+  // ✅ MUST call useFilters hook FIRST before any conditional hooks
+  const ctx = useFilters();
+  const ctxOpts = ctx?.options || {};
+  
+  const [loading, setIsLoading] = useState(false); // Start false to prevent flash
 
   useEffect(() => {
-    if (schools && schools.length > 0) {
-      setIsLoading(false);
-    } else {
-      setIsLoading(true);
-    }
+    console.log('[FiltersPanel] Schools updated:', schools?.length || 0);
   }, [schools]);
 
-  // ✅ Wrap setFilters here so children don’t cause infinite updates
+  // ✅ Wrap setFilters here so children don't cause infinite updates
   const safeSetFilters = useCallback(
     (update) => {
       setFilters((prev) => {
@@ -50,6 +51,15 @@ export default function FiltersPanel({
     return <FiltersPanelSkeleton />;
   }
 
+  // Allow consuming context options by default when parent does not provide specific ones
+  const finalGradeOptions = (gradeOptions && gradeOptions.length) ? gradeOptions : (ctxOpts.gradeOptions || []);
+  const finalSessionTypeOptions = (sessionTypeOptions && sessionTypeOptions.length) ? sessionTypeOptions : (ctxOpts.sessionTypeOptions || []);
+  const finalGroupByOptions = (groupByOptions && groupByOptions.length) ? groupByOptions : (ctxOpts.groupByOptions || []);
+  const finalTrainingOptions = (trainingOptions && trainingOptions.length) ? trainingOptions : (ctxOpts.trainingOptions || []);
+  const finalTypeOptions = (typeOptions && typeOptions.length) ? typeOptions : (ctxOpts.typeOptions || []);
+  const finalDayOptions = (dayOptions && dayOptions.length) ? dayOptions : (ctxOpts.dayOptions || []);
+  const finalMonthOptions = (monthOptions && monthOptions.length) ? monthOptions : (ctxOpts.monthOptions || []);
+
   return (
     <div style={{ border: "1px solid #eee", padding: 16, marginBottom: 16 }}>
       <SchoolFilter
@@ -65,9 +75,9 @@ export default function FiltersPanel({
         <StudentFilters
           filters={filters}
           setFilters={safeSetFilters}
-          gradeOptions={gradeOptions}
-          sessionTypeOptions={sessionTypeOptions}
-          groupByOptions={groupByOptions}
+          gradeOptions={finalGradeOptions}
+          sessionTypeOptions={finalSessionTypeOptions}
+          groupByOptions={finalGroupByOptions}
           showDeletedOption={showDeletedOption}
         />
       )}
@@ -75,7 +85,7 @@ export default function FiltersPanel({
         <WorkerFilters
           filters={filters}
           setFilters={safeSetFilters}
-          trainingOptions={trainingOptions}
+          trainingOptions={finalTrainingOptions}
           showDeletedOption={showDeletedOption}
         />
       )}
@@ -83,9 +93,9 @@ export default function FiltersPanel({
         <MealFilters
           filters={filters}
           setFilters={safeSetFilters}
-          typeOptions={typeOptions}
-          dayOptions={dayOptions}
-          monthOptions={monthOptions}
+          typeOptions={finalTypeOptions}
+          dayOptions={finalDayOptions}
+          monthOptions={finalMonthOptions}
         />
       )}
     </div>

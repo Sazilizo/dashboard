@@ -61,9 +61,11 @@ export default function AttendanceBarChart({ student, className }) {
   }, [filteredData]);
 
   return (
-    <div  className="graphs">
-      <h2 className="text-lg font-bold mb-2">Attendance Chart</h2>
-      <StudentChartFilters filters={filters} onChange={setFilters} />
+    <div className={`graphs ${className }`}>
+      <h3 className="chart-title">Attendance Chart</h3>
+      <div className="chart-filters">
+        <StudentChartFilters filters={filters} onChange={setFilters} />
+      </div>
 
       <ResponsiveContainer width="100%" height={300}>
         <BarChart data={dailyData}>
@@ -71,7 +73,7 @@ export default function AttendanceBarChart({ student, className }) {
           <XAxis dataKey="label" />
           <YAxis allowDecimals={false} />
           <Tooltip formatter={(value) => (value === 1 ? "Present" : "Absent")} />
-          <Bar dataKey="present" isAnimationActive={false}>
+          <Bar dataKey="present" isAnimationActive={false} radius={[6, 6, 6, 6]} stroke="none" cursor="pointer">
             {dailyData.map((entry, index) => (
               <Cell key={index} fill={monthColors[entry.month] || "#4f46e5"} />
             ))}

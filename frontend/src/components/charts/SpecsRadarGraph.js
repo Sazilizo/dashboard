@@ -96,7 +96,8 @@ const SpecsRadarChart = ({ student, user, className }) => {
   useEffect(() => {
     if (!selectedYear && filterOptions.years.length > 0) {
       const fallbackYear = filterOptions.years[0];
-      setSelectedYear(fallbackYear);
+      // store year as string to match select option values
+      setSelectedYear(String(fallbackYear));
       setSelectedTerms(filterOptions.terms[fallbackYear] || []);
       setSelectedMonths([]);
     }
@@ -104,15 +105,14 @@ const SpecsRadarChart = ({ student, user, className }) => {
 
   // Aggregate specs
   const aggregatedData = useMemo(() => {
-    if (!sessions || sessions.length === 0 || !selectedYear) return [];
+    if (!sessions || sessions.length === 0) return [];
 
     const filtered = sessions.filter((s) => {
       const { year, month } = formatDateParts(s.date);
-      if (year !== parseInt(selectedYear)) return false;
-      if (selectedTerms.length > 0 && !selectedTerms.includes(s.term))
-        return false;
-      if (selectedMonths.length > 0 && (!month || !selectedMonths.includes(month)))
-        return false;
+      // If no year selected, include all years
+      if (selectedYear && year !== parseInt(selectedYear)) return false;
+      if (selectedTerms.length > 0 && !selectedTerms.includes(s.term)) return false;
+      if (selectedMonths.length > 0 && (!month || !selectedMonths.includes(month))) return false;
       return true;
     });
 
@@ -136,18 +136,20 @@ const SpecsRadarChart = ({ student, user, className }) => {
     }));
   }, [sessions, selectedYear, selectedMonths, selectedTerms]);
   
+  // compute max for radius to avoid overly small/large scale
+  const maxVal = aggregatedData.length > 0 ? Math.max(100, ...aggregatedData.map((d) => d.A || 0)) : 100;
+
   return (
     <div className={`${className} p-4 bg-white rounded-2xl shadow-md`}>
       {/* Admin filter */}
       <div className="specs-filters">
 
-        {(role === "admin" || role === "superuser") && (
-          <div className="mb-4">
+        {(role === 'admin' || role === 'superuser') && (
+          <div>
             <label className="mr-2 font-semibold">Session Type:</label>
             <select
               value={selectedSessionType}
               onChange={(e) => setSelectedSessionType(e.target.value)}
-              className="border px-2 py-1 rounded"
             >
               <option value="all">All</option>
               <option value="academic">Academic</option>
@@ -157,7 +159,7 @@ const SpecsRadarChart = ({ student, user, className }) => {
         )}
 
         {/* Year selector */}
-        <div className="mb-4">
+        <div>
           <label className="mr-2 font-semibold">Year:</label>
           <select
             value={selectedYear}
@@ -167,7 +169,6 @@ const SpecsRadarChart = ({ student, user, className }) => {
               setSelectedTerms(filterOptions.terms[year] || []);
               setSelectedMonths([]);
             }}
-            className="border px-2 py-1 rounded"
           >
             <option value="">-- Select Year --</option>
             {filterOptions.years.map((y) => (
@@ -181,26 +182,19 @@ const SpecsRadarChart = ({ student, user, className }) => {
 
       {/* Chart */}
       {aggregatedData.length > 0 ? (
-        <div className="specs-radar w-full h-96"> 
-          <ResponsiveContainer width="100%" height="100%">
-            <RadarChart
-              outerRadius="50%" 
-              data={aggregatedData}
-            >
-              <PolarGrid />
-              <PolarAngleAxis dataKey="subject" />
-              <PolarRadiusAxis angle={40} domain={[0, 100]} />
-              <Radar
-                name="Specs"
-                dataKey="A"
-                stroke="#8884d8"
-                fill="#8884d8"
-                fillOpacity={0.6}
-              />
-              <Legend />
-              <Tooltip />
-            </RadarChart>
-          </ResponsiveContainer>
+        <div className="specs-radar w-full h-96">
+          <div className="radar-wrapper" style={{ width: '100%', height: '100%' }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <RadarChart outerRadius="70%" data={aggregatedData}>
+                <PolarGrid />
+                <PolarAngleAxis dataKey="subject" tick={{ fontSize: 12 }} tickFormatter={(t) => (typeof t === 'string' && t.length > 14 ? t.slice(0, 14) + '…' : t)} />
+                <PolarRadiusAxis angle={40} domain={[0, maxVal]} />
+                <Radar name="Specs" dataKey="A" stroke="#6D28D9" fill="#7C3AED" fillOpacity={0.6} />
+                <Legend verticalAlign="bottom" height={36} />
+                <Tooltip />
+              </RadarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       ) : (
         <p className="text-gray-500">No specs data available</p>

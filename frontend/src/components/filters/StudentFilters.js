@@ -14,6 +14,15 @@ export default function StudentFilters({
   const currentCategories = Array.isArray(filters?.category) ? filters.category : [];
   const currentSessionTypes = Array.isArray(filters?.session_type) ? filters.session_type : [];
 
+  // Normalize sessionTypeOptions to { value, label } objects for consistent rendering
+  const normalizedSessionTypeOptions = (sessionTypeOptions || []).map(opt => {
+    if (!opt && opt !== 0) return null;
+    if (typeof opt === 'string') return { value: opt, label: String(opt) };
+    if (typeof opt === 'object' && opt.value !== undefined) return opt;
+    // fallback: try to coerce
+    return { value: String(opt), label: String(opt) };
+  }).filter(Boolean);
+
   const toggleCategory = (opt) => {
     setFilters(prev => {
       const existing = Array.isArray(prev.category) ? prev.category : [];
@@ -46,7 +55,7 @@ export default function StudentFilters({
 
       <div>
         <label>Session Type:</label>
-        {sessionTypeOptions.map(opt => (
+        {normalizedSessionTypeOptions.map(opt => (
           <label key={opt.value} style={{ marginLeft: 8 }}>
             <input
               type="checkbox"

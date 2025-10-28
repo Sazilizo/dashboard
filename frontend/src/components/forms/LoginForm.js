@@ -28,7 +28,7 @@ export default function LoginForm() {
         const { data, error } = await api.auth.signInWithPassword({
           email: form.email.trim(),
           password: form.password,
-        });
+        })
 
         if (error) throw error;
 

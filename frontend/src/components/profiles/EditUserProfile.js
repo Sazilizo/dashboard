@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from "react";
 import api from "../../api/client";
 import UploadFileHelper from "./UploadHelper";
+import useToast from "../../hooks/useToast";
+import ToastContainer from "../ToastContainer";
 
 export default function EditProfile({ user,onAvatarUpdated }) {
   const [form, setForm] = useState({
@@ -16,6 +18,7 @@ export default function EditProfile({ user,onAvatarUpdated }) {
   const [schools, setSchools] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const { toasts, showToast, removeToast } = useToast();
 
   // avatar states
   const [pendingFile, setPendingFile] = useState(null);
@@ -53,10 +56,6 @@ export default function EditProfile({ user,onAvatarUpdated }) {
     setShowConfirm(true);
   };
 
-  if (onAvatarUpdated) {
-    onAvatarUpdated();
-  }
-
   const uploadAvatar = async (file) => {
     try {
       const url = await UploadFileHelper(file, "profile-avatars", user.id);
@@ -65,6 +64,10 @@ export default function EditProfile({ user,onAvatarUpdated }) {
         setPendingFile(null);
         setNewAvatarPreview(null);
         setShowConfirm(false);
+        // Call the callback after successful upload
+        if (onAvatarUpdated) {
+          onAvatarUpdated();
+        }
       }
     } catch (err) {
       setError("Avatar upload failed");
@@ -108,16 +111,18 @@ export default function EditProfile({ user,onAvatarUpdated }) {
 
       if (profileError) throw profileError;
 
-      alert("Profile updated successfully!");
+      showToast("Profile updated successfully!", "success");
     } catch (err) {
       setError(err.message || "Update failed");
+      showToast(err.message || "Update failed", "error");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <>
+    <div className="edit-profile-container">
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
       <form onSubmit={handleSubmit} className="edit-profile-form">
         <label>Email:</label>
         <input
@@ -223,6 +228,6 @@ export default function EditProfile({ user,onAvatarUpdated }) {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

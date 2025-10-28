@@ -100,6 +100,7 @@ const router = createBrowserRouter([
           { path: ":id/edit", element: <DynamicForm mode="edit" /> },
           { path: "bulk-upload", element: <BulkUploadSessions /> },
           { path: "record/:id", element: <SessionForm /> },
+          { path: "mark", element:<SessionMarkingForm/>},
           { path: "mark/:id", element:<SessionMarkingForm/>},
         ],
       },

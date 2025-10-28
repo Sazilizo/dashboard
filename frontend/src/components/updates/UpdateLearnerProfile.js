@@ -6,6 +6,8 @@ import DynamicBulkForm from "../forms/DynamicBulkForm";
 import UploadFileHelper from "../profiles/UploadHelper";
 import { useSchools } from "../../context/SchoolsContext";
 import { useAuth } from "../../context/AuthProvider";
+import useToast from "../../hooks/useToast";
+import ToastContainer from "../ToastContainer";
 
 export default function UpdateLearnerProfile() {
   const { id } = useParams();
@@ -15,6 +17,7 @@ export default function UpdateLearnerProfile() {
   const [loading, setLoading] = useState(true);
   const [tutorOptions, setTutorOptions] = useState([]);
   const [coachOptions, setCoachOptions] = useState([]);
+  const { toasts, showToast, removeToast } = useToast();
 
 
   const schoolIds = React.useMemo(() => {
@@ -61,13 +64,13 @@ export default function UpdateLearnerProfile() {
 
       setTutorOptions(
         data
-          .filter((w) => w.role?.name === "tutor")
+          .filter((w) => w.role?.name && /tutor/i.test(w.role.name))
           .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id}))
       );
 
       setCoachOptions(
         data
-          .filter((w) => w.role?.name === "coach")
+          .filter((w) => w.role?.name && /coach/i.test(w.role.name))
           .map((w) => ({ value: w.id, label: `${w.name} ${w.last_name}`, school_id: w.school_id }))
       );
     }
@@ -82,6 +85,7 @@ export default function UpdateLearnerProfile() {
 
   return (
     <div className="p-6">
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
       <div className="profile-learner-print mb-4">
         <button className="btn btn-primary" onClick={() => window.history.back()}>
           Back to Students
@@ -97,6 +101,7 @@ export default function UpdateLearnerProfile() {
           tutorOptions={tutorOptions}
           coachOptions={coachOptions}
           id={id && id}
+          folder="students"
           onSubmit={async (formData) => {
             try {
               const record = { ...formData };
@@ -117,10 +122,10 @@ export default function UpdateLearnerProfile() {
                 .eq("id", id);
 
               if (error) throw error;
-              alert("Student profile updated successfully!");
+              showToast("Student profile updated successfully!", "success");
             } catch (err) {
               console.error(err);
-              alert("Failed to update student profile.");
+              showToast("Failed to update student profile. Please try again.", "error");
             }
           }}
         />

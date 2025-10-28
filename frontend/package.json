@@ -20,6 +20,7 @@
     "@tailwindcss/postcss": "^4.1.11",
     "autoprefixer": "^10.4.21",
     "babel-loader": "^10.0.0",
+    "copy-webpack-plugin": "^11.0.0",
     "cross-env": "^7.0.3",
     "css-loader": "^7.1.2",
     "html-webpack-plugin": "^5.6.3",
@@ -47,6 +48,7 @@
     "@fullcalendar/interaction": "^6.1.19",
     "@fullcalendar/react": "^6.1.19",
     "@fullcalendar/timegrid": "^6.1.19",
+    "@hookform/resolvers": "^5.2.2",
     "@supabase/supabase-js": "^2.55.0",
     "axios": "^1.10.0",
     "browser-image-compression": "^2.0.2",
@@ -60,10 +62,12 @@
     "mini-css-extract-plugin": "^2.9.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-hook-form": "^7.65.0",
     "react-is": "^19.1.0",
     "react-router-dom": "^7.6.3",
     "react-tooltip": "^5.29.1",
     "recharts": "^3.1.0",
-    "util": "^0.12.5"
+    "util": "^0.12.5",
+    "yup": "^1.7.1"
   }
 }

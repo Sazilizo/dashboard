@@ -16,7 +16,7 @@ const COLORS = [
   "#169a59"  // green
 ];
 
-export default function StackedCategoryGradeChart({ students, height = 300 }) {
+export default React.memo(function StackedCategoryGradeChart({ students, height = 300 }) {
   // Process students to build data for stacked bars
   const data = useMemo(() => {
     if (!students?.length) return [];
@@ -61,7 +61,7 @@ export default function StackedCategoryGradeChart({ students, height = 300 }) {
   }, [students]);
 
   if (!students?.length) {
-    return <div>No data available</div>;
+    return <div className="graphs">No data available</div>;
   }
 
   // Extract category keys for bars
@@ -81,7 +81,7 @@ export default function StackedCategoryGradeChart({ students, height = 300 }) {
           <XAxis dataKey="grade" />
           <YAxis allowDecimals={false} />
           <Tooltip />
-          <Legend />
+          <Legend verticalAlign="bottom" height={36} />
           {categoryKeys.map((key, index) => (
             <Bar
               key={key}
@@ -89,11 +89,11 @@ export default function StackedCategoryGradeChart({ students, height = 300 }) {
               stackId="a"
               fill={COLORS[index % COLORS.length]}
               name={key.toUpperCase()}
+              radius={[6, 6, 0, 0]}
             />
           ))}
         </BarChart>
       </ResponsiveContainer>
     </div>
   );
-}
-
+});

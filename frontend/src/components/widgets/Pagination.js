@@ -1,7 +1,7 @@
 import React, { useRef, useCallback } from "react";
 import SkeletonList from "./SkeletonList";
 
-export default function Pagination({ page, hasMore, loadMore, loading }) {
+export default function Pagination({ page, hasMore, loadMore, loadLess, loading, totalItems, itemsPerPage }) {
   const observer = useRef();
 
   const lastItemRef = useCallback(
@@ -20,13 +20,32 @@ export default function Pagination({ page, hasMore, loadMore, loading }) {
     [loading, hasMore, loadMore]
   );
 
+  const currentStart = (page - 1) * itemsPerPage + 1;
+  const currentEnd = Math.min(page * itemsPerPage, totalItems);
+  const hasPrevious = page > 1;
+
   return (
     <div className="pagination-container">
-      {hasMore && !loading && (
-        <button className="app-btn app-btn-secondary" onClick={loadMore}>
-          Load More
-        </button>
+      {totalItems > 0 && (
+        <div className="pagination-info">
+          Showing {currentStart}-{currentEnd} of {totalItems}
+        </div>
       )}
+      
+      <div className="pagination-buttons">
+        {hasPrevious && !loading && (
+          <button className="btn btn-secondary load-less-btn" onClick={loadLess}>
+            ← Load Less
+          </button>
+        )}
+        
+        {hasMore && !loading && (
+          <button className="btn btn-primary load-more-btn" onClick={loadMore}>
+            Load More →
+          </button>
+        )}
+      </div>
+      
       {loading && <SkeletonList count={5} />}
     </div>
   );

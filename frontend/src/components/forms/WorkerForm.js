@@ -1,45 +1,128 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useSchools } from "../../context/SchoolsContext";
+import { useData } from "../../context/DataContext";
 import api from "../../api/client";
 import UploadFile from "../profiles/UploadHelper";
-import RoleSelect from "../../hooks/RoleSelect";
 import { queueMutation } from "../../utils/tableCache";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
+import { autoResizeTextarea } from "../../utils/autoResizeTextarea";
+import useToast from "../../hooks/useToast";
+import ToastContainer from "../ToastContainer";
 
 export default function WorkerForm() {
   const { schools } = useSchools();
+  const { roles } = useData();
   const { isOnline } = useOnlineStatus();
   const [fields, setFields] = useState([]);
   const [formData, setFormData] = useState({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const textareaRefs = useRef({});
+  const { toasts, showToast, removeToast } = useToast();
+
+  // Debug: Log roles whenever they change
+  useEffect(() => {
+    console.log('[WorkerForm] Roles from context:', roles);
+  }, [roles]);
 
   // Load Worker schema
   useEffect(() => {
     async function fetchSchema() {
-      const { data, error } = await api
-        .from("form_schemas")
-        .select("schema")
-        .eq("model_name", "Worker")
-        .single();
+      try {
+        // Try to get from cache first when offline
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          try {
+            const { getTable } = await import("../../utils/tableCache");
+            const cached = await getTable("form_schemas");
+            const schemaData = cached?.find(s => s.model_name === "Worker");
+            
+            if (schemaData) {
+              const schemaFields = (schemaData.schema && schemaData.schema.fields) || [];
+              setFields(schemaFields);
 
-      if (error) {
+              // Initialize formData
+              const defaults = {};
+              schemaFields.forEach((f) => {
+                if (f.format === "file") defaults[f.name] = null;
+                else if (f.type === "checkbox") defaults[f.name] = false;
+                else defaults[f.name] = "";
+              });
+              setFormData(defaults);
+              console.log('[WorkerForm] Using cached schema');
+              return;
+            }
+          } catch (cacheErr) {
+            console.warn('[WorkerForm] Cache read failed:', cacheErr);
+          }
+        }
+
+        // Fetch from network
+        const { data, error, fromCache } = await api
+          .from("form_schemas")
+          .select("schema, model_name")
+          .eq("model_name", "Worker")
+          .single();
+
+        if (error) {
+          // Try cache as fallback even when online
+          try {
+            const { getTable } = await import("../../utils/tableCache");
+            const cached = await getTable("form_schemas");
+            const schemaData = cached?.find(s => s.model_name === "Worker");
+            
+            if (schemaData) {
+              const schemaFields = (schemaData.schema && schemaData.schema.fields) || [];
+              setFields(schemaFields);
+
+              // Initialize formData
+              const defaults = {};
+              schemaFields.forEach((f) => {
+                if (f.format === "file") defaults[f.name] = null;
+                else if (f.type === "checkbox") defaults[f.name] = false;
+                else defaults[f.name] = "";
+              });
+              setFormData(defaults);
+              console.log('[WorkerForm] Recovered from cache after error');
+              return;
+            }
+          } catch (cacheErr) {
+            console.warn('[WorkerForm] Cache fallback failed:', cacheErr);
+          }
+          
+          setError("Failed to load form schema.");
+          return;
+        }
+
+        // Extract fields array
+        const schemaFields = (data.schema && data.schema.fields) || [];
+        setFields(schemaFields);
+
+        // Initialize formData
+        const defaults = {};
+        schemaFields.forEach((f) => {
+          if (f.format === "file") defaults[f.name] = null;
+          else if (f.type === "checkbox") defaults[f.name] = false;
+          else defaults[f.name] = "";
+        });
+        setFormData(defaults);
+
+        // Cache the schema for offline use (cache all schemas, not just Worker)
+        if (!fromCache) {
+          try {
+            const { cacheTable } = await import("../../utils/tableCache");
+            const { data: allSchemas } = await api.from("form_schemas").select("*");
+            if (allSchemas) {
+              await cacheTable("form_schemas", allSchemas);
+              console.log('[WorkerForm] Cached form schemas for offline use');
+            }
+          } catch (cacheErr) {
+            console.warn('[WorkerForm] Failed to cache schemas:', cacheErr);
+          }
+        }
+      } catch (err) {
+        console.error('[WorkerForm] Schema fetch failed:', err);
         setError("Failed to load form schema.");
-        return;
       }
-
-      // Extract fields array
-      const schemaFields = (data.schema && data.schema.fields) || [];
-      setFields(schemaFields);
-
-      // Initialize formData
-      const defaults = {};
-      schemaFields.forEach((f) => {
-        if (f.format === "file") defaults[f.name] = null;
-        else if (f.type === "checkbox") defaults[f.name] = false;
-        else defaults[f.name] = "";
-      });
-      setFormData(defaults);
     }
     fetchSchema();
   }, []);
@@ -52,6 +135,10 @@ export default function WorkerForm() {
       setFormData((prev) => ({ ...prev, [name]: files[0] || null }));
     } else {
       setFormData((prev) => ({ ...prev, [name]: value }));
+      // Auto-resize textarea on change
+      if (e.target.tagName === 'TEXTAREA') {
+        autoResizeTextarea(e.target);
+      }
     }
   };
 
@@ -127,11 +214,11 @@ export default function WorkerForm() {
           if (updateError) throw updateError;
         }
 
-        alert("Worker created successfully!");
+        showToast("Worker created successfully!", "success");
       } else {
         // Offline: queue mutation (queueMutation will extract file blobs into FILE_STORE)
         await queueMutation("workers", "insert", insertData);
-        alert("You are offline. The worker has been queued and will sync when back online.");
+        showToast("You are offline. The worker has been queued and will sync when back online.", "info");
       }
 
       // Reset form
@@ -149,10 +236,12 @@ export default function WorkerForm() {
     }
   };
 
-  if (!fields.length) return <p>Loading form...</p>;
+  if (!fields.length) return <Loader variant="bars" size="large" text="Loading form..." />;
 
   return (
-    <form onSubmit={handleSubmit}>
+    <>
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
+      <form onSubmit={handleSubmit}>
       {fields.map((f) => {
         let inputType = "text";
         if (f.format === "file") inputType = "file";
@@ -181,17 +270,29 @@ export default function WorkerForm() {
           );
         }
 
-        // Role select (assuming RoleSelect component exists)
+        // Role select
         if (f.format === "select" && f.foreign?.includes("roles")) {
+          console.log('[WorkerForm] Rendering role select with', roles.length, 'roles');
           return (
             <div key={f.name}>
               <label>{f.label}</label>
-              <RoleSelect
+              <select
                 name={f.name}
                 value={formData[f.name]}
                 onChange={handleChange}
                 required={f.required}
-              />
+              >
+                <option value="">Select a role</option>
+                {roles && roles.length > 0 ? (
+                  roles.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))
+                ) : (
+                  <option disabled>Loading roles...</option>
+                )}
+              </select>
             </div>
           );
         }
@@ -206,6 +307,11 @@ export default function WorkerForm() {
                 value={formData[f.name]}
                 onChange={handleChange}
                 required={f.required}
+                ref={(el) => {
+                  textareaRefs.current[f.name] = el;
+                  if (el) autoResizeTextarea(el);
+                }}
+                data-auto-resize="true"
               />
             </div>
           );
@@ -232,6 +338,7 @@ export default function WorkerForm() {
         {loading ? "Creating..." : "Create Worker"}
       </button>
     </form>
+    </>
   );
 }
 
