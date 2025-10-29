@@ -53,11 +53,27 @@ export async function cacheFormSchemasIfOnline(user = null) {
       try {
         // Use AbortController for timeout
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout per table
+        const timeoutMs = 5000;
 
-        const { data, error } = await api.from(table).select("*").abortSignal(controller.signal);
-        
-        clearTimeout(timeoutId);
+        // Build query and attach abort signal only if supported by client version
+        let query = api.from(table).select("*");
+        if (typeof query?.abortSignal === "function") {
+          const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+          try {
+            query = query.abortSignal(controller.signal);
+            var result = await query;
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        } else {
+          // Fallback: emulate timeout with Promise.race when abortSignal is unavailable
+          const resultPromise = Promise.resolve(query);
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(Object.assign(new Error('Timeout'), { name: 'AbortError' })), timeoutMs);
+          });
+          var result = await Promise.race([resultPromise, timeoutPromise]);
+        }
+        const { data, error } = result || {};
 
         if (error) {
           console.warn(`[proactiveCache] failed to fetch ${table}:`, error.message || error);

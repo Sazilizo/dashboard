@@ -9,9 +9,9 @@ export default function DashboardLayout() {
   return (
     <div className="dashboard-layout">
       <Sidebar />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      <div className="main-content-wrapper">
         <Topbar />
-        <main style={{ flex: 1, paddingLeft: 14, paddingRight: 14, overflowY: "scroll" }}>
+        <main className="main-content">
           <Outlet />
         </main>
       </div>

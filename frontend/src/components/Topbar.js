@@ -103,7 +103,7 @@ export default function Topbar() {
       {showProfile && (
         <div className="modal-overlay" onClick={toggleProfile}>
           <div
-            className="modal-content"
+            className="modal-content edit-profile-modal"
             onClick={(e) => e.stopPropagation()}
           >
             <h2>Edit Profile</h2>

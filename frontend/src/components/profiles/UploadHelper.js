@@ -1,5 +1,6 @@
 import api from "../../api/client";
 import imageCompression from "browser-image-compression";
+import { PDFDocument } from "pdf-lib";
 
 export const UploadFileHelper = async (file, folder, id) => {
   try {
@@ -14,6 +15,33 @@ export const UploadFileHelper = async (file, folder, id) => {
     }
 
     let uploadFile = file;
+
+    // Compress PDFs to reduce file size
+    if (file.type === "application/pdf") {
+      try {
+        console.log(`[UploadFileHelper] Compressing PDF: ${(file.size / 1024).toFixed(1)} KB`);
+        
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfDoc = await PDFDocument.load(arrayBuffer);
+        
+        // Re-save with compression (removes metadata, optimizes streams)
+        const compressedBytes = await pdfDoc.save({
+          useObjectStreams: true,
+          addDefaultPage: false,
+          objectsPerTick: 50,
+        });
+        
+        const compressedBlob = new Blob([compressedBytes], { type: 'application/pdf' });
+        uploadFile = new File([compressedBlob], file.name, { type: 'application/pdf' });
+        
+        console.log(
+          `[UploadFileHelper] PDF compressed: ${(file.size / 1024).toFixed(1)} KB → ${(uploadFile.size / 1024).toFixed(1)} KB`
+        );
+      } catch (err) {
+        console.warn("[UploadFileHelper] PDF compression failed, using original file", err);
+        uploadFile = file;
+      }
+    }
 
     // compress images before upload (skip SVG as it's already optimized)
     if (isImage && file.type !== "image/svg+xml") {

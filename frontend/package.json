@@ -60,6 +60,7 @@
     "jszip": "^3.10.1",
     "jwt-decode": "^4.0.0",
     "mini-css-extract-plugin": "^2.9.2",
+    "pdf-lib": "^1.17.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-hook-form": "^7.65.0",

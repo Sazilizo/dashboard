@@ -5,10 +5,56 @@
   align-items: center;
   justify-content: flex-start; /* Push content toward top */
   min-height: fit-content;
-  padding-top: 2rem; /* spacing from very top */
+  padding-top: 1rem; /* tighter top spacing */
   box-sizing: border-box;
   width: 100%;
 }
+
+/* Modern card wrapper */
+.biometric-card {
+  width: 100%;
+  max-width: 520px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 1rem;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+}
+
+.biometric-title {
+  margin: 0 0 0.5rem 0;
+  text-align: center;
+}
+
+.status-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0.25rem 0 0.75rem 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 6px 10px;
+  border-radius: 9999px;
+  font-size: 0.85rem;
+  line-height: 1;
+}
+.chip-info { background: #eef2ff; color: #3730a3; }
+.chip-warn { background: #fff7ed; color: #9a3412; }
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(0,0,0,0.15);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Biometric Modal Overlay */
 .biometric-modal-overlay {
@@ -110,12 +156,14 @@
   justify-content: center;
   align-items: center;
   width: 100%;
-  max-width: 480px; /* prevent being too wide on desktops */
+  max-width: 100%;
   margin: 0 auto 1rem auto;
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
   background: #000; /* fallback background */
+  position: relative; /* for overlay buttons */
+  aspect-ratio: 4 / 3; /* keep camera frame sensible */
 }
 
 .video-container video,
@@ -126,8 +174,33 @@
 }
 .switch-camera-btn-overlay {
   position: absolute;
-  top: 10px;
+  bottom: 10px;
   right: 10px;
+  z-index: 10;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+
+.switch-camera-btn-overlay:hover {
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
+.retake-btn-overlay {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
   z-index: 10;
   background-color: rgba(0, 0, 0, 0.6);
   color: #fff;
@@ -139,13 +212,28 @@
   transition: background-color 0.2s;
 }
 
-.switch-camera-btn-overlay:hover {
+.retake-btn-overlay:hover {
   background-color: rgba(0, 0, 0, 0.8);
+}
+
+/* Tiny performance overlay for debug timings */
+.perf-overlay {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 15;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  pointer-events: none; /* avoid intercepting clicks */
 }
 
 
 .submit-btn {
-  margin-top: 1rem;
+  margin-top: 0.5rem;
   padding: 0.75rem 1.5rem;
   border: none;
   border-radius: 8px;
@@ -171,11 +259,26 @@
   padding: 0.75rem;
   background: #f3f4f6;
   border-radius: 6px;
-  width: 90%;
-  max-width: 480px;
+  width: 100%;
+  max-width: 520px;
   white-space: pre-wrap;
   text-align: center;
   font-size: 0.95rem;
+}
+
+.controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.buttons-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 @media (max-width: 900px) {
   .overlay-content{
@@ -185,9 +288,7 @@
     padding: 1rem;
   }
 
-  .video-container {
-    max-width: 100%;
-  }
+  .video-container { max-width: 100%; }
 
   .submit-btn {
     width: 100%;

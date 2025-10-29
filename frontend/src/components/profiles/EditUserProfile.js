@@ -196,7 +196,7 @@ export default function EditProfile({ user,onAvatarUpdated }) {
 
       {showConfirm && (
         <div className="modal-overlay" onClick={() => setShowConfirm(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content edit-profile-modal" onClick={(e) => e.stopPropagation()}>
             <h3>Replace Avatar?</h3>
             <div className="avatar-comparison">
               <div className="avatar-box">

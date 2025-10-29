@@ -202,9 +202,8 @@ class QueryBuilder {
     
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-      let q = this.baseClient.from(this.table).select(this.queryString).abortSignal(controller.signal);
+      let q = this.baseClient.from(this.table).select(this.queryString);
       
       Object.entries(this.filters).forEach(([f, filter]) => {
         if (filter.type === "eq") q = q.eq(f, filter.value);
@@ -216,9 +215,23 @@ class QueryBuilder {
       if (this.isSingleFlag) q = q.single();
       if (this.isMaybeSingleFlag && typeof q.maybeSingle === "function") q = q.maybeSingle();
 
-      const { data, error } = await q;
-      
-      clearTimeout(timeoutId);
+      let result;
+      if (typeof q?.abortSignal === 'function') {
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        try {
+          result = await q.abortSignal(controller.signal);
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      } else {
+        const resultPromise = Promise.resolve(q);
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(Object.assign(new Error('Timeout'), { name: 'AbortError' })), timeout);
+        });
+        result = await Promise.race([resultPromise, timeoutPromise]);
+      }
+
+      const { data, error } = result || {};
 
       if (error) throw error;
 

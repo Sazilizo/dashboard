@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { useSchools } from "../../context/SchoolsContext";
 import { useData } from "../../context/DataContext";
 import api from "../../api/client";
-import UploadFile from "../profiles/UploadHelper";
+import UploadFileHelper from "../profiles/UploadHelper";
 import { queueMutation } from "../../utils/tableCache";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { autoResizeTextarea } from "../../utils/autoResizeTextarea";
@@ -187,10 +187,18 @@ export default function WorkerForm() {
       });
 
       if (isOnline) {
-        // Online: upload like before
+        // Online: insert base data first, then upload compressed files
+        const baseData = {};
+        fields.forEach((f) => {
+          if (f.format !== "file") {
+            baseData[f.name] =
+              f.type === "number" ? Number(formData[f.name]) || null : formData[f.name] || null;
+          }
+        });
+
         const { data: insertedWorker, error: insertError } = await api
           .from("workers")
-          .insert(insertData)
+          .insert(baseData)
           .select()
           .single();
 
@@ -198,12 +206,14 @@ export default function WorkerForm() {
 
         const workerId = insertedWorker.id;
 
-        // Upload files and update worker
+        // Upload and compress files, then update worker with URLs
         const fileUpdates = {};
         for (const f of fields) {
           if (f.format === "file" && formData[f.name]) {
-            const url = await UploadFile(formData[f.name], "workers", workerId);
-            fileUpdates[f.name] = url;
+            const url = await UploadFileHelper(formData[f.name], "workers", workerId);
+            if (url) {
+              fileUpdates[f.name] = url;
+            }
           }
         }
 
