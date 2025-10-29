@@ -33,45 +33,46 @@ export const UploadFileHelper = async (file, folder, id) => {
       }
     }
 
-    // Use original filename directly
-    const uniqueName = file.name;
+  // Use original filename directly (preserve case), but normalize folder casing for storage paths
+  const uniqueName = file.name;
+  const normalizedFolder = String(folder || "").trim().toLowerCase();
 
     // ✅ If folder is a known resource, use bucket + folder/id
     // ✅ Otherwise, treat folder as a custom folder inside student-uploads
     let bucketName = "";
     let filePath = "";
 
-    if (folder === "students") {
+    if (normalizedFolder === "students") {
       bucketName = "student-uploads";
       // images should go into profile-picture subfolder so there is only one main profile image
       if (isImage) {
         // place profile-picture as a child of the record id folder: <folder>/<id>/profile-picture/<file>
-        filePath = `${folder}/${id}/profile-picture/${uniqueName}`;
+        filePath = `${normalizedFolder}/${id}/profile-picture/${uniqueName}`;
       } else {
-        filePath = `${folder}/${id}/${uniqueName}`;
+        filePath = `${normalizedFolder}/${id}/${uniqueName}`;
       }
-    } else if (folder === "workers") {
+    } else if (normalizedFolder === "workers") {
       bucketName = "worker-uploads";
       if (isImage) {
-        filePath = `${folder}/${id}/profile-picture/${uniqueName}`;
+        filePath = `${normalizedFolder}/${id}/profile-picture/${uniqueName}`;
       } else {
-        filePath = `${folder}/${id}/${uniqueName}`;
+        filePath = `${normalizedFolder}/${id}/${uniqueName}`;
       }
-    } else if (folder === "sessions") {
+    } else if (normalizedFolder === "sessions") {
       bucketName = "session-uploads";
       if (isImage) {
-        filePath = `${folder}/${id}/profile-picture/${uniqueName}`;
+        filePath = `${normalizedFolder}/${id}/profile-picture/${uniqueName}`;
       } else {
-        filePath = `${folder}/${id}/${uniqueName}`;
+        filePath = `${normalizedFolder}/${id}/${uniqueName}`;
       }
-    } else if (folder === "meals") {
+    } else if (normalizedFolder === "meals") {
       bucketName = "meal-uploads";
       if (isImage) {
-        filePath = `${folder}/${id}/profile-picture/${uniqueName}`;
+        filePath = `${normalizedFolder}/${id}/profile-picture/${uniqueName}`;
       } else {
-        filePath = `${folder}/${id}/${uniqueName}`;
+        filePath = `${normalizedFolder}/${id}/${uniqueName}`;
       }
-    }else if (folder === "profile-avatars") {
+    } else if (normalizedFolder === "profile-avatars") {
       bucketName = "profile-avatars";
       const ext = file.name.split(".").pop().toLowerCase();
       filePath = `${id}.${ext}`;
@@ -88,21 +89,23 @@ export const UploadFileHelper = async (file, folder, id) => {
       // custom folder (fallback)
       bucketName = "student-uploads";
       if (isImage) {
-        filePath = id ? `${folder}/${id}/profile-picture/${uniqueName}` : `${folder}/profile-picture/${uniqueName}`;
+        filePath = id ? `${normalizedFolder}/${id}/profile-picture/${uniqueName}` : `${normalizedFolder}/profile-picture/${uniqueName}`;
       } else {
-        filePath = id ? `${folder}/${id}/${uniqueName}` : `${folder}/${uniqueName}`;
+        filePath = id ? `${normalizedFolder}/${id}/${uniqueName}` : `${normalizedFolder}/${uniqueName}`;
       }
     }
 
     // For images, ensure there is only one main profile-picture for this id: remove existing files in that folder
-    if (isImage && id) {
+    if (isImage && id && normalizedFolder !== "profile-avatars") {
       try {
         // list files under <folder>/<id>/profile-picture
-        const listPath = `${folder}/${id}/profile-picture`;
+        const listPath = `${normalizedFolder}/${id}/profile-picture`;
+        console.log(`[UploadFileHelper] cleanup check in ${bucketName}/${listPath}`);
         const { data: existing, error: listErr } = await api.storage.from(bucketName).list(listPath);
         if (!listErr && existing && existing.length) {
           const toRemove = existing.map((f) => `${listPath}/${f.name}`);
           if (toRemove.length) {
+            console.log(`[UploadFileHelper] removing existing:`, toRemove);
             await api.storage.from(bucketName).remove(toRemove);
           }
         }
@@ -112,6 +115,7 @@ export const UploadFileHelper = async (file, folder, id) => {
     }
 
     // upload file (✅ allow overwrite)
+    console.log(`[UploadFileHelper] Uploading to ${bucketName}/${filePath}`);
     const { error: uploadError } = await api.storage
       .from(bucketName)
       .upload(filePath, uploadFile, { upsert: true });
@@ -131,7 +135,11 @@ export const UploadFileHelper = async (file, folder, id) => {
       return null;
     }
 
-    return urlData?.publicUrl || null;
+    const publicUrl = urlData?.publicUrl || null;
+    if (publicUrl) {
+      console.log(`[UploadFileHelper] Uploaded URL: ${publicUrl}`);
+    }
+    return publicUrl;
   } catch (err) {
     console.error("Unexpected upload error:", err.message);
     return null;
