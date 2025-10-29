@@ -32,12 +32,22 @@ import "../../styles/BiometricsSignIn.css";
 // Global cache to persist face descriptors across mounts
 const faceDescriptorCache = {};
 
+// Retry configuration for loading face references
+const maxRetries = 3;
+const retryTimeouts = [2000, 5000, 10000]; // ms between retries
+
 const BiometricsSignIn = ({
   studentId,
+  userId,
+  entityType = 'student', // 'student' | 'user'
   schoolId,
   bucketName,
   folderName,
   sessionType,
+  tutorId,
+  coachId,
+  forceOperation = null, // null | 'signout' (force sign-out on face match)
+  onCompleted,
 }) => {
   // Essential states with defaults
   const [loadingModels, setLoadingModels] = useState(!areFaceApiModelsLoaded());
@@ -53,6 +63,7 @@ const BiometricsSignIn = ({
   const [availableCameras, setAvailableCameras] = useState([]);
   const [mode, setMode] = useState("snapshot");
   const [isSmallScreen, setIsSmallScreen] = useState(window.innerWidth <= 900);
+  const effectiveBucket = bucketName || (entityType === 'user' ? 'profile-avatars' : bucketName);
 
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
@@ -122,45 +133,69 @@ const BiometricsSignIn = ({
     };
   }, []);
 
-  // ✅ Fetch student names (offline fallback)
+  // ✅ Fetch subject names (student or user) for messages (offline fallback)
   useEffect(() => {
-    const ids = Array.isArray(studentId) ? studentId : [studentId];
+    const ids = entityType === 'user'
+      ? (Array.isArray(userId) ? userId : [userId]).filter(Boolean)
+      : (Array.isArray(studentId) ? studentId : [studentId]).filter(Boolean);
     if (!ids.length) return;
 
     let mounted = true;
     (async () => {
       try {
         if (isOnline) {
-          const { data, error } = await api
-            .from("students")
-            .select("id, full_name")
-            .in("id", ids);
-          if (!error && data) {
-            const map = {};
-            data.forEach((s) => (map[s.id] = s.full_name));
-            if (mounted) setStudentNames(map);
-            try {
-              await cacheTable("students", data);
-            } catch {}
+          if (entityType === 'user') {
+            // For users, we get profile names (username) or fallback to id
+            const { data, error } = await api
+              .from('profiles')
+              .select('id, username')
+              .in('id', ids);
+            if (!error && data) {
+              const map = {};
+              data.forEach((p) => (map[p.id] = p.username || `User ${p.id}`));
+              if (mounted) setStudentNames(map);
+              try { await cacheTable('profiles', data); } catch {}
+            }
+          } else {
+            const { data, error } = await api
+              .from("students")
+              .select("id, full_name")
+              .in("id", ids);
+            if (!error && data) {
+              const map = {};
+              data.forEach((s) => (map[s.id] = s.full_name));
+              if (mounted) setStudentNames(map);
+              try { await cacheTable("students", data); } catch {}
+            }
           }
         } else {
-          const cached = await getTable("students");
-          const map = {};
-          (cached || []).forEach((s) => {
-            if (ids.includes(s.id) || ids.includes(Number(s.id)))
-              map[s.id] = s.full_name;
-          });
-          if (mounted) setStudentNames(map);
+          if (entityType === 'user') {
+            const cached = await getTable('profiles');
+            const map = {};
+            (cached || []).forEach((p) => {
+              if (ids.includes(p.id) || ids.includes(Number(p.id)))
+                map[p.id] = p.username || `User ${p.id}`;
+            });
+            if (mounted) setStudentNames(map);
+          } else {
+            const cached = await getTable("students");
+            const map = {};
+            (cached || []).forEach((s) => {
+              if (ids.includes(s.id) || ids.includes(Number(s.id)))
+                map[s.id] = s.full_name;
+            });
+            if (mounted) setStudentNames(map);
+          }
         }
       } catch (err) {
-        console.error("Failed to fetch student names", err);
+        console.error("Failed to fetch subject names", err);
       }
     })();
 
     return () => {
       mounted = false;
     };
-  }, [studentId, isOnline]);
+  }, [studentId, userId, isOnline, entityType]);
 
   // ✅ List available cameras
   useEffect(() => {
@@ -316,15 +351,17 @@ const BiometricsSignIn = ({
   // Load face references with retry logic
   // Load face references with retry mechanism
 const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
-  if (!studentId || !bucketName) return false;
-  const ids = Array.isArray(studentId) ? studentId : [studentId];
+  if (!studentId && !userId) return false;
+  const ids = entityType === 'user'
+    ? (Array.isArray(userId) ? userId : [userId]).filter(Boolean)
+    : (Array.isArray(studentId) ? studentId : [studentId]).filter(Boolean);
   
   setLoadingReferences(true);
   setMessage("Loading face references...");
   
   try {
-    // Determine the correct storage path generator based on the bucket name
-    const getPath = STORAGE_PATHS[bucketName] || STORAGE_PATHS['student-uploads'];
+    // Determine the correct storage path generator based on the effective bucket
+    const getPath = STORAGE_PATHS[effectiveBucket] || STORAGE_PATHS['student-uploads'];
     
     // Clear existing state for retry
     setFaceMatcher(null);
@@ -355,111 +392,157 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
 
     for (const id of idsToLoad) {
       try {
-        const listPath = getPath(id);
-        const { data: files, error: listErr } = await api.storage
-          .from(bucketName)
-          .list(listPath);
+        let descriptors = [];
+        let sourceUsed = null;
         
-        if (listErr) {
-          console.warn(`Failed to list files for ID ${id}:`, listErr);
-          continue;
-        }
-        
-        if (!files?.length) {
-          setMessage(m => `${m}\nNo profile images found for ID ${id}`);
-          continue;
-        }
+        // For users, try profile-avatars first, then worker-uploads as fallback
+        const sourcesToTry = entityType === 'user' 
+          ? [
+              { bucket: 'profile-avatars', path: STORAGE_PATHS['profile-avatars'](id), label: 'Profile Avatar' },
+              ...(tutorId || coachId ? [{ 
+                bucket: 'worker-uploads', 
+                path: STORAGE_PATHS['worker-uploads'](tutorId || coachId),
+                label: 'Worker Profile'
+              }] : [])
+            ]
+          : [{ bucket: effectiveBucket, path: getPath(id), label: 'Student Profile' }];
 
-        const imageFiles = files.filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
-        if (!imageFiles.length) {
-          setMessage(m => `${m}\nNo valid image files found for ID ${id}`);
-          continue;
-        }
+        console.log(`[BiometricsSignIn] Attempting to load face references for ID ${id} from:`, 
+          sourcesToTry.map(s => `${s.label} (${s.bucket}/${s.path})`).join(', '));
 
-        // limit descriptors per id to reduce memory/time
-        const limited = imageFiles.slice(0, 3);
-        const paths = limited.map((f) => `${listPath}/${f.name}`);
+        // Try each source until we get descriptors
+        for (const source of sourcesToTry) {
+          if (descriptors.length > 0) break; // Already got descriptors, skip remaining sources
 
-        // batch create signed URLs
-        const signedResults = await Promise.all(
-          paths.map((p) => api.storage.from(bucketName).createSignedUrl(p, 300))
-        );
-        
-        const urlsData = [];
-        let urlErr = null;
-        for (const r of signedResults) {
-          if (r.error) {
-            urlErr = r.error;
-            urlsData.push(null);
-          } else {
-            urlsData.push(r.data?.signedUrl || null);
+          console.log(`[BiometricsSignIn] Trying ${source.label}: ${source.bucket}/${source.path}`);
+
+          const { data: files, error: listErr } = await api.storage
+            .from(source.bucket)
+            .list(source.path);
+          
+          if (listErr) {
+            console.warn(`Failed to list files in ${source.label}:`, listErr);
+            setMessage(m => `${m}\n⚠ ${source.label}: ${listErr.message || 'Access denied'}`);
+            continue;
           }
-        }
-        
-        if (urlErr || !urlsData.filter(Boolean).length) continue;
+          
+          if (!files?.length) {
+            console.log(`No files found in ${source.label}, trying next source...`);
+            setMessage(m => `${m}\n⚠ ${source.label}: No images found`);
+            continue;
+          }
 
-        const descriptors = [];
-        // Try worker first, fall back to main thread
-        const worker = descriptorWorkerRef.current;
-        if (worker && workerAvailable) {
-          const signedPaths = urlsData.filter(Boolean);
-          const workerResp = await new Promise((resolve) => {
-            const handler = (ev) => {
-              const m = ev.data || {};
-              if (m && m.id && String(m.id) === String(id)) {
-                try {
-                  worker.removeEventListener("message", handler);
-                } catch (e) {}
-                resolve(m);
-              }
-            };
-            worker.addEventListener("message", handler);
-            try {
-              worker.postMessage({
-                id,
-                signedUrls: signedPaths,
-                modelsUrl: MODELS_URL,
-                inputSize: 128,
-                scoreThreshold: 0.45,
-                maxDescriptors: limited.length
-              });
-            } catch (err) {
-              console.warn("Worker postMessage failed", err);
-              resolve({ id, descriptors: [], error: err?.message || String(err) });
-            }
-          });
+          const imageFiles = files.filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
+          if (!imageFiles.length) {
+            console.log(`No valid image files in ${source.label}, trying next source...`);
+            setMessage(m => `${m}\n⚠ ${source.label}: No valid images`);
+            continue;
+          }
 
-          if (workerResp?.descriptors?.length) {
-            for (const arr of workerResp.descriptors) {
-              descriptors.push(new Float32Array(arr));
+          console.log(`Found ${imageFiles.length} image(s) in ${source.label}`);
+
+          // limit descriptors per id to reduce memory/time
+          const limited = imageFiles.slice(0, 3);
+          const paths = limited.map((f) => `${source.path}/${f.name}`);
+
+          // batch create signed URLs
+          const signedResults = await Promise.all(
+            paths.map((p) => api.storage.from(source.bucket).createSignedUrl(p, 300))
+          );
+          
+          const urlsData = [];
+          let urlErr = null;
+          for (const r of signedResults) {
+            if (r.error) {
+              urlErr = r.error;
+              urlsData.push(null);
+            } else {
+              urlsData.push(r.data?.signedUrl || null);
             }
           }
-        }
+          
+          if (urlErr || !urlsData.filter(Boolean).length) {
+            console.log(`Failed to get signed URLs for ${source.bucket}, trying next source...`);
+            continue;
+          }
 
-        // Fall back to main thread if worker failed or is unavailable
-        if (!descriptors.length) {
-          for (const u of urlsData) {
-            if (!u) continue;
-            try {
-              const faceapi = faceapiRef.current;
-              const img = await faceapi.fetchImage(u);
-              const det = await faceapi
-                .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({
+          // Try worker first, fall back to main thread
+          const worker = descriptorWorkerRef.current;
+          if (worker && workerAvailable) {
+            const signedPaths = urlsData.filter(Boolean);
+            const workerResp = await new Promise((resolve) => {
+              const handler = (ev) => {
+                const m = ev.data || {};
+                if (m && m.id && String(m.id) === String(id)) {
+                  try {
+                    worker.removeEventListener("message", handler);
+                  } catch (e) {}
+                  resolve(m);
+                }
+              };
+              worker.addEventListener("message", handler);
+              try {
+                worker.postMessage({
+                  id,
+                  signedUrls: signedPaths,
+                  modelsUrl: MODELS_URL,
                   inputSize: 128,
-                  scoreThreshold: 0.45
-                }))
-                .withFaceLandmarks()
-                .withFaceDescriptor();
-              
-              if (det?.descriptor) {
-                descriptors.push(det.descriptor);
-                setMessage(m => `${m}\n✓ Generated descriptor for ID ${id}`);
+                  scoreThreshold: 0.45,
+                  maxDescriptors: limited.length
+                });
+              } catch (err) {
+                console.warn("Worker postMessage failed", err);
+                resolve({ id, descriptors: [], error: err?.message || String(err) });
               }
-            } catch (err) {
-              console.warn(`Failed to process image for ${id}:`, err);
-              setMessage(m => `${m}\n⚠️ Failed to process an image for ID ${id}`);
+            });
+
+            if (workerResp?.descriptors?.length) {
+              for (const arr of workerResp.descriptors) {
+                descriptors.push(new Float32Array(arr));
+              }
+              sourceUsed = source.bucket;
             }
           }
+
+          // Fall back to main thread if worker failed or is unavailable
+          if (!descriptors.length) {
+            for (const u of urlsData) {
+              if (!u) continue;
+              try {
+                const faceapi = faceapiRef.current;
+                const img = await faceapi.fetchImage(u);
+                const det = await faceapi
+                  .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({
+                    inputSize: 128,
+                    scoreThreshold: 0.45
+                  }))
+                  .withFaceLandmarks()
+                  .withFaceDescriptor();
+                
+                if (det?.descriptor) {
+                  descriptors.push(det.descriptor);
+                  sourceUsed = source.bucket;
+                }
+              } catch (err) {
+                console.warn(`Failed to process image for ${id} from ${source.bucket}:`, err);
+              }
+            }
+          }
+
+          // If we got descriptors from this source, log it and break
+          if (descriptors.length > 0) {
+            console.log(`✓ Successfully loaded ${descriptors.length} descriptor(s) for ID ${id} from ${source.label}`);
+            setMessage(m => `${m}\n✓ ${source.label}: Loaded successfully`);
+            break;
+          }
+        }
+
+        // After trying all sources, check if we got any descriptors
+        if (!descriptors.length) {
+          const triedSources = sourcesToTry.map(s => s.label).join(', ');
+          console.warn(`Failed to load face descriptors for ID ${id} from any source (tried: ${triedSources})`);
+          setMessage(m => `${m}\n❌ No valid face images found in ${triedSources}`);
+          continue; // Skip to next ID
         }
 
         if (descriptors.length) {
@@ -518,7 +601,7 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
 // Effect to trigger initial load
 useEffect(() => {
   loadFaceReferences(0);
-}, [studentId, bucketName, threshold]);
+}, [studentId, userId, effectiveBucket, threshold]);
 
   // ✅ Face capture handler
   const handleCapture = async () => {
@@ -567,6 +650,28 @@ useEffect(() => {
         if (match.label === "unknown") continue;
         const displayName = studentNames[match.label] || `ID ${match.label}`;
 
+        // For user authentication mode (entityType='user')
+        if (entityType === 'user') {
+          // Check if this is the correct user
+          const expectedId = userId || (Array.isArray(userId) ? userId[0] : null);
+          if (String(match.label) === String(expectedId)) {
+            setMessage(`${displayName} verified successfully!`);
+            setCaptureDone(true);
+            
+            // Call onCompleted callback if provided
+            if (onCompleted) {
+              setTimeout(() => onCompleted(match.label), 500);
+            }
+            setIsProcessing(false);
+            return;
+          } else {
+            setMessage(`Face does not match expected user. Please try again.`);
+            setIsProcessing(false);
+            return;
+          }
+        }
+
+        // Student mode - existing sign in/out logic
         if (!pendingSignIns[match.label]) {
           const signInTime = new Date().toISOString();
           const res = await addRow({

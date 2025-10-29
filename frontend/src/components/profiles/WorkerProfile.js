@@ -10,6 +10,12 @@ import useOnlineStatus from "../../hooks/useOnlineStatus";
 import BirthdayConfetti from "../widgets/BirthdayConfetti";
 import { isBirthdayFromId } from "../../utils/birthdayUtils";
 import Loader from "../widgets/Loader";
+import WorkerSessionImpactChart from "../charts/WorkerSessionImpactChart";
+import WorkerAttendanceTrendChart from "../charts/WorkerAttendanceTrendChart";
+import StudentReachChart from "../charts/StudentReachChart";
+import WorkerPerformanceRadar from "../charts/WorkerPerformanceRadar";
+import WorkerImpactSummary from "../charts/WorkerImpactSummary";
+import WorkerAttendanceTrend from "../charts/WorkerAttendanceTrend";
 import "../../styles/Profile.css";
 
 const WorkerProfile = () => {
@@ -20,6 +26,8 @@ const WorkerProfile = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [joinedSessions, setJoinedSessions] = useState([]);
+  const [sessionParticipants, setSessionParticipants] = useState([]);
+  const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [showDisciplinary, setShowDisciplinary] = useState(false);
   const [disciplinaryType, setDisciplinaryType] = useState("warning");
   const [disciplinarySubject, setDisciplinarySubject] = useState("");
@@ -107,50 +115,118 @@ const WorkerProfile = () => {
           setWorker({ ...workerData, learner });
         }
 
-        else if (roleName === "tutor" || roleName === "head_tutor") {
-          // 3️⃣ Tutor logic: fetch both sessions and participants
+        else if (roleName === "tutor" || roleName === "head_tutor" || roleName === "coach" || roleName === "head_coach") {
+          // 3️⃣ Tutor/Coach logic aligned to schema: students -> participants -> sessions, plus attendance
           let sessions = [];
           let participants = [];
+          let attendance = [];
           
           try {
-            const [sessionsRes, participantsRes] = await Promise.all([
-              api.from("academic_sessions").select("*"),
-              api.from("academic_session_participants").select("*")
-            ]);
-            
-            sessions = sessionsRes.data || [];
-            participants = participantsRes.data || [];
+            const isTutor = roleName.includes('tutor');
+            const studentRoleColumn = isTutor ? 'tutor_id' : 'coach_id';
+
+            // 1) Get students linked to this worker
+            const { data: taughtStudents = [] } = await api
+              .from('students')
+              .select('id, full_name, grade, category')
+              .eq(studentRoleColumn, workerData.id);
+
+            const studentIds = taughtStudents.map(s => s.id);
+
+            // 2) Get participants for those students
+            if (studentIds.length > 0) {
+              const { data: parts = [] } = await api
+                .from('academic_session_participants')
+                .select('*, student:student_id(id, full_name, grade, category)')
+                .in('student_id', studentIds);
+              participants = parts;
+
+              // 3) Get sessions referenced by participants
+              const sessionIds = [...new Set(parts.map(p => p.session_id).filter(Boolean))];
+              if (sessionIds.length > 0) {
+                const { data: sess = [] } = await api
+                  .from('academic_sessions')
+                  .select('*')
+                  .in('id', sessionIds);
+                sessions = sess;
+              }
+            }
+
+            // 4) Attendance: attribute via tutor_id/coach_id on attendance_records
+            const attendanceColumn = isTutor ? 'tutor_id' : 'coach_id';
+            const { data: att = [] } = await api
+              .from('attendance_records')
+              .select('*')
+              .eq(attendanceColumn, workerData.id);
+            attendance = att;
           } catch (err) {
-            console.warn('WorkerProfile: Failed to fetch sessions/participants from API, trying cache', err);
-            
+            console.warn('WorkerProfile: Failed to fetch data from API, trying cache', err);
             // Try cache as fallback
             try {
               const { getTable } = await import('../../utils/tableCache');
-              const [cachedSessions, cachedParticipants] = await Promise.all([
+              const isTutor = roleName.includes('tutor');
+              const studentRoleColumn = isTutor ? 'tutor_id' : 'coach_id';
+
+              const [cachedStudents, cachedParticipants, cachedSessions, cachedAttendance] = await Promise.all([
+                getTable('students'),
+                getTable('academic_session_participants'),
                 getTable('academic_sessions'),
-                getTable('academic_session_participants')
+                getTable('attendance_records')
               ]);
-              
-              sessions = cachedSessions || [];
-              participants = cachedParticipants || [];
-              console.log('WorkerProfile: Loaded sessions/participants from cache');
+
+              const taughtStudents = (cachedStudents || []).filter(s => s?.[studentRoleColumn] === workerData.id);
+              const studentIds = taughtStudents.map(s => s.id);
+              const parts = (cachedParticipants || []).filter(p => studentIds.includes(p.student_id));
+              participants = parts.map(p => ({
+                ...p,
+                student: taughtStudents.find(s => s.id === p.student_id) || null,
+              }));
+              const sessionIds = [...new Set(parts.map(p => p.session_id).filter(Boolean))];
+              sessions = (cachedSessions || []).filter(s => sessionIds.includes(s.id));
+
+              const attendanceColumn = isTutor ? 'tutor_id' : 'coach_id';
+              attendance = (cachedAttendance || []).filter(a => a?.[attendanceColumn] === workerData.id);
+              console.log('WorkerProfile: Loaded data from cache');
             } catch (cacheErr) {
-              console.warn('WorkerProfile: Cache lookup for sessions failed', cacheErr);
+              console.warn('WorkerProfile: Cache lookup failed', cacheErr);
             }
           }
 
-          const userId = workerData.id || workerData.profile?.user_id;
-          const joined = sessions.filter((s) =>
-            participants.some((p) => (p.user_id === userId || p.worker_id === userId) && p.session_id === s.id)
-          );
+          // Joined sessions are those fetched by sessionIds above
+          const joined = sessions;
 
           setWorker(workerData);
           setJoinedSessions(joined);
+          setSessionParticipants(participants);
+          setAttendanceRecords(attendance);
         }
 
         else {
-          // 4️⃣ Regular worker: just load profile info
+          // 4️⃣ Regular worker: load profile info and attendance
+          let attendance = [];
+          
+          try {
+            // Attribute attendance via tutor_id/coach_id if present, else fallback to recorded_by or user_id
+            const attTutor = await api.from('attendance_records').select('*').eq('tutor_id', workerData.id);
+            const attCoach = await api.from('attendance_records').select('*').eq('coach_id', workerData.id);
+            attendance = [
+              ...(attTutor.data || []),
+              ...(attCoach.data || []),
+            ];
+          } catch (err) {
+            console.warn('WorkerProfile: Failed to fetch attendance from API, trying cache', err);
+            
+            try {
+              const { getTable } = await import('../../utils/tableCache');
+              const cachedAttendance = await getTable('attendance_records');
+              attendance = (cachedAttendance || []).filter(a => a?.tutor_id === workerData.id || a?.coach_id === workerData.id);
+            } catch (cacheErr) {
+              console.warn('WorkerProfile: Cache lookup for attendance failed', cacheErr);
+            }
+          }
+          
           setWorker(workerData);
+          setAttendanceRecords(attendance);
         }
 
         // Pre-fill recipient email if available
@@ -180,9 +256,18 @@ const WorkerProfile = () => {
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
   if (!worker) return <p>No worker found</p>;
 
-  const roleName = worker?.profile?.role?.name?.toLowerCase();
+  const roleName = worker?.profile?.role?.name?.toLowerCase() || worker?.roles?.name?.toLowerCase();
   const currentUserRole = user?.profile?.roles?.name?.toLowerCase?.();
   const canDiscipline = ["superuser", "hr"].includes(currentUserRole || "");
+
+  // Stats charts for learner workers (same as LearnerProfile)
+  const statsCharts = worker?.learner ? [
+    {
+      type: "radar",
+      component: SpecsRadarChart,
+      props: { student: worker.learner, className: "specs-radar-grid" }
+    }
+  ] : [];
 
   async function handleSendDisciplinary(e) {
     e?.preventDefault?.();
@@ -299,26 +384,108 @@ const WorkerProfile = () => {
         )}
       </div>
 
-      {/* 5️⃣ Tutor Session List */}
-      {(roleName === "tutor" || roleName === "head_tutor") && joinedSessions.length > 0 && (
+      {/* 5️⃣ Impact Visualizations for Tutors/Coaches */}
+      {(roleName === "tutor" || roleName === "head_tutor" || roleName === "coach" || roleName === "head_coach") && (
+        <div style={{ marginTop: 24 }}>
+          {/* Impact Summary Cards */}
+          <WorkerImpactSummary
+            worker={worker}
+            sessions={joinedSessions}
+            participants={sessionParticipants}
+          />
+
+          {/* Attendance Trend Line Chart */}
+          <WorkerAttendanceTrend worker={{ ...worker, attendance_records: attendanceRecords }} />
+
+          {/* Impact Charts Grid */}
+          <div className="page-stats">
+            {/* Performance Overview Radar */}
+            <div className="grid-item page-stats-grid-items">
+              <WorkerPerformanceRadar
+                attendanceRecords={attendanceRecords}
+                joinedSessions={joinedSessions}
+                sessionParticipants={sessionParticipants}
+              />
+            </div>
+
+            {/* Session Impact */}
+            <div className="grid-item page-stats-grid-items">
+              <WorkerSessionImpactChart
+                joinedSessions={joinedSessions}
+                roleName={roleName}
+              />
+            </div>
+
+            {/* Student Reach */}
+            <div className="grid-item page-stats-grid-items">
+              <StudentReachChart
+                joinedSessions={joinedSessions}
+                sessionParticipants={sessionParticipants}
+                displayType="grade"
+              />
+            </div>
+
+            {/* Attendance Trend */}
+            {attendanceRecords.length > 0 && (
+              <div className="grid-item page-stats-grid-items">
+                <WorkerAttendanceTrendChart
+                  attendanceRecords={attendanceRecords}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 6️⃣ Attendance for Non-Teaching Staff */}
+      {!["tutor", "head_tutor", "coach", "head_coach", "learner"].includes(roleName) && (
+        <div style={{ marginTop: 24 }}>
+          {/* Attendance Trend Line Chart */}
+          <WorkerAttendanceTrend worker={{ ...worker, attendance_records: attendanceRecords }} />
+          
+          {/* Additional metrics grid */}
+          {attendanceRecords.length > 0 && (
+            <div className="page-stats">
+              <div className="grid-item page-stats-grid-items">
+                <WorkerAttendanceTrendChart
+                  attendanceRecords={attendanceRecords}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 7️⃣ Session List */}
+      {(roleName === "tutor" || roleName === "head_tutor" || roleName === "coach" || roleName === "head_coach") && joinedSessions.length > 0 && (
         <Card className="mt-4">
-          <h3>Assigned Academic Sessions</h3>
+          <h3>Assigned {roleName.includes('tutor') ? 'Academic' : 'PE'} Sessions ({joinedSessions.length})</h3>
           <ul className="app-list">
-            {joinedSessions.map((s) => (
+            {joinedSessions.slice(0, 10).map((s) => (
               <li key={s.id}>
                 <Link to={`/dashboard/sessions/${s.id}`}>
                   <div className="app-list-item-details">
                     <strong>{s.session_name}</strong>
                     <span style={{ padding: "5px 12px" }}>{s.category}</span>
+                    {s.date && (
+                      <span style={{ fontSize: 12, color: '#666' }}>
+                        {new Date(s.date).toLocaleDateString()}
+                      </span>
+                    )}
                   </div>
                 </Link>
               </li>
             ))}
           </ul>
+          {joinedSessions.length > 10 && (
+            <p style={{ textAlign: 'center', color: '#666', marginTop: 12, fontSize: 13 }}>
+              Showing 10 of {joinedSessions.length} sessions
+            </p>
+          )}
         </Card>
       )}
 
-      {/* 6️⃣ Learner-style charts (if worker is learner) */}
+      {/* 8️⃣ Learner-style charts (if worker is learner) */}
       {worker?.learner && (
         <div className="grid-item stats-container profile-stats mt-6">
           <StatsDashboard charts={statsCharts} loading={loading} layout="2col" />

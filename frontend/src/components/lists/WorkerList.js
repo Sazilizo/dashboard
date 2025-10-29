@@ -110,11 +110,15 @@ export default function WorkerList() {
   const totalPages = Math.ceil(workers.length / pageSize);
   const hasMore = page < totalPages;
 
+  const sortOptions = [
+    { value: "name", label: "Name" },
+    { value: "id", label: "ID" },
+  ];
+
   return (
-  <div className="app-list-container">
+    <div className="app-list-container">
       <div>
-  <div className="app-list-header">
-          <h2>Workers List</h2>
+        <div className="app-list-header">
           <div className="app-list-filters">
             <FiltersPanel
               user={user}
@@ -128,31 +132,25 @@ export default function WorkerList() {
           </div>
         </div>
 
-        <div className={`split-container ${showList ? "expanded" : "collapsed"}`}>
-          <div className={`app-list-panel ${showList ? "show" : "hide"}`}>
+        <div className={`grid-layout split-container ${showList ? "expanded" : "collapsed"}`}>
+          <div className={`list-items grid-item app-list-panel ${showList ? "show" : "hide"}`}>
+            {isAllSchoolRole && (
+              <Link to="/dashboard/workers/create" className="btn btn-primary">Create worker</Link>
+            )}
+            <SortDropdown
+              options={sortOptions}
+              value={sortBy}
+              order={sortOrder}
+              onChange={setSortBy}
+              onOrderChange={setSortOrder}
+            />
             <div style={{ marginBottom: 8 }}>
-              {isAllSchoolRole && (
-                <Link to="/dashboard/workers/create" className="app-btn app-btn-primary">Create worker</Link>
-              )}
-              <SortDropdown
-                options={[
-                  { value: "name", label: "Name" },
-                  { value: "roles.name", label: "Role" },
-                  { value: "id", label: "ID" },
-                ]}
-                value={sortBy}
-                order={sortOrder}
-                onChange={setSortBy}
-                onOrderChange={setSortOrder}
-              />
-            
               <span>Status: </span>
               <span className={isOnline ? "text-green-600" : "text-yellow-600"}>
                 {isOnline ? "Online" : "Offline (changes will sync when online)"}
               </span>
             </div>
-
-            {loading && <Loader variant="spinner" size="large" text="Loading workers..." />}
+            {loading && <Loader variant="pulse" size="large" text="Loading workers..." />}
             {!loading && workers && workers.length > 0 && (
               <>
                 <WorkerListItems workers={paginatedWorkers} />
@@ -168,32 +166,12 @@ export default function WorkerList() {
               </>
             )}
             {!loading && (!workers || workers.length === 0) && (
-              <div>
-                <p>No workers found.</p>
-                {allWorkers && allWorkers.length > 0 && (
-                  <p className="text-sm text-gray-600">
-                    ({allWorkers.length} workers available but filtered out)
-                  </p>
-                )}
-              </div>
+              <p>No workers found.</p>
             )}
           </div>
 
-          {/* MIDDLE = Toggle Button */}
-          <button
-            className="app-list-toggle-btn"
-            onClick={() => setShowList((prev) => !prev)}
-          >
-            {showList ? "<" : ">"}
-          </button>
-
-          {/* RIGHT = Stats */}
-          <div className="app-list-stats">
-            {workers && workers.length > 0 && (
-              <div className="app-list-stats-item">
-                <WorkerStats workers={workers} loading={loading} />
-              </div>
-            )}
+          <div className="grid-item stats-container app-list-stats">
+            {workers.length > 0 && <WorkerStats workers={workers} loading={loading} />}
           </div>
         </div>
       </div>

@@ -10,6 +10,7 @@ import {
   clearStoredSession
 } from "../auth/offlineAuth";
 import useOnlineStatus from "../hooks/useOnlineStatus";
+import { startAutoCloseMonitoring, stopAutoCloseMonitoring } from "../utils/autoCloseWorkDay";
 
 const AuthContext = createContext();
 
@@ -190,6 +191,9 @@ export function AuthProvider({ children }) {
           console.warn('[AuthProvider] Failed to store session, continuing anyway:', storeErr);
         }
         refreshUser(true);
+        
+        // Start auto-close monitoring when user is signed in
+        startAutoCloseMonitoring();
       } else if (_event === 'SIGNED_OUT') {
         // Only clear on explicit sign out
         setUser(null);
@@ -201,12 +205,17 @@ export function AuthProvider({ children }) {
         } catch (clearErr) {
           console.warn('[AuthProvider] Failed to clear stored data:', clearErr);
         }
+        
+        // Stop auto-close monitoring when user signs out
+        stopAutoCloseMonitoring();
       }
       // Don't clear user on other events (like TOKEN_REFRESHED failures)
     });
 
     // Handle both return patterns
     return () => {
+      stopAutoCloseMonitoring(); // Clean up on unmount
+      
       if (result?.data?.subscription?.unsubscribe) {
         result.data.subscription.unsubscribe();
       } else if (result?.subscription?.unsubscribe) {

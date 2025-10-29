@@ -82,15 +82,9 @@ const WorkerStats = ({ workers, loading, singleWorker }) => {
           )} */}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="stacked-chart-stats">
-            <StackedCategoryGradeChart
-              title="Attendance per Role"
-              workers={workers}
-            />
-          </div>
-          <div className="bar-charts">
-            {roleAttendanceData.length > 0 && (
+        <>
+          {roleAttendanceData.length > 0 && (
+            <div className="grid-item page-stats-grid-items grade-distribution-chart">
               <GradeDistributionBarChart
                 title="Role Attendance Distribution"
                 workers={workers}
@@ -99,17 +93,27 @@ const WorkerStats = ({ workers, loading, singleWorker }) => {
                 labelKey="role"
                 height={300}
               />
-            )}
-            {rolePieData.length > 0 && (
+            </div>
+          )}
+
+          <div className="grid-item page-stats-grid-items grade-category-chart">
+            <StackedCategoryGradeChart
+              title="Attendance per Role"
+              workers={workers}
+            />
+          </div>
+
+          {rolePieData.length > 0 && (
+            <div className="grid-item page-stats-grid-items breakdown-pie-chart">
               <PieChartStats
                 title="Worker Roles Breakdown"
                 data={rolePieData}
                 dataKey="value"
                 labelKey="label"
               />
-            )}
-          </div>
-        </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
