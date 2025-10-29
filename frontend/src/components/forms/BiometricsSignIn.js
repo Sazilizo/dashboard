@@ -18,7 +18,7 @@ const MODELS_URL = process.env.REACT_APP_MODELS_URL || "/models";
 const STORAGE_PATHS = {
   'student-uploads': (id) => `students/${id}/profile-picture`,
   'worker-uploads': (id) => `workers/${id}/profile-picture`,
-  'profile-avatars': (id) => `${id}`  // For users, the bucket itself is profile-avatars
+  'profile-avatars': (id) => ''  // For users, files are directly in the bucket root
 };
 import {
   preloadFaceApiModels,
@@ -414,11 +414,11 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
         for (const source of sourcesToTry) {
           if (descriptors.length > 0) break; // Already got descriptors, skip remaining sources
 
-          console.log(`[BiometricsSignIn] Trying ${source.label}: ${source.bucket}/${source.path}`);
+          console.log(`[BiometricsSignIn] Trying ${source.label}: ${source.bucket}/${source.path || '(root)'}`);
 
           const { data: files, error: listErr } = await api.storage
             .from(source.bucket)
-            .list(source.path);
+            .list(source.path || '');
           
           if (listErr) {
             console.warn(`Failed to list files in ${source.label}:`, listErr);
@@ -432,7 +432,20 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
             continue;
           }
 
-          const imageFiles = files.filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
+          // Filter for image files and optionally by ID pattern for profile-avatars
+          let imageFiles = files.filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
+          
+          // For profile-avatars, filter files that match the user ID exactly (e.g., "39.jpg", "42.png")
+          if (source.bucket === 'profile-avatars') {
+            imageFiles = imageFiles.filter((f) => {
+              // Extract filename without extension
+              const nameWithoutExt = f.name.replace(/\.(jpg|jpeg|png)$/i, '');
+              // Match if filename is exactly the ID
+              return nameWithoutExt === String(id);
+            });
+            console.log(`Filtered to ${imageFiles.length} image(s) matching ID ${id} in ${source.label}`);
+          }
+          
           if (!imageFiles.length) {
             console.log(`No valid image files in ${source.label}, trying next source...`);
             setMessage(m => `${m}\n⚠ ${source.label}: No valid images`);
@@ -443,7 +456,10 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
 
           // limit descriptors per id to reduce memory/time
           const limited = imageFiles.slice(0, 3);
-          const paths = limited.map((f) => `${source.path}/${f.name}`);
+          const paths = limited.map((f) => {
+            // For profile-avatars (empty path), file is at root
+            return source.path ? `${source.path}/${f.name}` : f.name;
+          });
 
           // batch create signed URLs
           const signedResults = await Promise.all(
