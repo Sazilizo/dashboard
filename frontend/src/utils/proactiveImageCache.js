@@ -52,8 +52,8 @@ export async function cacheAllUserImages() {
 
         if (!userImages.length) {
           // Try worker-uploads bucket if user is a worker
-          if (profile.tutor_id || profile.coach_id) {
-            const workerId = profile.tutor_id || profile.coach_id;
+          if (profile.worker_id) {
+            const workerId = profile.worker_id;
             const workerPath = `workers/${workerId}/profile-picture`;
             
             const { data: workerFiles } = await api.storage
@@ -216,7 +216,7 @@ export async function cacheUserImages(userId) {
   try {
     const { data: profile } = await api
       .from("profiles")
-      .select("id, tutor_id, coach_id")
+      .select("id, worker_id")
       .eq("id", userId)
       .single();
 
@@ -246,8 +246,8 @@ export async function cacheUserImages(userId) {
     }
 
     // Try worker-uploads if applicable
-    if ((profile.tutor_id || profile.coach_id) && cached === 0) {
-      const workerId = profile.tutor_id || profile.coach_id;
+    if (profile.worker_id && cached === 0) {
+      const workerId = profile.worker_id;
       const workerPath = `workers/${workerId}/profile-picture`;
       
       const { data: workerFiles } = await api.storage

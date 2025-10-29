@@ -139,8 +139,7 @@ const LogoutButton = () => {
               userId={userProfile.id}
               entityType="user"
               schoolId={userProfile.school_id}
-              tutorId={userProfile.worker_id}
-              coachId={userProfile.worker_id}
+              workerId={userProfile.worker_id}
               forceOperation="signout"
               onCompleted={handleBiometricComplete}
             />

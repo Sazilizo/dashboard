@@ -195,8 +195,7 @@ export default function LoginForm() {
               userId={userProfile.id}
               entityType="user"
               schoolId={userProfile.school_id}
-              tutorId={userProfile.worker_id}
-              coachId={userProfile.worker_id}
+              workerId={userProfile.worker_id}
               forceOperation="signin"
               onCompleted={handleBiometricComplete}
             />

@@ -45,8 +45,7 @@ const BiometricsSignIn = ({
   bucketName,
   folderName,
   sessionType,
-  tutorId,
-  coachId,
+  workerId,
   forceOperation = null, // null | 'signout' (force sign-out on face match)
   onCompleted,
 }) => {
@@ -400,9 +399,9 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
         const sourcesToTry = entityType === 'user' 
           ? [
               { bucket: 'profile-avatars', path: STORAGE_PATHS['profile-avatars'](id), label: 'Profile Avatar' },
-              ...(tutorId || coachId ? [{ 
+              ...(workerId ? [{ 
                 bucket: 'worker-uploads', 
-                path: STORAGE_PATHS['worker-uploads'](tutorId || coachId),
+                path: STORAGE_PATHS['worker-uploads'](workerId),
                 label: 'Worker Profile'
               }] : [])
             ]
