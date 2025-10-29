@@ -1,15 +1,26 @@
 import api from "../api/client";
 import { cacheTable } from "./tableCache";
 import { cacheAllProfileImages } from "./proactiveImageCache";
+import { getUserContext, applyRLSFiltering, getUserCacheKey, canAccessTable } from "./rlsCache";
 
 /**
- * Proactively cache tables with aggressive timeout and error handling
- * This ensures the app works offline even if WiFi is connected but has no data
+ * Proactively cache tables with RLS-aware filtering and aggressive timeout
+ * This ensures the app works offline with respect to user permissions
+ * 
+ * @param {Object} user - Current authenticated user from AuthProvider
  */
-export async function cacheFormSchemasIfOnline() {
+export async function cacheFormSchemasIfOnline(user = null) {
   try {
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       console.info("[proactiveCache] navigator.onLine=false, skipping cache refresh");
+      return;
+    }
+
+    // Get user context for RLS filtering
+    const userContext = getUserContext(user);
+    
+    if (!userContext) {
+      console.warn("[proactiveCache] No user context available, skipping RLS-aware caching");
       return;
     }
 
@@ -17,7 +28,7 @@ export async function cacheFormSchemasIfOnline() {
       "form_schemas", 
       "roles", 
       "schools", 
-      "profiles",  // Added for Users list component
+      "profiles",  // HR and superuser only
       "workers", 
       "students", 
       "meals",
@@ -30,9 +41,15 @@ export async function cacheFormSchemasIfOnline() {
       "meal_distributions"
     ];
 
-    console.info(`[proactiveCache] Starting cache refresh for ${tablesToCache.length} tables...`);
+    console.info(`[proactiveCache] Starting RLS-aware cache refresh for user: ${userContext.roleName} (school: ${userContext.schoolId || 'ALL'})`);
 
     for (const table of tablesToCache) {
+      // Check if user has access to this table
+      if (!canAccessTable(table, userContext)) {
+        console.info(`[proactiveCache] ⊘ Skipping ${table} (no access for ${userContext.roleName})`);
+        continue;
+      }
+
       try {
         // Use AbortController for timeout
         const controller = new AbortController();
@@ -48,8 +65,13 @@ export async function cacheFormSchemasIfOnline() {
         }
 
         if (Array.isArray(data)) {
-          await cacheTable(table, data);
-          console.info(`[proactiveCache] ✓ cached ${table} (${data.length} rows)`);
+          // Cache with RLS filtering applied
+          await cacheTable(table, data, userContext);
+          
+          // Log with cache key to show user-specific caching
+          const cacheKey = getUserCacheKey(table, userContext);
+          const filteredCount = applyRLSFiltering(table, data, userContext).length;
+          console.info(`[proactiveCache] ✓ cached ${cacheKey} (${filteredCount}/${data.length} rows after RLS)`);
         }
       } catch (err) {
         // Network error or timeout - don't break the loop, just log and continue
@@ -63,7 +85,7 @@ export async function cacheFormSchemasIfOnline() {
       }
     }
 
-    console.info("[proactiveCache] Cache refresh complete");
+    console.info("[proactiveCache] RLS-aware cache refresh complete");
     
     // Cache profile images in background (don't block)
     cacheProfileImagesInBackground();

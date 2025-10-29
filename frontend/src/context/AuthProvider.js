@@ -11,6 +11,7 @@ import {
 } from "../auth/offlineAuth";
 import useOnlineStatus from "../hooks/useOnlineStatus";
 import { startAutoCloseMonitoring, stopAutoCloseMonitoring } from "../utils/autoCloseWorkDay";
+import cacheFormSchemasIfOnline from "../utils/proactiveCache";
 
 const AuthContext = createContext();
 
@@ -137,6 +138,15 @@ export function AuthProvider({ children }) {
         }
       } catch (storeErr) {
         console.warn('[AuthProvider] Failed to store auth data, continuing anyway:', storeErr);
+      }
+
+      // CRITICAL: Trigger RLS-aware cache refresh when user profile is loaded
+      // This ensures cached data respects user's school and role permissions
+      if (isOnline && fullUser?.profile) {
+        console.log('[AuthProvider] Triggering RLS-aware cache refresh for user');
+        cacheFormSchemasIfOnline(fullUser).catch(err => 
+          console.warn('[AuthProvider] RLS cache refresh failed:', err)
+        );
       }
     } catch (err) {
       console.error("[AuthProvider] refreshUser error:", err);

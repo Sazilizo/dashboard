@@ -16,7 +16,49 @@ import StudentReachChart from "../charts/StudentReachChart";
 import WorkerPerformanceRadar from "../charts/WorkerPerformanceRadar";
 import WorkerImpactSummary from "../charts/WorkerImpactSummary";
 import WorkerAttendanceTrend from "../charts/WorkerAttendanceTrend";
+import { getUserContext } from "../../utils/rlsCache";
 import "../../styles/Profile.css";
+
+/**
+ * Check if current user has permission to view this worker's profile
+ * Implements same RLS rules as rlsCache.js for workers table
+ */
+function checkWorkerAccess(workerData, userContext) {
+  if (!userContext) return false;
+  
+  const { roleName, schoolId, userId } = userContext;
+  const role = roleName?.toLowerCase();
+  
+  // Superuser, admin, and HR can view all workers
+  if (['superuser', 'admin', 'hr'].includes(role)) {
+    return true;
+  }
+  
+  const workerRole = workerData?.roles?.name?.toLowerCase() || workerData?.role?.toLowerCase();
+  const workerSchoolId = workerData?.school_id;
+  
+  // Head tutors can view all tutors in their school
+  if (role === 'head_tutor') {
+    return workerSchoolId === schoolId && workerRole === 'tutor';
+  }
+  
+  // Head coaches can view all coaches in their school
+  if (role === 'head_coach') {
+    return workerSchoolId === schoolId && workerRole === 'coach';
+  }
+  
+  // Regular tutors/coaches can only view themselves
+  if (['tutor', 'coach'].includes(role)) {
+    return workerData.id === userId || workerData.profile?.id === userId;
+  }
+  
+  // Others can view workers in their school
+  if (schoolId && workerSchoolId === schoolId) {
+    return true;
+  }
+  
+  return false;
+}
 
 const WorkerProfile = () => {
   const { id } = useParams();
@@ -42,6 +84,10 @@ const WorkerProfile = () => {
   useEffect(() => {
     const fetchWorker = async () => {
       try {
+        // Get current user's context for RLS checks
+        const userContext = getUserContext(user);
+        const currentUserRole = userContext?.roleName?.toLowerCase();
+        
         // 1️⃣ Fetch worker base
         let workerData = null;
         let workerError = null;
@@ -78,9 +124,15 @@ const WorkerProfile = () => {
 
         if (workerError || !workerData) throw workerError || new Error('Worker not found');
 
+        // 2️⃣ RLS Access Check: Can current user view this worker?
+        const canView = checkWorkerAccess(workerData, userContext);
+        if (!canView) {
+          throw new Error('Access denied: You do not have permission to view this worker profile');
+        }
+
         const roleName = workerData?.roles?.name?.toLowerCase();
 
-        // 2️⃣ Role-based data fetch
+        // 3️⃣ Role-based data fetch (same as before)
         if (roleName === "learner") {
           // Mirror LearnerProfile behavior
           const { data: learner, error: learnerError } = await api
@@ -116,7 +168,7 @@ const WorkerProfile = () => {
         }
 
         else if (roleName === "tutor" || roleName === "head_tutor" || roleName === "coach" || roleName === "head_coach") {
-          // 3️⃣ Tutor/Coach logic aligned to schema: students -> participants -> sessions, plus attendance
+          // 4️⃣ Tutor/Coach logic aligned to schema: students -> participants -> sessions, plus attendance
           let sessions = [];
           let participants = [];
           let attendance = [];
@@ -202,7 +254,7 @@ const WorkerProfile = () => {
         }
 
         else {
-          // 4️⃣ Regular worker: load profile info and attendance
+          // 5️⃣ Regular worker: load profile info and attendance
           let attendance = [];
           
           try {
@@ -241,7 +293,7 @@ const WorkerProfile = () => {
     };
 
     if (id) fetchWorker();
-  }, [id]);
+  }, [id, user]);
   useEffect(() => {
     if (worker) {
       document.title = `${worker.profile?.name || "Worker"} Profile`;

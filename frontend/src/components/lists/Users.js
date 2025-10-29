@@ -7,6 +7,7 @@ import "../../styles/Users.css";
 import { Link } from "react-router-dom";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { cacheTable, getTable } from "../../utils/tableCache";
+import { getUserContext, applyRLSFiltering } from "../../utils/rlsCache";
 
 export default function Users() {
   const { user } = useAuth();
@@ -52,6 +53,9 @@ export default function Users() {
       setLoading(true);
       setError("");
       
+      // Get user context for RLS filtering
+      const userContext = getUserContext(user);
+      
       try {
         if (isOnline) {
           console.log('[Users] Fetching all profiles from server...');
@@ -68,15 +72,19 @@ export default function Users() {
 
           console.log(`[Users] ✓ Fetched ${data?.length || 0} profiles from server`);
           
-          // Cache the results for offline use
-          if (data && data.length > 0) {
-            await cacheTable("profiles", data);
-            console.log(`[Users] ✓ Cached ${data.length} profiles`);
+          // Apply RLS filtering (HR and superuser see all, others see own profile only)
+          const filteredData = applyRLSFiltering('profiles', data, userContext);
+          console.log(`[Users] RLS filtered: ${filteredData.length}/${data?.length || 0} profiles visible to ${userContext?.roleName}`);
+          
+          // Cache the filtered results for offline use
+          if (filteredData && filteredData.length > 0) {
+            await cacheTable("profiles", data, userContext);
+            console.log(`[Users] ✓ Cached ${filteredData.length} profiles with RLS context`);
           }
           
-          // Set profiles directly
+          // Set profiles directly with avatars
           const profilesWithAvatars = await Promise.all(
-            (data || []).map(async (p) => {
+            (filteredData || []).map(async (p) => {
               const avatarPath = p.avatar_url;
               const signedUrl = avatarPath ? await getAvatarUrl(avatarPath) : null;
               return { ...p, avatar_url_signed: signedUrl || null };
@@ -92,8 +100,10 @@ export default function Users() {
           const cachedProfiles = await getTable("profiles");
           
           if (cachedProfiles && cachedProfiles.length > 0) {
-            console.log(`[Users] ✓ Loaded ${cachedProfiles.length} profiles from cache`);
-            setProfiles(cachedProfiles.map((p) => ({ ...p, avatar_url_signed: null })));
+            // Apply RLS filtering to cached data
+            const filteredCached = applyRLSFiltering('profiles', cachedProfiles, userContext);
+            console.log(`[Users] ✓ Loaded ${filteredCached.length} profiles from cache (RLS filtered)`);
+            setProfiles(filteredCached.map((p) => ({ ...p, avatar_url_signed: null })));
           } else {
             console.warn('[Users] No cached profiles found');
             setProfiles([]);
@@ -107,8 +117,9 @@ export default function Users() {
         try {
           const cachedProfiles = await getTable("profiles");
           if (cachedProfiles && cachedProfiles.length > 0) {
-            console.log(`[Users] Fallback: Loaded ${cachedProfiles.length} profiles from cache`);
-            setProfiles(cachedProfiles.map((p) => ({ ...p, avatar_url_signed: null })));
+            const filteredCached = applyRLSFiltering('profiles', cachedProfiles, userContext);
+            console.log(`[Users] Fallback: Loaded ${filteredCached.length} profiles from cache (RLS filtered)`);
+            setProfiles(filteredCached.map((p) => ({ ...p, avatar_url_signed: null })));
           }
         } catch (cacheErr) {
           console.error('[Users] Cache fallback also failed:', cacheErr);
@@ -119,7 +130,7 @@ export default function Users() {
     }
 
     fetchProfiles();
-  }, [isOnline, isPrivileged, profilesSelect]);
+  }, [isOnline, isPrivileged, profilesSelect, user]);
 
   // Fetch roles for filter
   useEffect(() => {
