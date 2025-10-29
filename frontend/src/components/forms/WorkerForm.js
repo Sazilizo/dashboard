@@ -8,6 +8,7 @@ import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { autoResizeTextarea } from "../../utils/autoResizeTextarea";
 import useToast from "../../hooks/useToast";
 import ToastContainer from "../ToastContainer";
+import Loader from "../widgets/Loader";
 
 export default function WorkerForm() {
   const { schools } = useSchools();
