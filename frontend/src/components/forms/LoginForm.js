@@ -15,6 +15,7 @@ export default function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [showBiometrics, setShowBiometrics] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
+  const [recordAttendance, setRecordAttendance] = useState(false);
   const navigate = useNavigate();
   const { toasts, showToast, removeToast } = useToast();
 
@@ -57,34 +58,47 @@ export default function LoginForm() {
 
         if (profile?.id) {
           const today = new Date().toISOString().split('T')[0];
+          const roleName = profile?.roles?.name?.toLowerCase?.() || '';
+          const isTestingRole = ['superuser', 'admin', 'hr', 'viewer'].includes(roleName);
           
-          // Check if user already has an open work session for today
+          // Check if user already has an open work session for today (skip for testing roles)
           let hasOpenSession = false;
-          try {
-            const { data: openRows } = await api
-              .from('attendance_records')
-              .select('id, sign_in_time')
-              .eq('user_id', profile.id)
-              .eq('date', today);
-            
-            // Filter for null sign_out_time in JavaScript
-            const openSession = openRows?.filter(row => !row.sign_out_time)?.[0];
-            
-            if (openSession) {
-              hasOpenSession = true;
-              console.log('User already has an open work session for today - skipping biometric sign-in');
-              showToast('Welcome back! Your work session is already active.', 'success');
-              navigate("/dashboard");
-              setLoading(false);
-              return;
-            }
-          } catch {}
+          if (!isTestingRole) {
+            try {
+              const { data: openRows } = await api
+                .from('attendance_records')
+                .select('id, sign_in_time')
+                .eq('user_id', profile.id)
+                .eq('date', today);
+              
+              // Filter for null sign_out_time in JavaScript
+              const openSession = openRows?.filter(row => !row.sign_out_time)?.[0];
+              
+              if (openSession) {
+                hasOpenSession = true;
+                console.log('User already has an open work session for today - skipping biometric sign-in');
+                showToast('Welcome back! Your work session is already active.', 'success');
+                navigate("/dashboard");
+                setLoading(false);
+                return;
+              }
+            } catch {}
+          }
 
-          // No open session - require biometric authentication
+          // Prompt user: Record work time?
+          const shouldRecord = window.confirm('Sign in for work? This will record your time.');
+          setRecordAttendance(shouldRecord);
+          
+          // Show biometric authentication
           setUserProfile(profile);
           setShowBiometrics(true);
           setLoading(false);
-          showToast('Password verified. Please complete biometric authentication.', 'info', 5000);
+          
+          if (shouldRecord) {
+            showToast('Please complete biometric authentication to record your time.', 'info', 5000);
+          } else {
+            showToast('Please complete biometric authentication (time will not be recorded).', 'info', 5000);
+          }
         } else {
           // No profile found, just navigate
           navigate("/dashboard");
@@ -97,8 +111,8 @@ export default function LoginForm() {
     }
 
   const handleBiometricComplete = async () => {
-    // Biometric authentication successful - record attendance and navigate
-    if (userProfile?.id) {
+    // Biometric authentication successful - record attendance if user confirmed
+    if (userProfile?.id && recordAttendance) {
       const nowIso = new Date().toISOString();
       const today = nowIso.split('T')[0];
       const roleName = userProfile?.roles?.name?.toLowerCase?.() || '';
@@ -118,11 +132,13 @@ export default function LoginForm() {
 
       try {
         await api.from('attendance_records').insert(payload);
-        showToast('Sign-in successful! Welcome.', 'success');
+        showToast('Sign-in successful! Time recorded.', 'success');
       } catch (insErr) {
         console.warn('Work sign-in insert failed', insErr?.message || insErr);
         showToast('Attendance recording failed, but you are logged in.', 'warning');
       }
+    } else if (userProfile?.id && !recordAttendance) {
+      showToast('Sign-in successful! (Time not recorded)', 'success');
     }
     
     setShowBiometrics(false);

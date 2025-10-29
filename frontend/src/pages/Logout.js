@@ -9,6 +9,7 @@ const LogoutButton = () => {
   const navigate = useNavigate();
   const [showBiometrics, setShowBiometrics] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
+  const [recordSignOut, setRecordSignOut] = useState(false);
   const { toasts, showToast, removeToast } = useToast();
 
   const handleLogout = async () => {
@@ -23,28 +24,24 @@ const LogoutButton = () => {
           .maybeSingle();
 
         if (profile?.id) {
-          // Check if user has open work session
-          const today = new Date().toISOString().split('T')[0];
-          const { data: openRows } = await api
-            .from('attendance_records')
-            .select('id')
-            .eq('user_id', profile.id)
-            .eq('date', today);
-
-          // Filter for null sign_out_time in JavaScript
-          const openSession = openRows?.filter(row => !row.sign_out_time)?.[0];
-
-          if (openSession) {
-            // Has open session - require biometric sign-out
-            setUserProfile(profile);
-            setShowBiometrics(true);
-            showToast('Please complete biometric verification to sign out.', 'info', 5000);
-            return;
+          // Prompt: End your work day?
+          const endDay = window.confirm('End your work day? This will record your sign-out time.');
+          setRecordSignOut(endDay);
+          
+          // Show biometric verification regardless of choice
+          setUserProfile(profile);
+          setShowBiometrics(true);
+          
+          if (endDay) {
+            showToast('Please complete biometric verification to end your day.', 'info', 5000);
+          } else {
+            showToast('Please complete biometric verification to logout (time not recorded).', 'info', 5000);
           }
+          return;
         }
       }
 
-      // No open session - just logout
+      // No profile - just logout
       await performLogout();
     } catch (err) {
       console.error("Logout error:", err);
@@ -53,8 +50,8 @@ const LogoutButton = () => {
   };
 
   const handleBiometricComplete = async () => {
-    // Biometric verified - end work day
-    if (userProfile?.id) {
+    // Biometric verified - record sign-out if user confirmed
+    if (userProfile?.id && recordSignOut) {
       const today = new Date().toISOString().split('T')[0];
       try {
         const { data: openRows } = await api
@@ -74,11 +71,15 @@ const LogoutButton = () => {
             .eq('id', openSession.id);
           
           showToast('Work day ended successfully.', 'success');
+        } else {
+          showToast('No open session found to close.', 'warning');
         }
       } catch (err) {
         console.warn('Work sign-out update failed', err);
         showToast('Sign-out recording failed, but you will be logged out.', 'warning');
       }
+    } else if (userProfile?.id && !recordSignOut) {
+      showToast('Logging out (time not recorded).', 'info');
     }
 
     setShowBiometrics(false);
