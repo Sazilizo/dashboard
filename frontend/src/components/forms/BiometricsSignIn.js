@@ -718,8 +718,11 @@ useEffect(() => {
       const results = detections.map((d) => faceMatcher.findBestMatch(d.descriptor));
       const date = new Date().toISOString().split("T")[0];
 
+      let matchFound = false;
+
       for (const match of results) {
         if (match.label === "unknown") continue;
+        matchFound = true;
         const displayName = studentNames[match.label] || `ID ${match.label}`;
 
         // For user authentication mode (entityType='user')
@@ -777,6 +780,13 @@ useEffect(() => {
         }
       }
 
+      // If no known faces were found, show message
+      if (!matchFound) {
+        setMessage("No recognized faces detected. Please try again.");
+        setIsProcessing(false);
+        return;
+      }
+
       // show a captured frame
       setCaptureDone(true);
     } catch (err) {
@@ -810,7 +820,10 @@ useEffect(() => {
         .withFaceLandmarks()
         .withFaceDescriptors();
 
-      if (!detections?.length) return;
+      if (!detections?.length) {
+        setIsProcessing(false);
+        return;
+      }
 
       const results = detections.map((d) => faceMatcher.findBestMatch(d.descriptor));
       const date = new Date().toISOString().split("T")[0];
