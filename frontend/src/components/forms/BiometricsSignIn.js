@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import api from "../../api/client";
 import { getFaceApi } from "../../utils/faceApiShim";
 import descriptorDB from "../../utils/descriptorDB";
+import imageCache from "../../utils/imageCache";
 // worker path (webpack friendly) - descriptor worker runs face-api inside the worker
 let DescriptorWorker = null;
 try {
@@ -416,69 +417,116 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
 
           console.log(`[BiometricsSignIn] Trying ${source.label}: ${source.bucket}/${source.path || '(root)'}`);
 
-          const { data: files, error: listErr } = await api.storage
-            .from(source.bucket)
-            .list(source.path || '');
+          // Check cache first for offline support
+          const cachedImages = await imageCache.getCachedImagesByEntity(id);
+          const cachedForSource = cachedImages.filter(img => img.bucket === source.bucket);
           
-          if (listErr) {
-            console.warn(`Failed to list files in ${source.label}:`, listErr);
-            setMessage(m => `${m}\n⚠ ${source.label}: ${listErr.message || 'Access denied'}`);
-            continue;
-          }
-          
-          if (!files?.length) {
-            console.log(`No files found in ${source.label}, trying next source...`);
-            setMessage(m => `${m}\n⚠ ${source.label}: No images found`);
-            continue;
-          }
+          let imageFiles = [];
+          let paths = [];
+          let urlsData = [];
 
-          // Filter for image files and optionally by ID pattern for profile-avatars
-          let imageFiles = files.filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
-          
-          // For profile-avatars, filter files that match the user ID exactly (e.g., "39.jpg", "42.png")
-          if (source.bucket === 'profile-avatars') {
-            imageFiles = imageFiles.filter((f) => {
-              // Extract filename without extension
-              const nameWithoutExt = f.name.replace(/\.(jpg|jpeg|png)$/i, '');
-              // Match if filename is exactly the ID
-              return nameWithoutExt === String(id);
+          // Use cached images if available and offline, or if online check is preferred
+          if (cachedForSource.length > 0 && !isOnline) {
+            console.log(`[BiometricsSignIn] Using ${cachedForSource.length} cached image(s) from ${source.label} (offline mode)`);
+            setMessage(m => `${m}\n📦 ${source.label}: Using cached images (offline)`);
+            
+            // Convert cached blobs to object URLs
+            urlsData = cachedForSource.slice(0, 3).map(cached => {
+              return URL.createObjectURL(cached.blob);
             });
-            console.log(`Filtered to ${imageFiles.length} image(s) matching ID ${id} in ${source.label}`);
-          }
-          
-          if (!imageFiles.length) {
-            console.log(`No valid image files in ${source.label}, trying next source...`);
-            setMessage(m => `${m}\n⚠ ${source.label}: No valid images`);
-            continue;
-          }
-
-          console.log(`Found ${imageFiles.length} image(s) in ${source.label}`);
-
-          // limit descriptors per id to reduce memory/time
-          const limited = imageFiles.slice(0, 3);
-          const paths = limited.map((f) => {
-            // For profile-avatars (empty path), file is at root
-            return source.path ? `${source.path}/${f.name}` : f.name;
-          });
-
-          // batch create signed URLs
-          const signedResults = await Promise.all(
-            paths.map((p) => api.storage.from(source.bucket).createSignedUrl(p, 300))
-          );
-          
-          const urlsData = [];
-          let urlErr = null;
-          for (const r of signedResults) {
-            if (r.error) {
-              urlErr = r.error;
-              urlsData.push(null);
+          } else {
+            // Online mode: fetch from storage and update cache
+            const { data: files, error: listErr } = await api.storage
+              .from(source.bucket)
+              .list(source.path || '');
+            
+            if (listErr) {
+              // If online fetch fails, try cached images as fallback
+              if (cachedForSource.length > 0) {
+                console.log(`[BiometricsSignIn] Fetch failed, falling back to cached images for ${source.label}`);
+                setMessage(m => `${m}\n📦 ${source.label}: Using cached images (fallback)`);
+                urlsData = cachedForSource.slice(0, 3).map(cached => URL.createObjectURL(cached.blob));
+              } else {
+                console.warn(`Failed to list files in ${source.label}:`, listErr);
+                setMessage(m => `${m}\n⚠ ${source.label}: ${listErr.message || 'Access denied'}`);
+                continue;
+              }
+            } else if (!files?.length) {
+              console.log(`No files found in ${source.label}, trying next source...`);
+              setMessage(m => `${m}\n⚠ ${source.label}: No images found`);
+              continue;
             } else {
-              urlsData.push(r.data?.signedUrl || null);
+              // Filter for image files and optionally by ID pattern for profile-avatars
+              imageFiles = files.filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
+              
+              // For profile-avatars, filter files that match the user ID exactly (e.g., "39.jpg", "42.png")
+              if (source.bucket === 'profile-avatars') {
+                imageFiles = imageFiles.filter((f) => {
+                  // Extract filename without extension
+                  const nameWithoutExt = f.name.replace(/\.(jpg|jpeg|png)$/i, '');
+                  // Match if filename is exactly the ID
+                  return nameWithoutExt === String(id);
+                });
+                console.log(`Filtered to ${imageFiles.length} image(s) matching ID ${id} in ${source.label}`);
+              }
+              
+              if (!imageFiles.length) {
+                console.log(`No valid image files in ${source.label}, trying next source...`);
+                setMessage(m => `${m}\n⚠ ${source.label}: No valid images`);
+                continue;
+              }
+
+              console.log(`Found ${imageFiles.length} image(s) in ${source.label}`);
+
+              // limit descriptors per id to reduce memory/time
+              const limited = imageFiles.slice(0, 3);
+              paths = limited.map((f) => {
+                // For profile-avatars (empty path), file is at root
+                return source.path ? `${source.path}/${f.name}` : f.name;
+              });
+
+              // batch create signed URLs
+              const signedResults = await Promise.all(
+                paths.map((p) => api.storage.from(source.bucket).createSignedUrl(p, 300))
+              );
+              
+              let urlErr = null;
+              for (const r of signedResults) {
+                if (r.error) {
+                  urlErr = r.error;
+                  urlsData.push(null);
+                } else {
+                  urlsData.push(r.data?.signedUrl || null);
+                }
+              }
+              
+              if (urlErr || !urlsData.filter(Boolean).length) {
+                console.log(`Failed to get signed URLs for ${source.bucket}, trying next source...`);
+                continue;
+              }
+
+              // Cache the images for offline use
+              try {
+                for (let i = 0; i < paths.length; i++) {
+                  const path = paths[i];
+                  const { data: blob, error: downloadErr } = await api.storage
+                    .from(source.bucket)
+                    .download(path);
+                  
+                  if (!downloadErr && blob) {
+                    await imageCache.cacheImage(source.bucket, path, blob, id, {
+                      source: source.label
+                    });
+                  }
+                }
+              } catch (cacheErr) {
+                console.warn(`[BiometricsSignIn] Failed to cache images for future offline use:`, cacheErr);
+              }
             }
           }
           
-          if (urlErr || !urlsData.filter(Boolean).length) {
-            console.log(`Failed to get signed URLs for ${source.bucket}, trying next source...`);
+          if (!urlsData.filter(Boolean).length) {
+            console.log(`No valid URLs available for ${source.label}, trying next source...`);
             continue;
           }
 
@@ -504,7 +552,7 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
                   modelsUrl: MODELS_URL,
                   inputSize: 128,
                   scoreThreshold: 0.45,
-                  maxDescriptors: limited.length
+                  maxDescriptors: 3
                 });
               } catch (err) {
                 console.warn("Worker postMessage failed", err);
@@ -544,6 +592,15 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
               }
             }
           }
+          
+          // Clean up object URLs to prevent memory leaks
+          urlsData.forEach(url => {
+            if (url && url.startsWith('blob:')) {
+              try {
+                URL.revokeObjectURL(url);
+              } catch (e) {}
+            }
+          });
 
           // If we got descriptors from this source, log it and break
           if (descriptors.length > 0) {

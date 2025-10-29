@@ -1,5 +1,6 @@
 import api from "../api/client";
 import { cacheTable } from "./tableCache";
+import { cacheAllProfileImages } from "./proactiveImageCache";
 
 /**
  * Proactively cache tables with aggressive timeout and error handling
@@ -63,8 +64,30 @@ export async function cacheFormSchemasIfOnline() {
     }
 
     console.info("[proactiveCache] Cache refresh complete");
+    
+    // Cache profile images in background (don't block)
+    cacheProfileImagesInBackground();
   } catch (err) {
     console.warn("[proactiveCache] unexpected error:", err);
+  }
+}
+
+/**
+ * Cache profile images in background without blocking
+ * This runs asynchronously after table caching completes
+ */
+async function cacheProfileImagesInBackground() {
+  try {
+    console.info("[proactiveCache] Starting background image cache...");
+    
+    // Wait a bit to not compete with table caching
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    const results = await cacheAllProfileImages();
+    
+    console.info(`[proactiveCache] Background image cache complete: ${results.totalCached} cached, ${results.totalFailed} failed, ${results.totalSkipped} skipped`);
+  } catch (err) {
+    console.warn("[proactiveCache] Background image cache failed:", err);
   }
 }
 

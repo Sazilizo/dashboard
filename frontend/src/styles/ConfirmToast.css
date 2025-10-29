@@ -1,0 +1,79 @@
+.confirm-toast {
+  background: #fff;
+  border-left: 4px solid #3b82f6;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 320px;
+  max-width: 400px;
+}
+
+.confirm-toast-message {
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+
+.confirm-toast-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.confirm-toast-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 70px;
+}
+
+.confirm-toast-yes {
+  background: #3b82f6;
+  color: white;
+}
+
+.confirm-toast-yes:hover {
+  background: #2563eb;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.confirm-toast-yes:active {
+  transform: translateY(0);
+}
+
+.confirm-toast-no {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.confirm-toast-no:hover {
+  background: #e5e7eb;
+  color: #4b5563;
+}
+
+.confirm-toast-no:active {
+  background: #d1d5db;
+}
+
+/* Animation when toast appears */
+@keyframes confirmSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.confirm-toast {
+  animation: confirmSlideIn 0.3s ease-out;
+}

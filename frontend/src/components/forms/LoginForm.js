@@ -8,6 +8,8 @@ import { preloadFaceApiModels } from "../../utils/FaceApiLoader";
 import BiometricsSignIn from "./BiometricsSignIn";
 import useToast from "../../hooks/useToast";
 import ToastContainer from "../ToastContainer";
+import ConfirmToast from "../ConfirmToast";
+import { cacheUserImages } from "../../utils/proactiveImageCache";
 
 export default function LoginForm() {
   const [form, setForm] = useState({ email: "", password: "" });
@@ -61,6 +63,11 @@ export default function LoginForm() {
           const roleName = profile?.roles?.name?.toLowerCase?.() || '';
           const isTestingRole = ['superuser', 'admin', 'hr', 'viewer'].includes(roleName);
           
+          // Cache user's images for offline biometric auth
+          cacheUserImages(profile.id).catch(err => {
+            console.warn("Failed to cache user images:", err);
+          });
+          
           // Check if user already has an open work session for today (skip for testing roles)
           let hasOpenSession = false;
           if (!isTestingRole) {
@@ -85,20 +92,35 @@ export default function LoginForm() {
             } catch {}
           }
 
-          // Prompt user: Record work time?
-          const shouldRecord = window.confirm('Sign in for work? This will record your time.');
-          setRecordAttendance(shouldRecord);
+          // Prompt user: Record work time? (using toast with buttons)
+          const toastId = showToast(
+            '',
+            'info',
+            0, // No auto-dismiss
+            <ConfirmToast
+              message="Sign in for work? This will record your time."
+              yesText="Yes, Record Time"
+              noText="No, Just Login"
+              onYes={() => {
+                removeToast(toastId);
+                setRecordAttendance(true);
+                setUserProfile(profile);
+                setShowBiometrics(true);
+                setLoading(false);
+                showToast('Please complete biometric authentication to record your time.', 'info', 5000);
+              }}
+              onNo={() => {
+                removeToast(toastId);
+                setRecordAttendance(false);
+                setUserProfile(profile);
+                setShowBiometrics(true);
+                setLoading(false);
+                showToast('Please complete biometric authentication (time will not be recorded).', 'info', 5000);
+              }}
+            />
+          );
           
-          // Show biometric authentication
-          setUserProfile(profile);
-          setShowBiometrics(true);
-          setLoading(false);
-          
-          if (shouldRecord) {
-            showToast('Please complete biometric authentication to record your time.', 'info', 5000);
-          } else {
-            showToast('Please complete biometric authentication (time will not be recorded).', 'info', 5000);
-          }
+          return; // Wait for user choice
         } else {
           // No profile found, just navigate
           navigate("/dashboard");

@@ -4,6 +4,7 @@ import api from "../api/client";
 import BiometricsSignIn from "../components/forms/BiometricsSignIn";
 import useToast from "../hooks/useToast";
 import ToastContainer from "../components/ToastContainer";
+import ConfirmToast from "../components/ConfirmToast";
 
 const LogoutButton = () => {
   const navigate = useNavigate();
@@ -24,19 +25,32 @@ const LogoutButton = () => {
           .maybeSingle();
 
         if (profile?.id) {
-          // Prompt: End your work day?
-          const endDay = window.confirm('End your work day? This will record your sign-out time.');
-          setRecordSignOut(endDay);
+          // Prompt: End your work day? (using toast with buttons)
+          const toastId = showToast(
+            '',
+            'info',
+            0, // No auto-dismiss
+            <ConfirmToast
+              message="End your work day? This will record your sign-out time."
+              yesText="Yes, End Day"
+              noText="No, Just Logout"
+              onYes={() => {
+                removeToast(toastId);
+                setRecordSignOut(true);
+                setUserProfile(profile);
+                setShowBiometrics(true);
+                showToast('Please complete biometric verification to end your day.', 'info', 5000);
+              }}
+              onNo={() => {
+                removeToast(toastId);
+                setRecordSignOut(false);
+                setUserProfile(profile);
+                setShowBiometrics(true);
+                showToast('Please complete biometric verification to logout (time not recorded).', 'info', 5000);
+              }}
+            />
+          );
           
-          // Show biometric verification regardless of choice
-          setUserProfile(profile);
-          setShowBiometrics(true);
-          
-          if (endDay) {
-            showToast('Please complete biometric verification to end your day.', 'info', 5000);
-          } else {
-            showToast('Please complete biometric verification to logout (time not recorded).', 'info', 5000);
-          }
           return;
         }
       }
