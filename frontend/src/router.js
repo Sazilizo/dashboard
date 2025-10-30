@@ -26,7 +26,7 @@ import Logout from "./pages/Logout";
 import LandingPage from "./pages/LandingPage";
 import SessionMarkingForm from "./components/forms/SessionMarkingForm";
 import Users from "./components/lists/Users";
-// import PrivateRoute from "./components/PrivateRoute";
+import ProtectedRoute from "./components/ProtectedRoute";
 import ErrorBoundary from "./components/ErrorBoundary";
 import IndividualSessionForm from "./components/forms/IndividualSession";
 import WorkerProfile from "./components/profiles/WorkerProfile";
@@ -41,14 +41,27 @@ const router = createBrowserRouter([
   },
   {
     path: "/login",
-    element: <Login />,
+    element: (
+      <ProtectedRoute redirectIfAuthenticated={true}>
+        <Login />
+      </ProtectedRoute>
+    ),
     errorElement: <ErrorBoundary />,
   },
-  { path: "register", element: <Register /> },
+  { 
+    path: "register", 
+    element: (
+      <ProtectedRoute redirectIfAuthenticated={true}>
+        <Register />
+      </ProtectedRoute>
+    ) 
+  },
   {
     path: "/dashboard",
     element: (
+      <ProtectedRoute>
         <DashboardLayout />
+      </ProtectedRoute>
     ),
     errorElement: <ErrorBoundary />,
     children: [

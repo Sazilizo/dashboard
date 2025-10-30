@@ -1,7 +1,7 @@
 // src/components/LoginForm.js
 import React, { useState, lazy, Suspense } from "react";
 import api from "../../api/client";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthProvider";  // import your auth context hook
 import "../../styles/LoginPage.css";
 import { preloadFaceApiModels } from "../../utils/FaceApiLoader";
@@ -23,9 +23,13 @@ export default function LoginForm() {
   const [authToken, setAuthToken] = useState(null);
   const [showTokenDisplay, setShowTokenDisplay] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { toasts, showToast, removeToast } = useToast();
 
   const { refreshUser } = useAuth() || {};  // get refreshUser method from context
+  
+  // Get the page the user was trying to access (or default to dashboard)
+  const from = location.state?.from?.pathname || "/dashboard";
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -102,7 +106,7 @@ export default function LoginForm() {
                 hasOpenSession = true;
                 console.log('User already has an open work session for today - skipping biometric sign-in');
                 showToast('Welcome back! Your work session is already active.', 'success');
-                navigate("/dashboard");
+                navigate(from, { replace: true });
                 setLoading(false);
                 return;
               }
@@ -140,7 +144,7 @@ export default function LoginForm() {
           return; // Wait for user choice
         } else {
           // No profile found, just navigate
-          navigate("/dashboard");
+          navigate(from, { replace: true });
           setLoading(false);
         }
       } catch (err) {
@@ -197,7 +201,7 @@ export default function LoginForm() {
     
     // Delay navigation to allow token display to show
     setTimeout(() => {
-      navigate("/dashboard");
+      navigate(from, { replace: true });
     }, 1000);
   };
 
