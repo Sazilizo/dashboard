@@ -46,8 +46,16 @@ if (typeof window !== 'undefined') {
     localStorage.setItem('showSchoolsDebug', 'true');
     window.location.reload();
   };
+  
+  // Make cache refresh available globally for manual triggers
+  window.refreshCache = () => {
+    console.log('[GCU Debug] Manual cache refresh triggered...');
+    return cacheFormSchemasIfOnline();
+  };
+  
   if (process.env.NODE_ENV === 'development') {
     console.log('[GCU Debug] School utilities available: window.seedSchoolsCache(), window.verifySchoolsCache(), window.enableSchoolsDebug()');
+    console.log('[GCU Debug] Cache utilities available: window.refreshCache()');
   }
 }
 
@@ -61,13 +69,23 @@ if ('serviceWorker' in navigator) {
           console.log('ServiceWorker registration successful');
         }
         
-        // Sync offline changes when coming back online (use onlineApi client)
+        // Sync offline changes and refresh cache when coming back online
         window.addEventListener('online', () => {
+          console.log('[index] Device back online - syncing and refreshing cache...');
+          
           try {
+            // Sync any pending offline changes first
             syncOfflineChanges(onlineApi);
           } catch (err) {
             console.warn('Failed to sync offline changes automatically', err);
           }
+          
+          // Then refresh the cache with latest data from Supabase
+          setTimeout(() => {
+            cacheFormSchemasIfOnline().catch((err) => {
+              console.warn('[index] Cache refresh failed after coming online:', err);
+            });
+          }, 2000); // Wait 2 seconds for sync to complete first
         });
       })
       .catch(err => {

@@ -75,6 +75,8 @@ const BiometricsSignIn = ({
   const [showTokenInput, setShowTokenInput] = useState(false);
   const [tokenInput, setTokenInput] = useState("");
   const [tokenError, setTokenError] = useState("");
+  const [showAttendancePrompt, setShowAttendancePrompt] = useState(false);
+  const [pendingAttendanceData, setPendingAttendanceData] = useState(null);
   const retryIntervalRef = useRef(null);
   const effectiveBucket = bucketName || (entityType === 'user' ? 'profile-avatars' : bucketName);
 
@@ -837,6 +839,25 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
     console.error("Error loading face references", err);
     setMessage(m => `${m}\n❌ Failed to load face references: ${err.message}`);
     
+    // If online and no cached data found, trigger a cache refresh
+    if (isOnline && err.message.includes("No valid face descriptors") && attempt === 0) {
+      console.warn("[BiometricsSignIn] No face descriptors found - triggering cache refresh...");
+      setMessage(m => `${m}\n🔄 Refreshing cache from server...`);
+      
+      try {
+        // Trigger global cache refresh if available
+        if (typeof window !== 'undefined' && typeof window.refreshCache === 'function') {
+          await window.refreshCache();
+          setMessage(m => `${m}\n✅ Cache refreshed - retrying...`);
+          // Retry loading after cache refresh
+          setTimeout(() => loadFaceReferences(0, true), 2000);
+          return false;
+        }
+      } catch (refreshErr) {
+        console.warn("[BiometricsSignIn] Cache refresh failed:", refreshErr);
+      }
+    }
+    
     // Retry logic
     if (attempt < maxRetries && !isManualRetry) {
       const timeout = retryTimeouts[attempt] || 2000;
@@ -936,20 +957,17 @@ useEffect(() => {
       for (const match of results) {
         if (match.label === "unknown") continue;
         matchFound = true;
-        const displayName = studentNames[match.label] || `ID ${match.label}`;
+        const displayName = studentNames[match.label] || `${entityType === 'user' ? 'User' : 'Student'} ${match.label}`;
 
         // For user authentication mode (entityType='user')
         if (entityType === 'user') {
           // Check if this is the correct user
           const expectedId = userId || (Array.isArray(userId) ? userId[0] : null);
           if (String(match.label) === String(expectedId)) {
-            setMessage(`${displayName} verified successfully!`);
             setCaptureDone(true);
             
-            // Call onCompleted callback if provided
-            if (onCompleted) {
-              setTimeout(() => onCompleted(match.label), 500);
-            }
+            // Prompt for attendance recording instead of auto-recording
+            promptAttendanceRecording(match.label, displayName, false);
             setIsProcessing(false);
             return;
           } else {
@@ -959,37 +977,15 @@ useEffect(() => {
           }
         }
 
-        // Student mode - existing sign in/out logic
+        // Student mode - prompt for attendance instead of auto-recording
         if (!pendingSignIns[match.label]) {
-          const signInTime = new Date().toISOString();
-          const res = await addRow({
-            student_id: match.label,
-            school_id: schoolId,
-            status: "present",
-            note: "biometric sign in",
-            date,
-            sign_in_time: signInTime,
-          });
-
-          const pendingId = res?.tempId || null;
-          setPendingSignIns((prev) => ({
-            ...prev,
-            [match.label]: { id: pendingId, signInTime },
-          }));
-          setMessage((m) => `${m}\n${displayName} signed in.`);
+          // Sign in - prompt user
+          setCaptureDone(true);
+          promptAttendanceRecording(match.label, displayName, false);
         } else {
-          const pending = pendingSignIns[match.label];
-          const signOutTime = new Date().toISOString();
-          const durationMs = new Date(signOutTime) - new Date(pending.signInTime);
-          const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(2);
-
-          await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
-          setPendingSignIns((prev) => {
-            const copy = { ...prev };
-            delete copy[match.label];
-            return copy;
-          });
-          setMessage((m) => `${m}\n${displayName} signed out. Duration: ${durationHours} hrs`);
+          // Sign out - prompt user
+          setCaptureDone(true);
+          promptAttendanceRecording(match.label, displayName, true);
         }
       }
 
@@ -1154,6 +1150,108 @@ useEffect(() => {
     }
   };
 
+  // Record attendance to database
+  const recordAttendance = async (attendanceData) => {
+    try {
+      const date = new Date().toISOString().split("T")[0];
+      
+      // Build attendance record based on entity type
+      const record = {
+        school_id: schoolId,
+        status: "present",
+        note: attendanceData.note || "biometric sign in",
+        date,
+        sign_in_time: attendanceData.signInTime,
+        method: "biometric"
+      };
+      
+      // Add either student_id or user_id based on entity type
+      if (entityType === 'student') {
+        record.student_id = attendanceData.entityId;
+      } else if (entityType === 'user') {
+        record.user_id = attendanceData.entityId;
+      }
+      
+      const res = await addRow(record);
+      return res;
+    } catch (err) {
+      console.error("Failed to record attendance:", err);
+      throw err;
+    }
+  };
+
+  // Prompt user if they want to record attendance
+  const promptAttendanceRecording = (entityId, displayName, isSignOut = false) => {
+    const action = isSignOut ? "sign out" : "sign in";
+    setPendingAttendanceData({
+      entityId,
+      displayName,
+      isSignOut,
+      signInTime: new Date().toISOString()
+    });
+    setShowAttendancePrompt(true);
+    setMessage(`${displayName} authenticated. Record attendance for the day?`);
+  };
+
+  // Handle attendance prompt response
+  const handleAttendanceResponse = async (recordIt) => {
+    setShowAttendancePrompt(false);
+    
+    if (!pendingAttendanceData) return;
+    
+    const { entityId, displayName, isSignOut, signInTime } = pendingAttendanceData;
+    
+    if (recordIt) {
+      // User said "Yes, record attendance"
+      try {
+        if (!isSignOut) {
+          // Sign in
+          const res = await recordAttendance({
+            entityId,
+            signInTime,
+            note: `biometric ${entityType} sign in`
+          });
+          
+          const pendingId = res?.tempId || null;
+          setPendingSignIns((prev) => ({
+            ...prev,
+            [entityId]: { id: pendingId, signInTime },
+          }));
+          setMessage(`${displayName} signed in and attendance recorded.`);
+        } else {
+          // Sign out
+          const pending = pendingSignIns[entityId];
+          if (pending) {
+            const signOutTime = new Date().toISOString();
+            const durationMs = new Date(signOutTime) - new Date(pending.signInTime);
+            const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(2);
+            
+            await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
+            setPendingSignIns((prev) => {
+              const copy = { ...prev };
+              delete copy[entityId];
+              return copy;
+            });
+            setMessage(`${displayName} signed out. Duration: ${durationHours} hrs`);
+          }
+        }
+      } catch (err) {
+        setMessage(`Failed to record attendance for ${displayName}: ${err.message}`);
+      }
+    } else {
+      // User said "No, just login" or "No, just logout"
+      const action = isSignOut ? "logged out" : "logged in";
+      setMessage(`${displayName} ${action} (attendance not recorded).`);
+      
+      // For authentication-only mode, call onCompleted
+      if (onCompleted && !isSignOut) {
+        onCompleted(entityId);
+      }
+    }
+    
+    setPendingAttendanceData(null);
+  };
+
   return (
     <div className="student-signin-container">
       <h2>Biometric Sign In / Out</h2>
@@ -1248,6 +1346,66 @@ useEffect(() => {
               <p style={{ fontSize: "0.85rem", color: "#64748b", marginTop: "12px", marginBottom: 0 }}>
                 Don't have a code? You'll receive one after your next successful biometric login on a device with a webcam.
               </p>
+            </div>
+          )}
+
+          {/* Attendance Recording Prompt */}
+          {showAttendancePrompt && pendingAttendanceData && (
+            <div
+              style={{
+                background: "#f0fdf4",
+                border: "2px solid #16a34a",
+                borderRadius: "8px",
+                padding: "20px",
+                marginBottom: "16px",
+                textAlign: "center",
+              }}
+            >
+              <h3 style={{ marginTop: 0, color: "#15803d" }}>
+                {pendingAttendanceData.isSignOut ? '👋 Sign Out' : '👍 Sign In'}
+              </h3>
+              <p style={{ color: "#166534", marginBottom: "20px", fontSize: "1.1rem" }}>
+                <strong>{pendingAttendanceData.displayName}</strong>
+              </p>
+              <p style={{ color: "#166534", marginBottom: "20px" }}>
+                Would you like to record attendance for the day?
+              </p>
+              
+              <div style={{ display: "flex", gap: "12px", justifyContent: "center" }}>
+                <button
+                  onClick={() => handleAttendanceResponse(true)}
+                  style={{
+                    padding: "12px 24px",
+                    fontSize: "1rem",
+                    fontWeight: "600",
+                    backgroundColor: "#16a34a",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    minWidth: "120px",
+                  }}
+                >
+                  Yes, Record It
+                </button>
+                
+                <button
+                  onClick={() => handleAttendanceResponse(false)}
+                  style={{
+                    padding: "12px 24px",
+                    fontSize: "1rem",
+                    fontWeight: "600",
+                    backgroundColor: "#6b7280",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: "pointer",
+                    minWidth: "120px",
+                  }}
+                >
+                  No, Just {pendingAttendanceData.isSignOut ? 'Logout' : 'Login'}
+                </button>
+              </div>
             </div>
           )}
 
