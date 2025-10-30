@@ -31,7 +31,7 @@ import useOnlineStatus from "../../hooks/useOnlineStatus";
 import "../../styles/BiometricsSignIn.css";
 
 // Toggle verbose logs for debugging
-const DEBUG = false;
+const DEBUG = true;
 // Lightweight in-app performance overlay for timing key steps
 const PERF_UI = true;
 
@@ -438,19 +438,51 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
         let sourceUsed = null;
         
         // For users, try profile-avatars first, then worker-uploads as fallback
-        const sourcesToTry = entityType === 'user' 
-          ? [
-              { bucket: 'profile-avatars', path: STORAGE_PATHS['profile-avatars'](id), label: 'Profile Avatar' },
-              ...(workerId ? [{ 
+        let sourcesToTry = [];
+        
+        if (entityType === 'user') {
+          // Priority 1: profile-avatars bucket (uses profiles.id)
+          sourcesToTry.push({ 
+            bucket: 'profile-avatars', 
+            path: STORAGE_PATHS['profile-avatars'](id), 
+            label: 'Profile Avatar',
+            useIdFilter: true // Filter by exact ID match
+          });
+          
+          // Priority 2: worker-uploads (need to fetch worker_id from profiles first)
+          try {
+            const { data: profile, error: profileErr } = await api
+              .from('profiles')
+              .select('worker_id')
+              .eq('id', id)
+              .single();
+            
+            if (!profileErr && profile?.worker_id) {
+              if (DEBUG) console.log(`[BiometricsSignIn] User ${id} has worker_id: ${profile.worker_id}`);
+              sourcesToTry.push({ 
                 bucket: 'worker-uploads', 
-                path: STORAGE_PATHS['worker-uploads'](workerId),
-                label: 'Worker Profile'
-              }] : [])
-            ]
-          : [{ bucket: effectiveBucket, path: getPath(id), label: 'Student Profile' }];
+                path: STORAGE_PATHS['worker-uploads'](profile.worker_id),
+                label: 'Worker Profile',
+                useIdFilter: false // Don't filter by ID, just take first image in folder
+              });
+            } else if (DEBUG) {
+              console.log(`[BiometricsSignIn] User ${id} has no worker_id or profile not found`);
+            }
+          } catch (err) {
+            if (DEBUG) console.warn(`[BiometricsSignIn] Failed to fetch worker_id for user ${id}:`, err);
+          }
+        } else {
+          // Student mode: only check student-uploads
+          sourcesToTry.push({ 
+            bucket: effectiveBucket, 
+            path: getPath(id), 
+            label: 'Student Profile',
+            useIdFilter: false
+          });
+        }
 
         if (DEBUG) console.log(`[BiometricsSignIn] Attempting to load face references for ID ${id} from:`, 
-          sourcesToTry.map(s => `${s.label} (${s.bucket}/${s.path})`).join(', '));
+          sourcesToTry.map(s => `${s.label} (${s.bucket}/${s.path || '(root)'})`).join(', '));
 
         // Try each source until we get descriptors
         for (const source of sourcesToTry) {
@@ -477,9 +509,14 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
             });
           } else {
             // Online mode: fetch from storage and update cache
+            const listPath = source.path || '';
+            if (DEBUG) console.log(`[BiometricsSignIn] Listing files in ${source.bucket}/${listPath || '(root)'}`);
+            
             const { data: files, error: listErr } = await api.storage
               .from(source.bucket)
-              .list(source.path || '');
+              .list(listPath);
+            
+            if (DEBUG && files) console.log(`[BiometricsSignIn] Found ${files.length} total files in ${source.bucket}`, files);
             
             if (listErr) {
               // If online fetch fails, try cached images as fallback
@@ -497,18 +534,28 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
               setMessage(m => `${m}\n⚠ ${source.label}: No images found`);
               continue;
             } else {
-              // Filter for image files and optionally by ID pattern for profile-avatars
-              imageFiles = files.filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
+              // Filter for image files (support common formats), exclude folders
+              imageFiles = files.filter((f) => 
+                f.name && // has a name
+                !f.id?.endsWith('/') && // not a folder (some storage APIs mark folders this way)
+                /\.(jpg|jpeg|png|webp)$/i.test(f.name) // is an image
+              );
               
-              // For profile-avatars, filter files that match the user ID exactly (e.g., "39.jpg", "42.png")
-              if (source.bucket === 'profile-avatars') {
+              if (DEBUG) console.log(`[BiometricsSignIn] After image filter: ${imageFiles.length} image files`, imageFiles.map(f => f.name));
+              
+              // For profile-avatars only: filter files that match the user ID exactly (e.g., "29.jpg", "42.png")
+              if (source.useIdFilter) {
+                const beforeFilter = imageFiles.length;
                 imageFiles = imageFiles.filter((f) => {
-                  // Extract filename without extension
-                  const nameWithoutExt = f.name.replace(/\.(jpg|jpeg|png)$/i, '');
-                  // Match if filename is exactly the ID
-                  return nameWithoutExt === String(id);
+                  // Extract filename without extension, trim whitespace
+                  const nameWithoutExt = f.name.replace(/\.(jpg|jpeg|png|webp)$/i, '').trim();
+                  // Match if filename is exactly the ID (case-insensitive for safety)
+                  const idStr = String(id).trim();
+                  const matches = nameWithoutExt === idStr;
+                  if (DEBUG) console.log(`[BiometricsSignIn] Checking "${f.name}": nameWithoutExt="${nameWithoutExt}" vs id="${idStr}" => ${matches}`);
+                  return matches;
                 });
-                if (DEBUG) console.log(`Filtered to ${imageFiles.length} image(s) matching ID ${id} in ${source.label}`);
+                if (DEBUG) console.log(`[BiometricsSignIn] Filtered from ${beforeFilter} to ${imageFiles.length} image(s) matching ID ${id} in ${source.label}`);
               }
               
               if (!imageFiles.length) {
