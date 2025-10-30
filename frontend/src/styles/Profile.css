@@ -136,6 +136,17 @@
   box-shadow: 0 5px 15px rgba(0,0,0,0.1);
   background-color: #fff;
   font-family: Arial, sans-serif;
+  max-height: 70vh; /* limit form height */
+  overflow-y: auto; /* enable scrolling within form */
+  scroll-behavior: smooth; /* smooth scrolling */
+  /* Hide scrollbar */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+/* Hide scrollbar for WebKit browsers */
+.edit-profile-form::-webkit-scrollbar {
+  display: none;
 }
 
 /* Labels */
@@ -233,6 +244,17 @@
   padding: 0.75rem 1rem !important; /* reduce overlay inner spacing */
   width: 92% !important;
   max-width: 460px !important;
+  max-height: 90vh; /* limit height to viewport */
+  overflow-y: auto; /* enable scrolling */
+  scroll-behavior: smooth; /* smooth scrolling */
+  /* Hide scrollbar for WebKit browsers (Chrome, Safari, Edge) */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+/* Hide scrollbar for WebKit browsers */
+.modal-content.edit-profile-modal::-webkit-scrollbar {
+  display: none;
 }
 
 .modal-content.edit-profile-modal h2 {

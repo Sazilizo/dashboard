@@ -4,6 +4,7 @@ import api from "../../api/client";
 import { getFaceApi } from "../../utils/faceApiShim";
 import descriptorDB from "../../utils/descriptorDB";
 import imageCache from "../../utils/imageCache";
+import { validateAuthToken } from "../../utils/authTokenGenerator";
 // worker path (webpack friendly) - descriptor worker runs face-api inside the worker
 let DescriptorWorker = null;
 try {
@@ -31,9 +32,9 @@ import useOnlineStatus from "../../hooks/useOnlineStatus";
 import "../../styles/BiometricsSignIn.css";
 
 // Toggle verbose logs for debugging
-const DEBUG = true;
+const DEBUG = false;
 // Lightweight in-app performance overlay for timing key steps
-const PERF_UI = true;
+const PERF_UI = false;
 
 // Global cache to persist face descriptors across mounts
 const faceDescriptorCache = {};
@@ -69,6 +70,11 @@ const BiometricsSignIn = ({
   const [isSmallScreen, setIsSmallScreen] = useState(window.innerWidth <= 900);
   const [retryAttempt, setRetryAttempt] = useState(0);
   const [retryInSec, setRetryInSec] = useState(null);
+  const [loadingProgress, setLoadingProgress] = useState({ loaded: 0, total: 0 });
+  const [webcamError, setWebcamError] = useState(false);
+  const [showTokenInput, setShowTokenInput] = useState(false);
+  const [tokenInput, setTokenInput] = useState("");
+  const [tokenError, setTokenError] = useState("");
   const retryIntervalRef = useRef(null);
   const effectiveBucket = bucketName || (entityType === 'user' ? 'profile-avatars' : bucketName);
 
@@ -259,9 +265,20 @@ const BiometricsSignIn = ({
       await webcamRef.current.play();
       perfRef.current.cameraEnd = (performance.now ? performance.now() : Date.now());
       if (PERF_UI) snapPerf();
+      setWebcamError(false);
     } catch (err) {
       console.error("Webcam access failed:", err);
-      setMessage("Could not access webcam. Check permissions.");
+      setWebcamError(true);
+      
+      // Only show token input for sign-in (not sign-out) and only for users
+      if (entityType === 'user' && forceOperation === 'signin') {
+        setMessage("No webcam detected. You can use your backup authentication code to sign in.");
+        setShowTokenInput(true);
+      } else if (forceOperation === 'signout') {
+        setMessage("⚠️ Webcam required for sign-out. Please use a device with a webcam to end your work day.");
+      } else {
+        setMessage("Could not access webcam. Check permissions or use a device with a webcam.");
+      }
     }
   };
 
@@ -384,10 +401,18 @@ const BiometricsSignIn = ({
   // Load face references with retry mechanism
 const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
   if (!studentId && !userId) return false;
-  const ids = entityType === 'user'
+   let ids = entityType === 'user'
     ? (Array.isArray(userId) ? userId : [userId]).filter(Boolean)
     : (Array.isArray(studentId) ? studentId : [studentId]).filter(Boolean);
   
+   // Performance guard: Limit to 30 students max for initial load
+   const MAX_INITIAL_LOAD = 30;
+   if (ids.length > MAX_INITIAL_LOAD) {
+     console.warn(`BiometricsSignIn: ${ids.length} IDs provided, limiting to first ${MAX_INITIAL_LOAD} for performance`);
+     setMessage(`⚠️ Loading first ${MAX_INITIAL_LOAD} of ${ids.length} students for performance. Consider using continuous mode for groups.`);
+     ids = ids.slice(0, MAX_INITIAL_LOAD);
+   }
+ 
   setLoadingReferences(true);
   if (attempt === 0) {
     // reset retry indicators on fresh load
@@ -397,8 +422,9 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
       clearInterval(retryIntervalRef.current);
       retryIntervalRef.current = null;
     }
+   } else {
+     setMessage("Loading face references...");
   }
-  setMessage("Loading face references...");
   perfRef.current.refsStart = (performance.now ? performance.now() : Date.now());
   
   try {
@@ -412,7 +438,10 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
     // first check persisted DB cache
     const idsToLoad = [];
     const loadedDescriptors = [];
-    for (const i of ids) {
+     let processedCount = 0;
+   
+     // Process initial batch (or all IDs if small set)
+     for (const i of initialIds) {
       const persisted = await descriptorDB.getDescriptor(i);
       if (persisted && persisted.length) {
         try {
@@ -430,6 +459,13 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
       } else {
         idsToLoad.push(i);
       }
+     
+       // Update progress for large sets
+       if (isLargeSet) {
+         processedCount++;
+         setLoadingProgress({ loaded: processedCount, total: ids.length });
+         setMessage(`Loading face references (${processedCount}/${ids.length})...`);
+       }
     }
 
     for (const id of idsToLoad) {
@@ -512,9 +548,53 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
             const listPath = source.path || '';
             if (DEBUG) console.log(`[BiometricsSignIn] Listing files in ${source.bucket}/${listPath || '(root)'}`);
             
-            const { data: files, error: listErr } = await api.storage
-              .from(source.bucket)
-              .list(listPath);
+            let files = [];
+            let listErr = null;
+            
+            // Optimize: For profile-avatars with ID filter, try direct file access instead of listing entire bucket
+            if (source.useIdFilter && source.bucket === 'profile-avatars') {
+              // Try common extensions directly instead of listing all files
+              const extensions = ['jpg', 'jpeg', 'png', 'webp'];
+              const foundFiles = [];
+              
+              for (const ext of extensions) {
+                const filename = `${id}.${ext}`;
+                try {
+                  // Check if file exists by attempting to get its metadata
+                  const { data: fileData, error: checkErr } = await api.storage
+                    .from(source.bucket)
+                    .list('', { 
+                      limit: 1,
+                      search: filename
+                    });
+                  
+                  if (!checkErr && fileData && fileData.length > 0) {
+                    foundFiles.push(...fileData);
+                    break; // Found the file, stop searching
+                  }
+                } catch (e) {
+                  // File doesn't exist with this extension, try next
+                  continue;
+                }
+              }
+              
+              files = foundFiles;
+              if (DEBUG) console.log(`[BiometricsSignIn] Direct search found ${files.length} file(s) for ID ${id}`);
+            } else {
+              // Standard list for other buckets or non-filtered queries
+              // CRITICAL: Ensure we're listing a specific path, not the entire bucket
+              const listResult = await api.storage
+                .from(source.bucket)
+                .list(listPath, { 
+                  limit: 10,  // Only need a few images per student for face descriptors
+                  sortBy: { column: 'name', order: 'asc' }
+                });
+              
+              files = listResult.data;
+              listErr = listResult.error;
+              
+              if (DEBUG) console.log(`[BiometricsSignIn] Listed ${source.bucket}/${listPath} - found ${files?.length || 0} files`);
+            }
             
             if (DEBUG && files) console.log(`[BiometricsSignIn] Found ${files.length} total files in ${source.bucket}`, files);
             
@@ -592,22 +672,24 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
                 continue;
               }
 
-              // Cache the images for offline use
-              try {
-                for (let i = 0; i < paths.length; i++) {
-                  const path = paths[i];
-                  const { data: blob, error: downloadErr } = await api.storage
-                    .from(source.bucket)
-                    .download(path);
-                  
-                  if (!downloadErr && blob) {
-                    await imageCache.cacheImage(source.bucket, path, blob, id, {
-                      source: source.label
-                    });
+              // Cache the images for offline use (skip during large batch loads to reduce requests)
+              if (!isLargeSet) {
+                try {
+                  for (let i = 0; i < paths.length; i++) {
+                    const path = paths[i];
+                    const { data: blob, error: downloadErr } = await api.storage
+                      .from(source.bucket)
+                      .download(path);
+                    
+                    if (!downloadErr && blob) {
+                      await imageCache.cacheImage(source.bucket, path, blob, id, {
+                        source: source.label
+                      });
+                    }
                   }
+                } catch (cacheErr) {
+                  if (DEBUG) console.warn(`[BiometricsSignIn] Failed to cache images for future offline use:`, cacheErr);
                 }
-              } catch (cacheErr) {
-                if (DEBUG) console.warn(`[BiometricsSignIn] Failed to cache images for future offline use:`, cacheErr);
               }
             }
           }
@@ -786,8 +868,20 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
 
 // Effect to trigger initial load
 useEffect(() => {
-  loadFaceReferences(0);
-}, [studentId, userId, effectiveBucket, threshold]);
+  let cancelled = false;
+  
+  const loadReferences = async () => {
+    if (!cancelled) {
+      await loadFaceReferences(0);
+    }
+  };
+  
+  loadReferences();
+  
+  return () => {
+    cancelled = true;
+  };
+}, [studentId, userId]); // Remove effectiveBucket and threshold - they don't need to retrigger
 
   // ✅ Face capture handler
   const handleCapture = async () => {
@@ -1015,6 +1109,48 @@ useEffect(() => {
     // setMessage("");
   };
 
+  // Handle token-based authentication when webcam is unavailable
+  const handleTokenSubmit = async (e) => {
+    e.preventDefault();
+    setTokenError("");
+    
+    if (!tokenInput || tokenInput.trim().length !== 6) {
+      setTokenError("Please enter a valid 6-digit code");
+      return;
+    }
+    
+    if (!userId) {
+      setTokenError("No user selected");
+      return;
+    }
+    
+    setIsProcessing(true);
+    setMessage("Validating authentication code...");
+    
+    try {
+      const isValid = await validateAuthToken(userId, tokenInput.trim());
+      
+      if (isValid) {
+        setMessage("✅ Authentication successful!");
+        setShowTokenInput(false);
+        setTokenInput("");
+        
+        // Call onCompleted callback to proceed with sign-in
+        if (onCompleted) {
+          onCompleted(userId);
+        }
+      } else {
+        setTokenError("Invalid or expired authentication code");
+        setTokenInput("");
+      }
+    } catch (err) {
+      console.error("Token validation error:", err);
+      setTokenError("Failed to validate code. Please try again.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   return (
     <div className="student-signin-container">
       <h2>Biometric Sign In / Out</h2>
@@ -1039,7 +1175,136 @@ useEffect(() => {
               </div>
             </div>
           )}
-          <div className="video-container">
+
+          {/* Token Input for Sign-In when webcam unavailable */}
+          {showTokenInput && entityType === 'user' && forceOperation === 'signin' && (
+            <div
+              style={{
+                background: "#f0f9ff",
+                border: "2px solid #0284c7",
+                borderRadius: "8px",
+                padding: "20px",
+                marginBottom: "16px",
+                textAlign: "center",
+              }}
+            >
+              <h3 style={{ marginTop: 0, color: "#0369a1" }}>Backup Authentication</h3>
+              <p style={{ color: "#0c4a6e", marginBottom: "16px" }}>
+                Enter the 6-digit authentication code you received after your last successful login.
+              </p>
+              
+              <form onSubmit={handleTokenSubmit} style={{ maxWidth: "300px", margin: "0 auto" }}>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength="6"
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value.replace(/\D/g, ''))}
+                  placeholder="000000"
+                  disabled={isProcessing}
+                  style={{
+                    width: "100%",
+                    padding: "12px",
+                    fontSize: "1.5rem",
+                    textAlign: "center",
+                    letterSpacing: "0.3em",
+                    border: tokenError ? "2px solid #dc2626" : "2px solid #0284c7",
+                    borderRadius: "4px",
+                    marginBottom: "12px",
+                  }}
+                  aria-label="Authentication code"
+                  autoFocus
+                />
+                
+                {tokenError && (
+                  <p style={{ color: "#dc2626", fontSize: "0.9rem", marginBottom: "12px" }}>
+                    {tokenError}
+                  </p>
+                )}
+                
+                <button
+                  type="submit"
+                  disabled={isProcessing || tokenInput.length !== 6}
+                  style={{
+                    width: "100%",
+                    padding: "12px",
+                    fontSize: "1rem",
+                    fontWeight: "600",
+                    backgroundColor: isProcessing || tokenInput.length !== 6 ? "#94a3b8" : "#0284c7",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: isProcessing || tokenInput.length !== 6 ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {isProcessing ? "Validating..." : "Sign In with Code"}
+                </button>
+              </form>
+              
+              <p style={{ fontSize: "0.85rem", color: "#64748b", marginTop: "12px", marginBottom: 0 }}>
+                Don't have a code? You'll receive one after your next successful biometric login on a device with a webcam.
+              </p>
+            </div>
+          )}
+
+          {/* Webcam Warning for Sign-Out */}
+          {webcamError && forceOperation === 'signout' && (
+            <div
+              style={{
+                background: "#fef2f2",
+                border: "2px solid #dc2626",
+                borderRadius: "8px",
+                padding: "20px",
+                marginBottom: "16px",
+                textAlign: "center",
+              }}
+              role="alert"
+            >
+              <h3 style={{ marginTop: 0, color: "#991b1b" }}>⚠️ Webcam Required</h3>
+              <p style={{ color: "#7f1d1d", marginBottom: "16px" }}>
+                Biometric verification is required to end your work day. Please use a device with a webcam to sign out.
+              </p>
+              
+              <button
+                onClick={() => startWebcam()}
+                style={{
+                  padding: "10px 20px",
+                  fontSize: "0.95rem",
+                  fontWeight: "600",
+                  backgroundColor: "#dc2626",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  marginRight: "8px",
+                }}
+              >
+                Retry Webcam Access
+              </button>
+              
+              <button
+                onClick={() => window.history.back()}
+                style={{
+                  padding: "10px 20px",
+                  fontSize: "0.95rem",
+                  fontWeight: "600",
+                  backgroundColor: "#6b7280",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
+          {/* Only show video and controls when not using token fallback or showing webcam warning */}
+          {!showTokenInput && !(webcamError && forceOperation === 'signout') && (
+            <>
+              <div className="video-container">
             {PERF_UI && perfSnapshot && (
               <div className="perf-overlay" aria-label="Performance timings">
                 <div>Models: {perfSnapshot.modelsStart != null && perfSnapshot.modelsEnd != null ? Math.round(perfSnapshot.modelsEnd - perfSnapshot.modelsStart) + 'ms' : '-'}</div>
@@ -1127,6 +1392,8 @@ useEffect(() => {
               )}
             </div>
           </div>
+            </>
+          )}
 
           {message && <pre className="message">{message}</pre>}
         </>

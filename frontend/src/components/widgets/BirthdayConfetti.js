@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import '../../styles/BirthdayConfetti.css';
 
 const BirthdayConfetti = ({ duration = 5000, persistent = false }) => {
@@ -13,24 +13,28 @@ const BirthdayConfetti = ({ duration = 5000, persistent = false }) => {
     }
   }, [duration, persistent]);
 
+  // Memoize confetti pieces to prevent recalculation on every render
+  const confettiPieces = useMemo(() => 
+    Array.from({ length: 50 }, (_, i) => ({
+      id: i,
+      left: Math.random() * 100,
+      animationDelay: Math.random() * 3,
+      animationDuration: 3 + Math.random() * 2,
+      color: ['#ff6b9d', '#ffc93c', '#4ecdc4', '#95e1d3', '#f38181', '#aa96da', '#fcbad3', '#ffffd2'][Math.floor(Math.random() * 8)]
+    })), []
+  );
+
+  // Memoize balloons to prevent recalculation on every render
+  const balloons = useMemo(() => 
+    Array.from({ length: 8 }, (_, i) => ({
+      id: i,
+      left: 10 + (i * 12),
+      animationDelay: i * 0.3,
+      color: ['#ff6b9d', '#ffc93c', '#4ecdc4', '#95e1d3', '#f38181', '#aa96da', '#fcbad3', '#ffffd2'][i]
+    })), []
+  );
+
   if (!show) return null;
-
-  // Generate confetti pieces
-  const confettiPieces = Array.from({ length: 50 }, (_, i) => ({
-    id: i,
-    left: Math.random() * 100,
-    animationDelay: Math.random() * 3,
-    animationDuration: 3 + Math.random() * 2,
-    color: ['#ff6b9d', '#ffc93c', '#4ecdc4', '#95e1d3', '#f38181', '#aa96da', '#fcbad3', '#ffffd2'][Math.floor(Math.random() * 8)]
-  }));
-
-  // Generate balloons
-  const balloons = Array.from({ length: 8 }, (_, i) => ({
-    id: i,
-    left: 10 + (i * 12),
-    animationDelay: i * 0.3,
-    color: ['#ff6b9d', '#ffc93c', '#4ecdc4', '#95e1d3', '#f38181', '#aa96da', '#fcbad3', '#ffffd2'][i]
-  }));
 
   return (
     <div className="birthday-celebration">

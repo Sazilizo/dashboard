@@ -1,6 +1,6 @@
 import api from "../api/client";
 import { cacheTable } from "./tableCache";
-import { cacheAllProfileImages } from "./proactiveImageCache";
+import { cacheAllUserImages, cacheAllStudentImages } from "./proactiveImageCache";
 import { getUserContext, applyRLSFiltering, getUserCacheKey, canAccessTable } from "./rlsCache";
 
 /**
@@ -120,10 +120,19 @@ async function cacheProfileImagesInBackground() {
     
     // Wait a bit to not compete with table caching
     await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    const results = await cacheAllProfileImages();
-    
-    console.info(`[proactiveCache] Background image cache complete: ${results.totalCached} cached, ${results.totalFailed} failed, ${results.totalSkipped} skipped`);
+    // Always cache user images (small, flat bucket); defer student images unless explicitly enabled
+    const userResults = await cacheAllUserImages();
+    console.info(`[proactiveCache] User images cache complete: ${userResults.cached} cached, ${userResults.failed} failed, ${userResults.skipped} skipped`);
+
+    const ENABLE_STUDENT_IMAGE_PREFETCH = (typeof process !== 'undefined' && process.env && process.env.REACT_APP_PREFETCH_STUDENT_IMAGES === 'true');
+    if (ENABLE_STUDENT_IMAGE_PREFETCH) {
+      // Extra delay before heavy student image prefetch
+      await new Promise(resolve => setTimeout(resolve, 4000));
+      const studentResults = await cacheAllStudentImages();
+      console.info(`[proactiveCache] Student images cache complete: ${studentResults.cached} cached, ${studentResults.failed} failed, ${studentResults.skipped} skipped`);
+    } else {
+      console.info("[proactiveCache] Skipping student image prefetch (REACT_APP_PREFETCH_STUDENT_IMAGES != 'true')");
+    }
   } catch (err) {
     console.warn("[proactiveCache] Background image cache failed:", err);
   }

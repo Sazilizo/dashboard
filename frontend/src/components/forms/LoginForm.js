@@ -1,15 +1,17 @@
 // src/components/LoginForm.js
-import React, { useState } from "react";
+import React, { useState, lazy, Suspense } from "react";
 import api from "../../api/client";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthProvider";  // import your auth context hook
 import "../../styles/LoginPage.css";
 import { preloadFaceApiModels } from "../../utils/FaceApiLoader";
-import BiometricsSignIn from "./BiometricsSignIn";
+// Lazy load BiometricsSignIn - only loads when biometric authentication is triggered
+const BiometricsSignIn = lazy(() => import("./BiometricsSignIn"));
 import useToast from "../../hooks/useToast";
 import ToastContainer from "../ToastContainer";
 import ConfirmToast from "../ConfirmToast";
 import { cacheUserImages } from "../../utils/proactiveImageCache";
+import { generateAuthToken, storeAuthToken } from "../../utils/authTokenGenerator";
 
 export default function LoginForm() {
   const [form, setForm] = useState({ email: "", password: "" });
@@ -18,6 +20,8 @@ export default function LoginForm() {
   const [showBiometrics, setShowBiometrics] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
   const [recordAttendance, setRecordAttendance] = useState(false);
+  const [authToken, setAuthToken] = useState(null);
+  const [showTokenDisplay, setShowTokenDisplay] = useState(false);
   const navigate = useNavigate();
   const { toasts, showToast, removeToast } = useToast();
 
@@ -44,7 +48,20 @@ export default function LoginForm() {
         if (refreshUser) {
           await refreshUser(true);
         }
-        await preloadFaceApiModels();
+        
+        // Defer face-api preload - will load when biometrics screen appears if needed
+        // Don't block login flow with heavy ML model loading
+        const runWhenIdle = (callback) => {
+          if ('requestIdleCallback' in window) {
+            requestIdleCallback(callback, { timeout: 2000 });
+          } else {
+            setTimeout(callback, 100);
+          }
+        };
+        
+        runWhenIdle(() => {
+          preloadFaceApiModels().catch(() => {});
+        });
 
         // Get current user and profile
         const { data: { user: authUser } } = await api.auth.getUser();
@@ -163,6 +180,19 @@ export default function LoginForm() {
       showToast('Sign-in successful! (Time not recorded)', 'success');
     }
     
+    // Generate backup authentication token after successful biometric login
+    if (userProfile?.id) {
+      const token = generateAuthToken();
+      await storeAuthToken(userProfile.id, token, 60); // Valid for 60 minutes
+      setAuthToken(token);
+      setShowTokenDisplay(true);
+      
+      // Show token for 30 seconds then hide
+      setTimeout(() => {
+        setShowTokenDisplay(false);
+      }, 30000);
+    }
+    
     setShowBiometrics(false);
     navigate("/dashboard");
   };
@@ -178,6 +208,42 @@ export default function LoginForm() {
     <>
       <ToastContainer toasts={toasts} removeToast={removeToast} />
       
+      {/* Token Display Modal */}
+      {showTokenDisplay && authToken && (
+        <div className="biometric-modal-overlay">
+          <div className="biometric-modal" style={{ maxWidth: '400px', textAlign: 'center' }}>
+            <h2>🔐 Backup Authentication Code</h2>
+            <p style={{ marginBottom: '1rem', color: '#666' }}>
+              Use this code if you need to sign in on a device without a webcam.
+            </p>
+            <div style={{
+              background: '#f0f9ff',
+              border: '2px solid #0284c7',
+              borderRadius: '8px',
+              padding: '1.5rem',
+              marginBottom: '1rem'
+            }}>
+              <div style={{ fontSize: '2rem', fontWeight: 'bold', letterSpacing: '0.3em', color: '#0284c7' }}>
+                {authToken}
+              </div>
+            </div>
+            <div style={{ fontSize: '0.875rem', color: '#dc2626', marginBottom: '1rem' }}>
+              ⚠️ This code expires in 60 minutes and can only be used once.
+            </div>
+            <div style={{ fontSize: '0.875rem', color: '#059669', marginBottom: '1rem' }}>
+              ✓ Write this down - it will only be shown once
+            </div>
+            <button 
+              className="submit-btn" 
+              onClick={() => setShowTokenDisplay(false)}
+              style={{ width: '100%' }}
+            >
+              Got it, Continue
+            </button>
+          </div>
+        </div>
+      )}
+      
       {showBiometrics && userProfile ? (
         <div className="biometric-modal-overlay">
           <div className="biometric-modal">
@@ -191,14 +257,16 @@ export default function LoginForm() {
                 ×
               </button>
             </div>
-            <BiometricsSignIn
-              userId={userProfile.id}
-              entityType="user"
-              schoolId={userProfile.school_id}
-              workerId={userProfile.worker_id}
-              forceOperation="signin"
-              onCompleted={handleBiometricComplete}
-            />
+            <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading biometric authentication...</div>}>
+              <BiometricsSignIn
+                userId={userProfile.id}
+                entityType="user"
+                schoolId={userProfile.school_id}
+                workerId={userProfile.worker_id}
+                forceOperation="signin"
+                onCompleted={handleBiometricComplete}
+              />
+            </Suspense>
           </div>
         </div>
       ) : (

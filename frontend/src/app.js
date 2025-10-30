@@ -16,10 +16,21 @@ import { preloadFaceApiModels, areFaceApiModelsLoaded } from "./utils/FaceApiLoa
 function App() {
   // Show debug panel in development or if debug flag is set
   const showDebug = process.env.NODE_ENV === 'development' || localStorage.getItem('showSchoolsDebug') === 'true';
-  // Preload face-api models in background to reduce first-use latency
+  
+  // Defer face-api model preloading to idle time - don't block initial render
   useEffect(() => {
+    const runWhenIdle = (callback) => {
+      if ('requestIdleCallback' in window) {
+        requestIdleCallback(callback, { timeout: 3000 });
+      } else {
+        setTimeout(callback, 500);
+      }
+    };
+    
     if (!areFaceApiModelsLoaded()) {
-      preloadFaceApiModels().catch(() => {});
+      runWhenIdle(() => {
+        preloadFaceApiModels().catch(() => {});
+      });
     }
   }, []);
   

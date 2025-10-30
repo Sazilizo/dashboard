@@ -6,17 +6,37 @@ import { preloadFaceApiModels } from "./utils/FaceApiLoader";
 import { syncOfflineChanges } from "./api/offlineClient";
 import { onlineApi } from "./api/client";
 import { seedSchoolsCache, verifySchoolsCache } from "./utils/seedSchoolsCache";
+import { measurePerformance } from "./utils/performanceMonitor";
 
 
 const container = document.getElementById("root");
 const root = createRoot(container);
 
-// Fire-and-forget proactive cache; only runs when online and helps first-time
-// offline usage of dynamic forms by ensuring `form_schemas` is present in IDB.
-cacheFormSchemasIfOnline().catch((err) => console.warn("[index] cache error", err));
+// Defer heavy caching operations until after initial render to improve First Contentful Paint
+// Use requestIdleCallback for non-critical background tasks
+const deferBackgroundTasks = () => {
+  const runWhenIdle = (callback) => {
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(callback, { timeout: 3000 });
+    } else {
+      setTimeout(callback, 1);
+    }
+  };
 
-// Preload face-api models in background (useful for biometric flows)
-preloadFaceApiModels().catch((err) => console.warn("[index] faceapi preload failed", err));
+  // Defer cache refresh - not needed for initial login render
+  runWhenIdle(() => {
+    cacheFormSchemasIfOnline().catch((err) => console.warn("[index] cache error", err));
+  });
+
+  // Defer face-api model loading - only needed when biometrics are actually used
+  // Models will lazy-load on first biometric screen anyway
+  runWhenIdle(() => {
+    preloadFaceApiModels().catch((err) => console.warn("[index] faceapi preload failed", err));
+  });
+};
+
+// Start background tasks after a short delay to prioritize initial render
+setTimeout(deferBackgroundTasks, 100);
 
 // Make seed utilities available globally for debugging (mobile & web)
 if (typeof window !== 'undefined') {
@@ -26,7 +46,9 @@ if (typeof window !== 'undefined') {
     localStorage.setItem('showSchoolsDebug', 'true');
     window.location.reload();
   };
-  console.log('[GCU Debug] School utilities available: window.seedSchoolsCache(), window.verifySchoolsCache(), window.enableSchoolsDebug()');
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[GCU Debug] School utilities available: window.seedSchoolsCache(), window.verifySchoolsCache(), window.enableSchoolsDebug()');
+  }
 }
 
 // Register service worker
@@ -35,7 +57,9 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker
       .register('/serviceWorker.js')
       .then(registration => {
-        console.log('ServiceWorker registration successful');
+        if (process.env.NODE_ENV === 'development') {
+          console.log('ServiceWorker registration successful');
+        }
         
         // Sync offline changes when coming back online (use onlineApi client)
         window.addEventListener('online', () => {
@@ -47,9 +71,14 @@ if ('serviceWorker' in navigator) {
         });
       })
       .catch(err => {
-        console.log('ServiceWorker registration failed: ', err);
+        if (process.env.NODE_ENV === 'development') {
+          console.log('ServiceWorker registration failed: ', err);
+        }
       });
   });
 }
 
 root.render(<App />);
+
+// Monitor performance in development
+measurePerformance();
