@@ -413,6 +413,9 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
      ids = ids.slice(0, MAX_INITIAL_LOAD);
    }
  
+   // Track if this is a large set for progress updates
+   const isLargeSet = ids.length > 5;
+ 
   setLoadingReferences(true);
   if (attempt === 0) {
     // reset retry indicators on fresh load
@@ -441,7 +444,7 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
      let processedCount = 0;
    
      // Process initial batch (or all IDs if small set)
-     for (const i of initialIds) {
+     for (const i of ids) {
       const persisted = await descriptorDB.getDescriptor(i);
       if (persisted && persisted.length) {
         try {
