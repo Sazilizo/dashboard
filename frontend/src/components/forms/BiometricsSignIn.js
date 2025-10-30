@@ -1182,11 +1182,26 @@ useEffect(() => {
         method: "biometric"
       };
       
-      // Add either student_id or user_id based on entity type
+      // Add either student_id or auth_uid based on entity type
       if (entityType === 'student') {
         record.student_id = attendanceData.entityId;
       } else if (entityType === 'user') {
-        record.user_id = attendanceData.entityId;
+        // For users, we need to get their auth_uid from profiles table
+        try {
+          const { data: profile } = await api
+            .from('profiles')
+            .select('auth_uid')
+            .eq('id', attendanceData.entityId)
+            .single();
+          
+          if (profile?.auth_uid) {
+            record.auth_uid = profile.auth_uid;
+          } else {
+            console.warn(`No auth_uid found for user ${attendanceData.entityId}`);
+          }
+        } catch (err) {
+          console.error(`Failed to fetch auth_uid for user ${attendanceData.entityId}:`, err);
+        }
       }
       
       const res = await addRow(record);

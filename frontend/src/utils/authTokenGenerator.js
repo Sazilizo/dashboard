@@ -14,25 +14,47 @@ export function generateAuthToken() {
 
 /**
  * Store auth token for a user
- * @param {string} userId - User profile ID
+ * @param {string} profileId - User profile ID (from profiles table)
  * @param {string} token - 6-digit token
  * @param {number} expiresInMinutes - Token validity duration (default: 60 minutes)
  */
-export async function storeAuthToken(userId, token, expiresInMinutes = 60) {
+export async function storeAuthToken(profileId, token, expiresInMinutes = 60) {
   const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString();
   
   try {
-    // Store in auth_tokens table (create this table in Supabase if it doesn't exist)
+    // First, get the auth_uid from the profiles table
+    const { data: profile, error: profileError } = await api
+      .from('profiles')
+      .select('auth_uid')
+      .eq('id', profileId)
+      .single();
+    
+    if (profileError || !profile?.auth_uid) {
+      console.warn('Failed to get auth_uid for profile, using localStorage fallback', profileError);
+      // Fallback to localStorage
+      const tokenData = {
+        token,
+        profileId,
+        expiresAt,
+        used: false
+      };
+      localStorage.setItem(`auth_token_${profileId}`, JSON.stringify(tokenData));
+      return { token, expiresAt };
+    }
+    
+    const authUid = profile.auth_uid;
+    
+    // Store in auth_tokens table using auth_uid
     const { error } = await api
       .from('auth_tokens')
       .upsert({
-        user_id: userId,
+        auth_uid: authUid,
         token: token,
         expires_at: expiresAt,
         used: false,
         created_at: new Date().toISOString()
       }, {
-        onConflict: 'user_id'
+        onConflict: 'auth_uid'
       });
 
     if (error) {
@@ -40,11 +62,12 @@ export async function storeAuthToken(userId, token, expiresInMinutes = 60) {
       // Fallback to localStorage
       const tokenData = {
         token,
-        userId,
+        profileId,
+        authUid,
         expiresAt,
         used: false
       };
-      localStorage.setItem(`auth_token_${userId}`, JSON.stringify(tokenData));
+      localStorage.setItem(`auth_token_${profileId}`, JSON.stringify(tokenData));
     }
 
     return { token, expiresAt };
@@ -53,28 +76,56 @@ export async function storeAuthToken(userId, token, expiresInMinutes = 60) {
     // Fallback to localStorage
     const tokenData = {
       token,
-      userId,
+      profileId,
       expiresAt,
       used: false
     };
-    localStorage.setItem(`auth_token_${userId}`, JSON.stringify(tokenData));
+    localStorage.setItem(`auth_token_${profileId}`, JSON.stringify(tokenData));
     return { token, expiresAt };
   }
 }
 
 /**
  * Validate an auth token
- * @param {string} userId - User profile ID
+ * @param {string} profileId - User profile ID
  * @param {string} token - 6-digit token to validate
  * @returns {Promise<boolean>} - True if valid
  */
-export async function validateAuthToken(userId, token) {
+export async function validateAuthToken(profileId, token) {
   try {
+    // First, get the auth_uid from the profiles table
+    const { data: profile, error: profileError } = await api
+      .from('profiles')
+      .select('auth_uid')
+      .eq('id', profileId)
+      .single();
+    
+    if (profileError || !profile?.auth_uid) {
+      console.warn('Failed to get auth_uid for profile, trying localStorage fallback', profileError);
+      // Fallback to localStorage
+      const stored = localStorage.getItem(`auth_token_${profileId}`);
+      if (!stored) return false;
+
+      const tokenData = JSON.parse(stored);
+      const isExpired = new Date(tokenData.expiresAt) < new Date();
+      const isValid = tokenData.token === token && !tokenData.used && !isExpired;
+
+      if (isValid) {
+        // Mark as used
+        tokenData.used = true;
+        localStorage.setItem(`auth_token_${profileId}`, JSON.stringify(tokenData));
+      }
+
+      return isValid;
+    }
+    
+    const authUid = profile.auth_uid;
+    
     // Try database first
     const { data, error } = await api
       .from('auth_tokens')
       .select('token, expires_at, used')
-      .eq('user_id', userId)
+      .eq('auth_uid', authUid)
       .eq('token', token)
       .single();
 
@@ -87,7 +138,7 @@ export async function validateAuthToken(userId, token) {
         await api
           .from('auth_tokens')
           .update({ used: true })
-          .eq('user_id', userId)
+          .eq('auth_uid', authUid)
           .eq('token', token);
       }
       
@@ -95,7 +146,7 @@ export async function validateAuthToken(userId, token) {
     }
 
     // Fallback to localStorage
-    const stored = localStorage.getItem(`auth_token_${userId}`);
+    const stored = localStorage.getItem(`auth_token_${profileId}`);
     if (!stored) return false;
 
     const tokenData = JSON.parse(stored);
@@ -105,7 +156,7 @@ export async function validateAuthToken(userId, token) {
     if (isValid) {
       // Mark as used
       tokenData.used = true;
-      localStorage.setItem(`auth_token_${userId}`, JSON.stringify(tokenData));
+      localStorage.setItem(`auth_token_${profileId}`, JSON.stringify(tokenData));
     }
 
     return isValid;
@@ -117,13 +168,35 @@ export async function validateAuthToken(userId, token) {
 
 /**
  * Get active token for a user
+ * @param {string} profileId - User profile ID
+ * @returns {Promise<object|null>} - Active token data or null
  */
-export async function getActiveToken(userId) {
+export async function getActiveToken(profileId) {
   try {
+    // First, get the auth_uid from the profiles table
+    const { data: profile, error: profileError } = await api
+      .from('profiles')
+      .select('auth_uid')
+      .eq('id', profileId)
+      .single();
+    
+    if (profileError || !profile?.auth_uid) {
+      console.warn('Failed to get auth_uid for profile, trying localStorage fallback', profileError);
+      // Fallback to localStorage
+      const stored = localStorage.getItem(`auth_token_${profileId}`);
+      if (!stored) return null;
+
+      const tokenData = JSON.parse(stored);
+      const isExpired = new Date(tokenData.expiresAt) < new Date();
+      return (!tokenData.used && !isExpired) ? tokenData : null;
+    }
+    
+    const authUid = profile.auth_uid;
+    
     const { data } = await api
       .from('auth_tokens')
       .select('token, expires_at, used')
-      .eq('user_id', userId)
+      .eq('auth_uid', authUid)
       .eq('used', false)
       .single();
 
@@ -133,7 +206,7 @@ export async function getActiveToken(userId) {
     }
 
     // Fallback to localStorage
-    const stored = localStorage.getItem(`auth_token_${userId}`);
+    const stored = localStorage.getItem(`auth_token_${profileId}`);
     if (!stored) return null;
 
     const tokenData = JSON.parse(stored);
@@ -146,17 +219,29 @@ export async function getActiveToken(userId) {
 
 /**
  * Clear expired tokens (cleanup utility)
+ * @param {string} profileId - User profile ID
  */
-export async function clearExpiredTokens(userId) {
+export async function clearExpiredTokens(profileId) {
   try {
-    await api
-      .from('auth_tokens')
-      .delete()
-      .eq('user_id', userId)
-      .lt('expires_at', new Date().toISOString());
+    // First, get the auth_uid from the profiles table
+    const { data: profile, error: profileError } = await api
+      .from('profiles')
+      .select('auth_uid')
+      .eq('id', profileId)
+      .single();
+    
+    if (!profileError && profile?.auth_uid) {
+      const authUid = profile.auth_uid;
+      
+      await api
+        .from('auth_tokens')
+        .delete()
+        .eq('auth_uid', authUid)
+        .lt('expires_at', new Date().toISOString());
+    }
 
     // Clear from localStorage too
-    localStorage.removeItem(`auth_token_${userId}`);
+    localStorage.removeItem(`auth_token_${profileId}`);
   } catch (err) {
     console.warn('Failed to clear expired tokens:', err);
   }

@@ -150,6 +150,19 @@ export default function LoginForm() {
     }
 
   const handleBiometricComplete = async () => {
+    // Generate backup authentication token after successful biometric login
+    if (userProfile?.id) {
+      const token = generateAuthToken();
+      await storeAuthToken(userProfile.id, token, 60); // Valid for 60 minutes
+      setAuthToken(token);
+      setShowTokenDisplay(true);
+      
+      // Auto-hide token after 30 seconds
+      setTimeout(() => {
+        setShowTokenDisplay(false);
+      }, 30000);
+    }
+    
     // Biometric authentication successful - record attendance if user confirmed
     if (userProfile?.id && recordAttendance) {
       const nowIso = new Date().toISOString();
@@ -180,21 +193,12 @@ export default function LoginForm() {
       showToast('Sign-in successful! (Time not recorded)', 'success');
     }
     
-    // Generate backup authentication token after successful biometric login
-    if (userProfile?.id) {
-      const token = generateAuthToken();
-      await storeAuthToken(userProfile.id, token, 60); // Valid for 60 minutes
-      setAuthToken(token);
-      setShowTokenDisplay(true);
-      
-      // Show token for 30 seconds then hide
-      setTimeout(() => {
-        setShowTokenDisplay(false);
-      }, 30000);
-    }
-    
     setShowBiometrics(false);
-    navigate("/dashboard");
+    
+    // Delay navigation to allow token display to show
+    setTimeout(() => {
+      navigate("/dashboard");
+    }, 1000);
   };
 
   const handleBiometricCancel = () => {
