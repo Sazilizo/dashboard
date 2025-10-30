@@ -968,7 +968,23 @@ useEffect(() => {
             
             // Prompt for attendance recording instead of auto-recording
             promptAttendanceRecording(match.label, displayName, false);
+            
+            // Draw captured frame to canvas
+            try {
+              if (canvasRef.current) {
+                const display = canvasRef.current;
+                display.width = canvas.width;
+                display.height = canvas.height;
+                const dctx = display.getContext("2d");
+                dctx.drawImage(canvas, 0, 0, canvas.width, canvas.height);
+              }
+            } catch (e) {
+              if (DEBUG) console.warn('Failed to draw snapshot to canvas', e);
+            }
+            
             setIsProcessing(false);
+            perfRef.current.captureEnd = (performance.now ? performance.now() : Date.now());
+            if (PERF_UI) snapPerf();
             return;
           } else {
             setMessage(`Face does not match expected user. Please try again.`);
@@ -987,6 +1003,24 @@ useEffect(() => {
           setCaptureDone(true);
           promptAttendanceRecording(match.label, displayName, true);
         }
+        
+        // Draw captured frame to canvas
+        try {
+          if (canvasRef.current) {
+            const display = canvasRef.current;
+            display.width = canvas.width;
+            display.height = canvas.height;
+            const dctx = display.getContext("2d");
+            dctx.drawImage(canvas, 0, 0, canvas.width, canvas.height);
+          }
+        } catch (e) {
+          if (DEBUG) console.warn('Failed to draw snapshot to canvas', e);
+        }
+        
+        setIsProcessing(false);
+        perfRef.current.captureEnd = (performance.now ? performance.now() : Date.now());
+        if (PERF_UI) snapPerf();
+        return; // Exit after first match
       }
 
       // If no known faces were found, show message
@@ -995,26 +1029,9 @@ useEffect(() => {
         setIsProcessing(false);
         return;
       }
-
-      // draw the captured frame to the visible canvas and mark as done
-      try {
-        if (canvasRef.current) {
-          const display = canvasRef.current;
-          display.width = canvas.width;
-          display.height = canvas.height;
-          const dctx = display.getContext("2d");
-          dctx.drawImage(canvas, 0, 0, canvas.width, canvas.height);
-        }
-      } catch (e) {
-        if (DEBUG) console.warn('Failed to draw snapshot to canvas', e);
-      }
-  setCaptureDone(true);
-  perfRef.current.captureEnd = (performance.now ? performance.now() : Date.now());
-  if (PERF_UI) snapPerf();
     } catch (err) {
       console.error("handleCapture error:", err);
       setMessage("Failed to detect or record attendance.");
-    } finally {
       setIsProcessing(false);
     }
   };
