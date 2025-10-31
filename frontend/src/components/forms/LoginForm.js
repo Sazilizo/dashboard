@@ -2,16 +2,15 @@
 import React, { useState, lazy, Suspense } from "react";
 import api from "../../api/client";
 import { useNavigate, useLocation } from "react-router-dom";
-import { useAuth } from "../../context/AuthProvider";  // import your auth context hook
-import "../../styles/LoginPage.css";
+import { useAuth } from "../../context/AuthProvider";
 import { preloadFaceApiModels } from "../../utils/FaceApiLoader";
-// Lazy load BiometricsSignIn - only loads when biometric authentication is triggered
-const BiometricsSignIn = lazy(() => import("./BiometricsSignIn"));
 import useToast from "../../hooks/useToast";
 import ToastContainer from "../ToastContainer";
 import ConfirmToast from "../ConfirmToast";
 import { cacheUserImages } from "../../utils/proactiveImageCache";
 import { generateAuthToken, storeAuthToken } from "../../utils/authTokenGenerator";
+
+const BiometricsSignIn = lazy(() => import("./BiometricsSignIn"));
 
 export default function LoginForm() {
   const [form, setForm] = useState({ email: "", password: "" });

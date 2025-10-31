@@ -1,5 +1,7 @@
 -- Migrate auth_tokens table from user_id to auth_uid
 -- This updates the existing table to use auth.users(id) instead of profiles.id
+-- NOTE: attendance_records.user_id stays as profiles.id (integer)
+-- Only auth_tokens needs auth_uid (uuid) for backup authentication codes
 
 -- Drop existing RLS policies if they exist
 DROP POLICY IF EXISTS "Users can view their own tokens" ON auth_tokens;
@@ -9,6 +11,10 @@ DROP POLICY IF EXISTS "Users can delete their own tokens" ON auth_tokens;
 
 -- Drop existing foreign key constraint if it exists
 ALTER TABLE auth_tokens DROP CONSTRAINT IF EXISTS auth_tokens_user_id_fkey;
+
+-- The user_id column is currently UUID, but we need to ensure it matches auth.users(id)
+-- Since this is for authentication tokens, user_id should already be UUID
+-- We just need to rename it to auth_uid for clarity
 
 -- Rename user_id column to auth_uid
 ALTER TABLE auth_tokens RENAME COLUMN user_id TO auth_uid;

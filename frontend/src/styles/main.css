@@ -937,6 +937,20 @@ html, body {
   scroll-behavior: smooth;
 }
 
+/* EntityMultiSelect: scrollable list without visible scrollbar */
+.entity-multiselect-list{
+  max-height: 260px; /* limit height and allow scroll */
+  overflow-y: auto;
+  padding-right: 6px; /* small padding to prevent text clipping */
+  -ms-overflow-style: none; /* IE/Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.entity-multiselect-list::-webkit-scrollbar{ /* Chrome/Safari */
+  display: none;
+}
+
+.entity-multiselect { width: 100%; }
+
 /* ============================================
    MODALS & OVERLAYS
    ============================================ */

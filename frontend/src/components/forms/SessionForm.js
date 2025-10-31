@@ -3,14 +3,13 @@ import DynamicBulkForm from "./DynamicBulkForm";
 import useOfflineTable from "../../hooks/useOfflineTable";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { useParams } from "react-router-dom";
-import EntityMultiSelect from "../../hooks/EntityMultiSelect";
+// EntityMultiSelect removed from SessionForm; selection lives in RecordSessionForm
 import { useAuth } from "../../context/AuthProvider";
 import { useSchools } from "../../context/SchoolsContext";
 import UploadFile from "../profiles/UploadHelper";
+import BiometricsSignIn from "./BiometricsSignIn";
 import { useSupabaseStudents } from "../../hooks/useSupabaseStudents";
-import { cacheTable, getTable } from "../../utils/tableCache";
-import FiltersPanel from "../filters/FiltersPanel";
-import { useFilters } from "../../context/FiltersContext";
+// filters handled in RecordSessionForm
 import useToast from "../../hooks/useToast";
 import ToastContainer from "../ToastContainer";
 
@@ -25,13 +24,24 @@ const gradeOptions = [
 const groupByOptions = ["ww", "pr", "un"];
 
 export default function SessionForm() {
+  // Quick module-level log (executes on import)
+  try { console.log('[SessionForm] module import'); } catch (e) {}
+
   const { id } = useParams();
   const { user } = useAuth();
   const { schools } = useSchools();
   const [selectedStudents, setSelectedStudents] = useState([]);
-  const { filters, setFilters } = useFilters();
   const [sessionType, setSessionType] = useState("");
   const { toasts, showToast, removeToast } = useToast();
+
+  // Diagnostic debug: expose key runtime state to help trace loading problems
+  useEffect(() => {
+    console.debug('[SessionForm] mount', { id, sessionType, toastsLength: toasts.length, user: user?.profile?.id });
+  }, []);
+
+  useEffect(() => {
+    console.debug('[SessionForm] state update', { sessionType, toastsLength: toasts.length });
+  }, [sessionType, toasts]);
 
   // const { students } = useSupabaseStudents({
   //   school_id: ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles.name)
@@ -55,6 +65,7 @@ export default function SessionForm() {
 
   const { addRow } = useOfflineTable(sessionType || "academic_sessions");
   const { isOnline } = useOnlineStatus();
+  // SessionForm no longer manages student selection or filters
 
   // // Filter students based on sessionType
   // const [displayedStudents, setDisplayedStudents] = useState([]);
@@ -90,8 +101,11 @@ export default function SessionForm() {
   //   return true; // all students for academics or no session type
   // });
 
+  // Load cached students when offline (fallback)
+  // SessionForm does not perform student filtering; that belongs in RecordSessionForm
+
   const presetFields = {
-    school_id: Number(filters?.school_id) || Number(user?.profile?.school_id),
+    school_id: Number(user?.profile?.school_id),
     logged_by: user && user?.profile?.id,
     // ...(id ? { student_id: [id] } : { student_id: selectedStudents }),
   };
@@ -101,21 +115,13 @@ export default function SessionForm() {
   return (
     <div className="p-6">
       <ToastContainer toasts={toasts} removeToast={removeToast} />
-      {/* {!id && (
-        <div className="page-filters">
-          <FiltersPanel
-            user={user}
-            schools={schools}
-            filters={{ ...filters, session_type: sessionType ? [sessionType] : [] }}
-            setFilters={setFilters}
-            resource="students"
-            // gradeOptions={gradeOptions}
-            sessionTypeOptions={role === "superuser" || role === "admin" ? sessionOptions.map(o => o.label) : []}
-            // groupByOptions={groupByOptions}
-            showDeletedOption={["admin", "hr", "superviser"].includes(role)}
-          />
-        </div>
-      )} */}
+      <div className="mb-4 p-2 bg-yellow-50 border rounded text-sm">
+        <strong>Debug:</strong>
+        <div>sessionType: <code>{String(sessionType)}</code></div>
+        <div>isOnline: <code>{String(isOnline)}</code></div>
+        <div>toasts: <code>{toasts.length}</code></div>
+      </div>
+      {/* SessionForm is for creating sessions only; student selection and filters live in RecordSessionForm */}
       {/* <h1 className="text-2xl font-bold mb-6">
         {id
           ? `Log session for ${student?.full_name || "student"}`
@@ -169,6 +175,7 @@ export default function SessionForm() {
           }}
         />
       )}
+      {/* Session creation UI only. Use RecordSessionForm to distribute sessions and manage attendance. */}
     </div>
     </div>
   );

@@ -32,6 +32,7 @@ import IndividualSessionForm from "./components/forms/IndividualSession";
 import WorkerProfile from "./components/profiles/WorkerProfile";
 import DynamicBulkForm from "./components/forms/DynamicBulkForm";
 import UpdateWorkerProfile from "./components/updates/UpdateWorkerProfile";
+import RecordSessionForm from "./components/forms/RecordSessionForm";
 
 const router = createBrowserRouter([
   {
@@ -113,7 +114,7 @@ const router = createBrowserRouter([
           { path: ":id/edit", element: <DynamicForm mode="edit" /> },
           { path: "bulk-upload", element: <BulkUploadSessions /> },
           { path: "record/:id", element: <SessionForm /> },
-          { path: "mark", element:<SessionMarkingForm/>},
+          { path: "mark", element:<RecordSessionForm/>},
           { path: "mark/:id", element:<SessionMarkingForm/>},
         ],
       },

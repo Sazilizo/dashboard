@@ -993,15 +993,52 @@ useEffect(() => {
           }
         }
 
-        // Student mode - prompt for attendance instead of auto-recording
-        if (!pendingSignIns[match.label]) {
-          // Sign in - prompt user
+        // Student mode: always record attendance automatically (no prompt)
+        if (entityType === 'student') {
           setCaptureDone(true);
-          promptAttendanceRecording(match.label, displayName, false);
+          const nowIso = new Date().toISOString();
+          try {
+            if (!pendingSignIns[match.label]) {
+              // Sign in: record attendance immediately
+              await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign in' });
+              const pendingId = null; // addRow returns tempId which recordAttendance already handled; we don't rely on it here
+              setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime: nowIso } }));
+              setMessage(`${displayName} signed in and attendance recorded.`);
+            } else {
+              // Sign out: update existing pending sign-in record if available
+              const pending = pendingSignIns[match.label];
+              if (pending && pending.id) {
+                const signOutTime = nowIso;
+                const durationMs = new Date(signOutTime) - new Date(pending.signInTime);
+                const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(2);
+                await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
+                setPendingSignIns((prev) => {
+                  const copy = { ...prev };
+                  delete copy[match.label];
+                  return copy;
+                });
+                setMessage(`${displayName} signed out. Duration: ${durationHours} hrs`);
+              } else {
+                // No pending sign-in found — still record a sign-out attendance row
+                await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign out' });
+                setMessage(`${displayName} sign-out recorded.`);
+              }
+            }
+          } catch (err) {
+            console.error('Auto-record student attendance failed', err);
+            setMessage(`Failed to record attendance for ${displayName}.`);
+          }
         } else {
-          // Sign out - prompt user
-          setCaptureDone(true);
-          promptAttendanceRecording(match.label, displayName, true);
+          // For non-students (users/workers) keep the interactive prompt flow
+          if (!pendingSignIns[match.label]) {
+            // Sign in - prompt user
+            setCaptureDone(true);
+            promptAttendanceRecording(match.label, displayName, false);
+          } else {
+            // Sign out - prompt user
+            setCaptureDone(true);
+            promptAttendanceRecording(match.label, displayName, true);
+          }
         }
         
         // Draw captured frame to canvas
@@ -1182,26 +1219,13 @@ useEffect(() => {
         method: "biometric"
       };
       
-      // Add either student_id or auth_uid based on entity type
+      // Add either student_id or user_id based on entity type
+      // NOTE: attendance_records.user_id is profiles.id (integer), not auth_uid
       if (entityType === 'student') {
         record.student_id = attendanceData.entityId;
       } else if (entityType === 'user') {
-        // For users, we need to get their auth_uid from profiles table
-        try {
-          const { data: profile } = await api
-            .from('profiles')
-            .select('auth_uid')
-            .eq('id', attendanceData.entityId)
-            .single();
-          
-          if (profile?.auth_uid) {
-            record.auth_uid = profile.auth_uid;
-          } else {
-            console.warn(`No auth_uid found for user ${attendanceData.entityId}`);
-          }
-        } catch (err) {
-          console.error(`Failed to fetch auth_uid for user ${attendanceData.entityId}:`, err);
-        }
+        // For users, entityId is already profiles.id
+        record.user_id = attendanceData.entityId;
       }
       
       const res = await addRow(record);
