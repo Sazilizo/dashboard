@@ -9,6 +9,7 @@ import { autoResizeTextarea } from "../../utils/autoResizeTextarea";
 import useToast from "../../hooks/useToast";
 import ToastContainer from "../ToastContainer";
 import Loader from "../widgets/Loader";
+import '../../styles/formStyles.css'
 
 export default function WorkerForm() {
   const { schools } = useSchools();
@@ -252,7 +253,8 @@ export default function WorkerForm() {
   return (
     <>
       <ToastContainer toasts={toasts} removeToast={removeToast} />
-      <form onSubmit={handleSubmit}>
+      <div className="form-wrapper">
+        <form onSubmit={handleSubmit}>
       {fields.map((f) => {
         let inputType = "text";
         if (f.format === "file") inputType = "file";
@@ -348,7 +350,8 @@ export default function WorkerForm() {
       <button type="submit" disabled={loading}>
         {loading ? "Creating..." : "Create Worker"}
       </button>
-    </form>
+        </form>
+      </div>
     </>
   );
 }

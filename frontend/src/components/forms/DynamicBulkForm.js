@@ -34,6 +34,8 @@ import JsonObjectField from "../forms/JsonObjectField";
 import { useSchools } from "../../context/SchoolsContext";
 import api from "../../api/client";
 import { getTable, cacheTable } from "../../utils/tableCache";
+import '../../styles/formStyles.css'
+import { autoResizeTextarea } from "../../utils/autoResizeTextarea";
 
 // Grade regex & transform
 const gradeRegex = /^(R[1-4]|[1-7][A-D])$/;
@@ -514,6 +516,39 @@ export default function DynamicBulkFormRHF({
     
     if (field.name === "race") options = raceOptions;
     if (field.name === "gender") options = genderOptions;
+
+    // Textarea fields - use per-textarea autoResize helper (same approach as WorkerForm)
+    if (field.format === "textarea" || field.type === "textarea") {
+      return (
+        <div key={field.name} className="mb-3">
+          <label className="block mb-1 font-semibold">
+            {field.label} {isRequired && <span className="text-red-600 ml-1">*</span>}
+          </label>
+          <Controller
+            control={control}
+            name={field.name}
+            render={({ field: f }) => (
+              <textarea
+                {...f}
+                className="w-full p-2 border rounded"
+                placeholder={field.label}
+                onChange={(e) => {
+                  f.onChange(e.target.value);
+                  try { autoResizeTextarea(e.target); } catch (err) { /* ignore */ }
+                }}
+                ref={(el) => {
+                  if (el) {
+                    f.ref && f.ref(el);
+                    try { autoResizeTextarea(el); } catch (err) { /* ignore */ }
+                  }
+                }}
+              />
+            )}
+          />
+          {errors[field.name]?.message && <p className="text-red-600 text-sm">{errors[field.name]?.message}</p>}
+        </div>
+      );
+    }
 
     // Special handling for ID fields that should always be dropdowns
     if (field.name === "school_id" || field.name === "role_id" || field.name === "tutor_id" || field.name === "coach_id") {

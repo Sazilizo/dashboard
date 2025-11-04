@@ -7,7 +7,6 @@ import { SchoolsProvider } from "./context/SchoolsContext";
 import { FilterProvider } from "./context/FiltersContext";
 import { DataProvider } from "./context/DataContext";
 import OfflineIndicator from "./components/OfflineIndicator";
-import SchoolsDebugPanel from "./components/widgets/SchoolsDebugPanel";
 import "./styles/main.css";
 import "./styles/graphs.css";
 import "./styles/DashboardHome.css"
@@ -40,7 +39,7 @@ function App() {
         <SchoolsProvider>
           <DataProvider>
             <OfflineIndicator />
-            {showDebug && <SchoolsDebugPanel />}
+            {/* Schools debug panel removed from UI to avoid intrusive popup on small screens */}
             <RouterProvider router={router} />
           </DataProvider>
         </SchoolsProvider>

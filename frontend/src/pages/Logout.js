@@ -97,6 +97,33 @@ const LogoutButton = () => {
     }
 
     setShowBiometrics(false);
+    // Attempt to revoke any server-side auth tokens associated with this profile
+    try {
+      // fetch auth_uid if not present
+      const { data: prof, error: profErr } = await api
+        .from('profiles')
+        .select('auth_uid')
+        .eq('id', userProfile.id)
+        .maybeSingle();
+
+      if (!profErr) {
+        const authUid = prof?.auth_uid;
+        // try delete by auth_uid first
+        if (authUid) {
+          try {
+            await api.from('auth_tokens').delete().eq('auth_uid', authUid);
+          } catch (e) { /* ignore */ }
+        }
+      }
+
+      // Also attempt delete by profile_id if the table stored it
+      try {
+        await api.from('auth_tokens').delete().eq('profile_id', userProfile.id);
+      } catch (e) { /* ignore */ }
+    } catch (err) {
+      console.warn('Failed to revoke auth tokens during logout flow', err);
+    }
+
     await performLogout();
   };
 

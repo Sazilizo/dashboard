@@ -9,6 +9,7 @@ import { useSupabaseWorkers } from "../../hooks/useSupabaseWorkers";
 import { cacheTable, getTable } from "../../utils/tableCache";
 import { useSchools } from "../../context/SchoolsContext";
 import UploadFile from "../profiles/UploadHelper";
+import '../../styles/formStyles.css'
 
 
 export default function TrainingForm() {
@@ -80,7 +81,8 @@ export default function TrainingForm() {
         </div>
       )}
 
-      <DynamicBulkForm
+      <div className="form-wrapper">
+        <DynamicBulkForm
         schema_name="training_records"
         presetFields={presetFields}
         onSubmit={async (formData, singleId) => {
@@ -118,7 +120,8 @@ export default function TrainingForm() {
           }
 
         }}
-      />
+        />
+      </div>
     </div>
   );
 }

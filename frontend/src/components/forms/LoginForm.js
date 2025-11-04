@@ -21,6 +21,7 @@ export default function LoginForm() {
   const [recordAttendance, setRecordAttendance] = useState(false);
   const [authToken, setAuthToken] = useState(null);
   const [showTokenDisplay, setShowTokenDisplay] = useState(false);
+  const [pendingCredentials, setPendingCredentials] = useState(null); // hold creds in-memory until biometric completes
   const navigate = useNavigate();
   const location = useLocation();
   const { toasts, showToast, removeToast } = useToast();
@@ -78,41 +79,38 @@ export default function LoginForm() {
           profile = prof;
         } catch {}
 
-        if (profile?.id) {
+  if (profile?.id) {
           const today = new Date().toISOString().split('T')[0];
           const roleName = profile?.roles?.name?.toLowerCase?.() || '';
           const isTestingRole = ['superuser', 'admin', 'hr', 'viewer'].includes(roleName);
-          
+
           // Cache user's images for offline biometric auth
           cacheUserImages(profile.id).catch(err => {
             console.warn("Failed to cache user images:", err);
           });
-          
-          // Check if user already has an open work session for today (skip for testing roles)
-          let hasOpenSession = false;
-          if (!isTestingRole) {
-            try {
-              const { data: openRows } = await api
-                .from('attendance_records')
-                .select('id, sign_in_time')
-                .eq('user_id', profile.id)
-                .eq('date', today);
-              
-              // Filter for null sign_out_time in JavaScript
-              const openSession = openRows?.filter(row => !row.sign_out_time)?.[0];
-              
-              if (openSession) {
-                hasOpenSession = true;
-                console.log('User already has an open work session for today - skipping biometric sign-in');
-                showToast('Welcome back! Your work session is already active.', 'success');
-                navigate(from, { replace: true });
-                setLoading(false);
-                return;
-              }
-            } catch {}
+
+          // For non-testing roles, require biometric authentication before completing login.
+          // For testing/admin roles we keep the previous shortcut behavior.
+          if (isTestingRole) {
+            // Allow admins/testing roles to proceed without biometric gate
+            navigate(from, { replace: true });
+            setLoading(false);
+            return;
           }
 
-          // Prompt user: Record work time? (using toast with buttons)
+          // Always prompt the user whether to record time or just login. We will NOT finalize the
+          // authenticated session until biometric authentication succeeds. To avoid leaving a live
+          // session open, sign out immediately after fetching profile and keep credentials in memory.
+          // Store credentials temporarily in-memory only.
+          setPendingCredentials({ email: form.email.trim(), password: form.password });
+
+          // Sign out the temporary session so the app remains unauthenticated until biometric passes
+          try {
+            await api.auth.signOut();
+          } catch (e) {
+            console.warn('Failed to sign out temporary session:', e);
+          }
+
           const toastId = showToast(
             '',
             'info',
@@ -139,8 +137,8 @@ export default function LoginForm() {
               }}
             />
           );
-          
-          return; // Wait for user choice
+
+          return; // Wait for biometric completion via onCompleted
         } else {
           // No profile found, just navigate
           navigate(from, { replace: true });
@@ -155,15 +153,13 @@ export default function LoginForm() {
   const handleBiometricComplete = async () => {
     // Generate backup authentication token after successful biometric login
     if (userProfile?.id) {
+      // Create a persistent token and send to backend via storeAuthToken which already upserts
       const token = generateAuthToken();
-      await storeAuthToken(userProfile.id, token, 60); // Valid for 60 minutes
+      await storeAuthToken(userProfile.id, token, 60); // Valid for 60 minutes; this sends to backend when possible
       setAuthToken(token);
       setShowTokenDisplay(true);
-      
       // Auto-hide token after 30 seconds
-      setTimeout(() => {
-        setShowTokenDisplay(false);
-      }, 30000);
+      setTimeout(() => setShowTokenDisplay(false), 30000);
     }
     
     // Biometric authentication successful - record attendance if user confirmed
@@ -196,12 +192,34 @@ export default function LoginForm() {
       showToast('Sign-in successful! (Time not recorded)', 'success');
     }
     
+    // Attempt to finalize login: if we stored credentials earlier, sign in again to create a real session
+    try {
+      if (pendingCredentials) {
+        const { email, password } = pendingCredentials;
+        // perform final sign-in, this will set auth state on the backend
+        const { data: signInData, error: signInError } = await api.auth.signInWithPassword({ email, password });
+        if (signInError) {
+          console.warn('Final sign-in after biometric failed:', signInError);
+        } else {
+          if (refreshUser) await refreshUser(true);
+        }
+      } else if (authToken && userProfile?.id) {
+        // fallback: if no credentials but token was issued, attempt to persist token server-side
+        try {
+          await api.from('auth_tokens').insert({ profile_id: userProfile.id, token: authToken });
+        } catch (e) {
+          console.warn('Failed to persist token after biometric:', e);
+        }
+      }
+    } catch (err) {
+      console.error('Error finalizing authentication after biometric:', err);
+    }
+
+    setPendingCredentials(null);
     setShowBiometrics(false);
-    
-    // Delay navigation to allow token display to show
-    setTimeout(() => {
-      navigate(from, { replace: true });
-    }, 1000);
+
+    // Navigate after a short delay so UI shows the confirmation
+    setTimeout(() => navigate(from, { replace: true }), 800);
   };
 
   const handleBiometricCancel = () => {

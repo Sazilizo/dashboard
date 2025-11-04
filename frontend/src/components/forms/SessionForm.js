@@ -33,6 +33,7 @@ export default function SessionForm() {
   const [selectedStudents, setSelectedStudents] = useState([]);
   const [sessionType, setSessionType] = useState("");
   const { toasts, showToast, removeToast } = useToast();
+  const [serverError, setServerError] = useState(null);
 
   // Diagnostic debug: expose key runtime state to help trace loading problems
   useEffect(() => {
@@ -115,6 +116,21 @@ export default function SessionForm() {
   return (
     <div className="p-6">
       <ToastContainer toasts={toasts} removeToast={removeToast} />
+      {serverError && (
+        <div className="mb-4 p-3 border rounded bg-red-50 text-sm">
+          <div className="flex items-start justify-between">
+            <div>
+              <strong className="text-red-700">Server error: </strong>
+              <span>{serverError.message}</span>
+            </div>
+            <button className="text-sm text-red-600" onClick={() => setServerError(null)}>Dismiss</button>
+          </div>
+          <details className="mt-2 text-xs">
+            <summary>Show payload & details</summary>
+            <pre style={{maxHeight: 180, overflow: 'auto'}}>{JSON.stringify({ payload: serverError.payload, details: serverError.details }, null, 2)}</pre>
+          </details>
+        </div>
+      )}
       <div className="mb-4 p-2 bg-yellow-50 border rounded text-sm">
         <strong>Debug:</strong>
         <div>sessionType: <code>{String(sessionType)}</code></div>
@@ -170,9 +186,38 @@ export default function SessionForm() {
                 //   );
                 // }
 
-                // queue or insert via offline helper
-            await addRow(record);
-          }}
+                    // queue or insert via offline helper
+                try {
+                  // sanitize record for session tables: remove fields that don't exist in schema
+                  const sanitized = { ...record };
+                  if (tableName === 'academic_sessions' || tableName === 'pe_sessions') {
+                    // coach_id and tutor_id belong to students table in this schema; drop them if present
+                    if ('coach_id' in sanitized) delete sanitized.coach_id;
+                    if ('tutor_id' in sanitized) delete sanitized.tutor_id;
+                    // logged_by is not a column on sessions in this schema; remove it
+                    if ('logged_by' in sanitized) delete sanitized.logged_by;
+                    // drop any empty-string fields to avoid type/schema mismatches
+                    Object.keys(sanitized).forEach(k => { if (sanitized[k] === '') delete sanitized[k]; });
+                  }
+
+                  const res = await addRow(sanitized);
+                  if (res && res.__error) {
+                    console.error('[SessionForm] addRow returned error', res.error, record);
+                    // show in-UI error banner with server details
+                    setServerError({ message: res.error?.message || String(res.error), payload: record, details: res.error });
+                    // also show a toast for immediate feedback
+                    showToast && showToast('Failed to save session — see details', 'error');
+                    return;
+                  }
+                  // success toast
+                  showToast && showToast('Session saved', 'success');
+                } catch (err) {
+                  console.error('[SessionForm] addRow threw', err, record);
+                  setServerError({ message: err?.message || String(err), payload: record, details: err });
+                  showToast && showToast('Failed to save session — network error', 'error');
+                  return;
+        }
+      }}
         />
       )}
       {/* Session creation UI only. Use RecordSessionForm to distribute sessions and manage attendance. */}

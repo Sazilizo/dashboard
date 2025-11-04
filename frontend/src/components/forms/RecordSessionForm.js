@@ -15,16 +15,15 @@ import ToastContainer from "../ToastContainer";
 
 /**
  * RecordSessionForm
- * - Reusable form to distribute sessions (academic / pe)
- * - Uses offline-aware hooks & cache for fast UI and robust sync
- * - Supports bulk add/remove of participants and recording attendance via biometrics
+ * - Reusable form to distribute sessions and record attendance
+ * - Uses offline-aware hooks and supports local session search, date and category filters
  *
  * Props:
- * - sessionType: 'academic' | 'pe' (default: 'academic')
- * - sessionId: optional id to pre-select
- * - onCompleted: callback({ sessionId, added, removed })
+ * - sessionType: 'academic' | 'pe' (default 'academic')
+ * - initialSessionId: optional id to pre-select
+ * - onCompleted: callback when distribution finished
  */
-export default function RecordSessionForm({ sessionType = "academic", sessionId: initialSessionId = null, onCompleted = () => {} }) {
+export default function RecordSessionForm({ sessionType = 'academic', initialSessionId = null, onCompleted = () => {} }) {
   const navigate = useNavigate();
   const { isOnline } = useOnlineStatus();
 
@@ -228,6 +227,11 @@ export default function RecordSessionForm({ sessionType = "academic", sessionId:
   // determine selected session and its category (if any)
   const currentSession = selectedSession ? sessionRows.find(sr => String(sr.id) === String(selectedSession)) : null;
   const sessionCategory = currentSession?.category;
+
+  // No local session filters here — always show all sessions for selection
+  const displayedSessions = useMemo(() => (effectiveSessionRows || []), [effectiveSessionRows]);
+
+  // no per-session filter report (filters removed)
 
   const filteredStudents = allStudents.filter((s) => {
     if (!s) return false;
@@ -494,14 +498,17 @@ export default function RecordSessionForm({ sessionType = "academic", sessionId:
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-700">Select session</label>
-              <div className="text-xs text-gray-500 mb-2">Showing {effectiveSessionRows.length} of {(sessionRows || []).length} sessions</div>
+              <div className="text-xs text-gray-500 mb-2">Showing {displayedSessions.length} of {(sessionRows || []).length} sessions</div>
+
+              
+
               <select
                 value={selectedSession}
                 onChange={(e) => setSelectedSession(e.target.value)}
                 className="block w-full p-3 border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
               >
                 <option value="">-- choose session --</option>
-                {effectiveSessionRows.map(s => (
+                {displayedSessions.map(s => (
                   <option key={s.id} value={s.id}>{s.session_name || s.name} {s.category ? `(${Array.isArray(s.category) ? s.category.join(',') : s.category})` : ''} {s.date ? `(${s.date.slice(0,10)})` : ''}</option>
                 ))}
               </select>
@@ -519,6 +526,8 @@ export default function RecordSessionForm({ sessionType = "academic", sessionId:
               </div>
             </div>
           </div>
+
+
 
           <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div className="flex items-center gap-3">

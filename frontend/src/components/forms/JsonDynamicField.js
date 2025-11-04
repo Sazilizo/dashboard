@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 import api from "../../api/client";
+import '../../styles/formStyles.css'
 
 /**
  * Handles dynamic questionnaire structure:
- * - Fetches sections & questions from academic_sessions
- * - Renders inputs for answers
+ * - Fetches sections & questions from an external source table
+ * - Renders inputs for answers with modern styling
  */
 const JsonDynamicField = ({ value = {}, onChange, dynamicMeta, source, sessionId }) => {
   const [sections, setSections] = useState([]);
@@ -14,21 +15,30 @@ const JsonDynamicField = ({ value = {}, onChange, dynamicMeta, source, sessionId
 
     async function fetchStructure() {
       try {
+        const selectCols =
+          (dynamicMeta && dynamicMeta.mapping && dynamicMeta.mapping.section_title ? dynamicMeta.mapping.section_title : "section_title")
+          + ", " + (dynamicMeta && dynamicMeta.mapping && dynamicMeta.mapping.questions ? dynamicMeta.mapping.questions : "questions");
+
         const { data, error } = await api
           .from(source)
-          .select(dynamicMeta.mapping.section_title + ", " + dynamicMeta.mapping.questions)
+          .select(selectCols)
           .eq("id", sessionId)
           .single();
 
         if (error) throw error;
 
-        const sectionData = data[dynamicMeta.mapping.section_title] || [];
-        const questionsData = data[dynamicMeta.mapping.questions] || [];
+        const sectionData = data && dynamicMeta && dynamicMeta.mapping && data[dynamicMeta.mapping.section_title]
+          ? data[dynamicMeta.mapping.section_title]
+          : data?.section_title || [];
+
+        const questionsData = data && dynamicMeta && dynamicMeta.mapping && data[dynamicMeta.mapping.questions]
+          ? data[dynamicMeta.mapping.questions]
+          : data?.questions || [];
 
         // Map each section to its questions
-        const structured = sectionData.map((section, idx) => ({
+        const structured = (Array.isArray(sectionData) ? sectionData : []).map((section, idx) => ({
           section,
-          questions: questionsData[idx] || [],
+          questions: Array.isArray(questionsData[idx]) ? questionsData[idx] : (questionsData[idx] ? [questionsData[idx]] : []),
         }));
 
         setSections(structured);
@@ -38,39 +48,59 @@ const JsonDynamicField = ({ value = {}, onChange, dynamicMeta, source, sessionId
     }
 
     fetchStructure();
-  }, [sessionId, source]);
+  }, [sessionId, source, dynamicMeta]);
 
   const handleAnswerChange = (section, question, answer) => {
     const updated = {
       ...value,
       [section]: { ...(value[section] || {}), [question]: answer },
     };
-    onChange(updated);
+    onChange && onChange(updated);
   };
 
   return (
-    <div className="p-3 border rounded bg-gray-50">
+    <div className="p-4 bg-white border border-gray-100 rounded-lg shadow-sm">
       {sections.map((s, si) => (
-        <div key={si} className="mb-4">
-          <h3 className="font-semibold text-blue-700">{s.section}</h3>
-          {s.questions.map((q, qi) => (
-            <div key={qi} className="ml-4 mb-2">
-              <label className="block text-sm mb-1">{q.label || q.question}</label>
-              <input
-                type="text"
-                className="border p-2 rounded w-full"
-                value={value?.[s.section]?.[q.label || q.question] || ""}
-                onChange={(e) =>
-                  handleAnswerChange(s.section, q.label || q.question, e.target.value)
-                }
-                placeholder="Enter answer"
-              />
-            </div>
-          ))}
-        </div>
+        <section key={si} className="mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-semibold text-slate-800">{s.section}</h3>
+            <span className="text-sm text-slate-500">{(s.questions || []).length} question{(s.questions || []).length !== 1 ? 's' : ''}</span>
+          </div>
+
+          <div className="space-y-3">
+            {s.questions.map((q, qi) => {
+              const key = q.label || q.question || `q-${qi}`;
+              const current = value?.[s.section]?.[key] || "";
+              const isLong = (q.type && /long/i.test(q.type)) || (q.format && /long/i.test(q.format));
+              return (
+                <div key={qi} className="">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">{q.label || q.question}</label>
+                  {isLong ? (
+                    <textarea
+                      className="w-full p-3 border border-gray-200 rounded-md"
+                      value={current}
+                      onChange={(e) => handleAnswerChange(s.section, key, e.target.value)}
+                      placeholder="Write your answer here"
+                      rows={4}
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      className="w-full p-3 border border-gray-200 rounded-md"
+                      value={current}
+                      onChange={(e) => handleAnswerChange(s.section, key, e.target.value)}
+                      placeholder="Enter answer"
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </section>
       ))}
     </div>
   );
 };
 
 export default JsonDynamicField;
+

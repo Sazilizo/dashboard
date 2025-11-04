@@ -215,8 +215,15 @@ export default function useOfflineTable(
         return { tempId, mutationKey };
       }
     } catch (err) {
+      // Log detailed context for easier debugging (400 responses often include details)
+      try {
+        console.error(`[useOfflineTable] addRow failed for ${tableName}`, { payload, message: err?.message || err, err });
+      } catch (logErr) {
+        console.error(`[useOfflineTable] addRow logging failed`, logErr);
+      }
       setError(err);
-      return null;
+      // Return object with error for callers to inspect
+      return { __error: true, error: err };
     }
   }
 
