@@ -462,9 +462,9 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
    let ids = entityType === 'user'
     ? (Array.isArray(userId) ? userId : [userId]).filter(Boolean)
     : (Array.isArray(studentId) ? studentId : [studentId]).filter(Boolean);
-  
-   // Performance guard: Limit to 30 students max for initial load
-   const MAX_INITIAL_LOAD = 30;
+
+   // Performance guard: Limit to 10 students max for initial load
+   const MAX_INITIAL_LOAD = 10;
    if (ids.length > MAX_INITIAL_LOAD) {
      console.warn(`BiometricsSignIn: ${ids.length} IDs provided, limiting to first ${MAX_INITIAL_LOAD} for performance`);
      setMessage(`⚠️ Loading first ${MAX_INITIAL_LOAD} of ${ids.length} students for performance. Consider using continuous mode for groups.`);
@@ -663,7 +663,7 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
               // If online fetch fails, try cached images as fallback
               if (cachedForSource.length > 0) {
                 if (DEBUG) console.log(`[BiometricsSignIn] Fetch failed, falling back to cached images for ${source.label}`);
-                setMessage(m => `${m}\n📦 ${source.label}: Using cached images (fallback)`);
+                setMessage(m => `${m}\n ${source.label}: Using cached images (fallback)`);
                 urlsData = cachedForSource.slice(0, 3).map(cached => URL.createObjectURL(cached.blob));
               } else {
                 console.warn(`Failed to list files in ${source.label}:`, listErr);
@@ -780,7 +780,7 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
                   id,
                   signedUrls: signedPaths,
                   modelsUrl: MODELS_URL,
-                  inputSize: 128,
+                  inputSize: 96,
                   scoreThreshold: 0.45,
                   maxDescriptors: 3
                 });
@@ -807,7 +807,7 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
                 const img = await faceapi.fetchImage(u);
                 const det = await faceapi
                   .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({
-                    inputSize: 128,
+                    inputSize: 96,
                     scoreThreshold: 0.45
                   }))
                   .withFaceLandmarks()
