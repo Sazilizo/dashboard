@@ -202,7 +202,7 @@ export function AuthProvider({ children }) {
         }
         refreshUser(true);
         
-        // Start auto-close monitoring when user is signed in
+  // Start auto-close monitoring when user is authenticated
         startAutoCloseMonitoring();
       } else if (_event === 'SIGNED_OUT') {
         // Only clear on explicit sign out

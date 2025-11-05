@@ -11,6 +11,7 @@ const LogoutButton = () => {
   const navigate = useNavigate();
   const [showBiometrics, setShowBiometrics] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
+  const [hasCamera, setHasCamera] = useState(true);
   const [recordSignOut, setRecordSignOut] = useState(false);
   const [autoCloseTimer, setAutoCloseTimer] = useState(null);
   const [showEndDayConfirm, setShowEndDayConfirm] = useState(false);
@@ -196,11 +197,21 @@ const LogoutButton = () => {
               yesText="Yes, End Day"
               noText="No, Keep Recording"
               onYes={() => {
-                setShowEndDayConfirm(false);
-                setRecordSignOut(true);
-                // show biometric modal to verify and then record sign-out
-                setShowBiometrics(true);
-                showToast('Please complete biometric verification to end your day.', 'info', 5000);
+                (async () => {
+                  setShowEndDayConfirm(false);
+                  setRecordSignOut(true);
+                  // check for camera availability first
+                  try {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const videoDevices = devices.filter((d) => d.kind === 'videoinput');
+                    setHasCamera(Boolean(videoDevices && videoDevices.length > 0));
+                  } catch (e) {
+                    setHasCamera(false);
+                  }
+                  // show biometric modal to verify and then record sign-out
+                  setShowBiometrics(true);
+                  showToast('Please complete biometric verification to end your day.', 'info', 5000);
+                })();
               }}
               onNo={() => {
                 setShowEndDayConfirm(false);
@@ -286,29 +297,46 @@ const LogoutButton = () => {
       )}
       
       {showBiometrics && userProfile ? (
-        <div className="biometric-modal-overlay">
-          <div className="biometric-modal">
-            <div className="biometric-modal-header">
-              <h2>Biometric Sign-Out Required</h2>
-              <button 
-                className="close-btn" 
-                onClick={handleBiometricCancel}
-                title="Cancel sign-out"
-              >
-                ×
-              </button>
+        hasCamera ? (
+          <div className="biometric-modal-overlay">
+            <div className="biometric-modal">
+              <div className="biometric-modal-header">
+                <h2>Biometric Sign-Out Required</h2>
+                <button 
+                  className="close-btn" 
+                  onClick={handleBiometricCancel}
+                  title="Cancel sign-out"
+                >
+                  ×
+                </button>
+              </div>
+              <BiometricsSignIn
+                userId={userProfile.id}
+                entityType="user"
+                schoolId={userProfile.school_id}
+                workerId={userProfile.worker_id}
+                forceOperation="signout"
+                onCompleted={handleBiometricComplete}
+                onCancel={handleBiometricCancel}
+              />
             </div>
-            <BiometricsSignIn
-              userId={userProfile.id}
-              entityType="user"
-              schoolId={userProfile.school_id}
-              workerId={userProfile.worker_id}
-              forceOperation="signout"
-              onCompleted={handleBiometricComplete}
-              onCancel={handleBiometricCancel}
-            />
           </div>
-        </div>
+        ) : (
+          // No camera: render small centered overlay with compact token-only UI
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.4)' }}>
+            <div style={{ background: '#fff', padding: 16, borderRadius: 8, width: '90vw', maxWidth: 420 }}>
+              <BiometricsSignIn
+                userId={userProfile.id}
+                entityType="user"
+                schoolId={userProfile.school_id}
+                workerId={userProfile.worker_id}
+                forceOperation="signout"
+                onCompleted={handleBiometricComplete}
+                onCancel={handleBiometricCancel}
+              />
+            </div>
+          </div>
+        )
       ) : (
         <button
           onClick={handleLogout}

@@ -29,6 +29,7 @@ import {
 import { getTable, cacheTable } from "../../utils/tableCache";
 import useOfflineTable from "../../hooks/useOfflineTable";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
+import useToast from "../../hooks/useToast";
 import "../../styles/BiometricsSignIn.css";
 
 // Toggle verbose logs for debugging
@@ -51,6 +52,7 @@ const BiometricsSignIn = ({
   bucketName,
   folderName,
   sessionType,
+  academicSessionId = null,
   forceOperation = null, // null | 'signout' (force sign-out on face match)
   onCompleted,
   onCancel, // optional callback when user cancels the biometric flow (avoid history navigation)
@@ -115,6 +117,8 @@ const BiometricsSignIn = ({
   const descriptorWorkerRef = useRef(null);
   const [workerAvailable, setWorkerAvailable] = useState(false);
   const [workerError, setWorkerError] = useState(null);
+  const { showToast } = useToast();
+  const pendingSignInsRef = useRef({});
 
   // ✅ Detect screen size for camera switch visibility
   useEffect(() => {
@@ -133,7 +137,24 @@ const BiometricsSignIn = ({
   // ✅ Persist pending sign-ins
   useEffect(() => {
     localStorage.setItem("pendingSignIns", JSON.stringify(pendingSignIns));
+    // Keep a ref copy so unmount cleanup can access latest value
+    try { pendingSignInsRef.current = pendingSignIns; } catch (e) {}
   }, [pendingSignIns]);
+
+  // When the component unmounts (navigating away) and there are active sessions,
+  // show a toast reminding the user to sign them out first.
+  useEffect(() => {
+    return () => {
+      try {
+        const active = pendingSignInsRef.current || {};
+        if (Object.keys(active).length > 0) {
+          showToast('You have active student sessions. Please sign out students before leaving this page.', 'warning', 8000);
+        }
+      } catch (e) {
+        // ignore failures during unmount
+      }
+    };
+  }, []);
 
   // ✅ Ensure models are ready (fast if preloaded)
   useEffect(() => {
@@ -244,6 +265,13 @@ const BiometricsSignIn = ({
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter((d) => d.kind === "videoinput");
         setAvailableCameras(videoDevices);
+        // If no cameras are present and this is a user signin/signout flow,
+        // show the token input immediately so the user can paste a code.
+        if ((forceOperation === 'signin' || forceOperation === 'signout') && entityType === 'user' && (!videoDevices || videoDevices.length === 0)) {
+          setWebcamError(true);
+          setShowTokenInput(true);
+          setMessage('No camera detected on this device. Use your backup authentication code.');
+        }
       } catch (err) {
         console.error(err);
       }
@@ -1015,6 +1043,23 @@ useEffect(() => {
             
             // Prompt for attendance recording instead of auto-recording
             promptAttendanceRecording(match.label, displayName, false);
+            // Add participant to academic_session_participants if a session id was provided
+            try {
+              if (academicSessionId) {
+                await api.from('academic_session_participants').insert({
+                  session_id: academicSessionId,
+                  student_id: Number(match.label),
+                  school_id: schoolId
+                });
+              }
+            } catch (e) {
+              console.warn('Failed to insert academic_session_participant', e);
+            }
+
+            // Hide/unmount the biometric UI so the user can re-open later for sign-out
+            if (typeof onCompleted === 'function') {
+              try { onCompleted(match.label); } catch (e) { }
+            }
             
             // Draw captured frame to canvas
             try {
@@ -1050,7 +1095,25 @@ useEffect(() => {
               await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign in' });
               const pendingId = null; // addRow returns tempId which recordAttendance already handled; we don't rely on it here
               setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime: nowIso } }));
-              setMessage(`${displayName} signed in and attendance recorded.`);
+              setMessage(`${displayName} authenticated and attendance recorded.`);
+
+              // Add participant to academic_session_participants if a session id was provided
+              try {
+                if (academicSessionId) {
+                  await api.from('academic_session_participants').insert({
+                    session_id: academicSessionId,
+                    student_id: Number(match.label),
+                    school_id: schoolId
+                  });
+                }
+              } catch (e) {
+                console.warn('Failed to insert academic_session_participant', e);
+              }
+
+              // Hide/unmount the biometric UI so teacher can re-open for sign-out
+              if (typeof onCompleted === 'function') {
+                try { onCompleted(match.label); } catch (e) { }
+              }
             } else {
               // Sign out: update existing pending sign-in record if available
               const pending = pendingSignIns[match.label];
@@ -1065,10 +1128,28 @@ useEffect(() => {
                   return copy;
                 });
                 setMessage(`${displayName} signed out. Duration: ${durationHours} hrs`);
+                try {
+                  if (academicSessionId) {
+                    await api.from('academic_session_participants')
+                      .update({ sign_out_time: new Date().toISOString() })
+                      .match({ session_id: academicSessionId, student_id: Number(match.label) });
+                  }
+                } catch (e) {
+                  console.warn('Failed to update academic_session_participant sign_out_time', e);
+                }
               } else {
                 // No pending sign-in found — still record a sign-out attendance row
                 await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign out' });
                 setMessage(`${displayName} sign-out recorded.`);
+                try {
+                  if (academicSessionId) {
+                    await api.from('academic_session_participants')
+                      .update({ sign_out_time: new Date().toISOString() })
+                      .match({ session_id: academicSessionId, student_id: Number(match.label) });
+                  }
+                } catch (e) {
+                  console.warn('Failed to update academic_session_participant sign_out_time', e);
+                }
               }
             }
           } catch (err) {
@@ -1183,7 +1264,7 @@ useEffect(() => {
           const pendingId = res?.tempId || null;
           setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime } }));
           const displayName = studentNames[match.label] || `Student ${match.label}`;
-          setMessage(`${displayName} signed in successfully.`);
+          setMessage(`${displayName} authenticated successfully.`);
         }
       }
     } catch (err) {
@@ -1382,7 +1463,24 @@ useEffect(() => {
               }));
             }
 
-            setMessage(`${displayName} signed in and attendance recorded.`);
+            setMessage(`${displayName} authenticated and attendance recorded.`);
+            // Add academic session participant (for prompt-based sign-ins) if session id provided
+            try {
+              if (academicSessionId) {
+                await api.from('academic_session_participants').insert({
+                  session_id: academicSessionId,
+                  student_id: Number(entityId),
+                  school_id: schoolId
+                });
+              }
+            } catch (e) {
+              console.warn('Failed to insert academic_session_participant', e);
+            }
+
+            // Hide/unmount biometric UI for caller if they provided onCompleted
+            if (typeof onCompleted === 'function') {
+              try { onCompleted(entityId); } catch (e) { }
+            }
         } else {
           // Sign out
             const pending = pendingSignIns[entityId];
@@ -1415,6 +1513,16 @@ useEffect(() => {
                 return copy;
               });
               setMessage(`${displayName} signed out. Duration: ${durationHours.toFixed(2)} hrs`);
+              // update academic_session_participants record sign_out_time when available
+              try {
+                if (academicSessionId) {
+                  await api.from('academic_session_participants')
+                    .update({ sign_out_time: new Date().toISOString() })
+                    .match({ session_id: academicSessionId, student_id: Number(entityId) });
+                }
+              } catch (e) {
+                console.warn('Failed to update academic_session_participant sign_out_time', e);
+              }
             }
         }
       } catch (err) {
@@ -1459,8 +1567,8 @@ useEffect(() => {
             </div>
           )}
 
-          {/* Token Input for Sign-In when webcam unavailable */}
-          {showTokenInput && entityType === 'user' && forceOperation === 'signin' && (
+          {/* Token Input for Sign-In/Sign-Out when webcam unavailable */}
+          {showTokenInput && entityType === 'user' && (forceOperation === 'signin' || forceOperation === 'signout') && (
             <div
               style={{
                 background: "#f0f9ff",
@@ -1471,9 +1579,11 @@ useEffect(() => {
                 textAlign: "center",
               }}
             >
-              <h3 style={{ marginTop: 0, color: "#0369a1" }}>Backup Authentication</h3>
+              <h3 style={{ marginTop: 0, color: "#0369a1" }}>{forceOperation === 'signout' ? 'Backup Sign-out Code' : 'Backup Authentication'}</h3>
               <p style={{ color: "#0c4a6e", marginBottom: "16px" }}>
-                Enter the 6-digit authentication code you received after your last successful login.
+                {forceOperation === 'signout'
+                  ? 'Enter the 6-digit sign-out code you received from the device that recorded the end of day.'
+                  : 'Enter the 6-digit authentication code you received after your last successful login.'}
               </p>
               
               <form onSubmit={handleTokenSubmit} style={{ maxWidth: "300px", margin: "0 auto" }}>
@@ -1525,8 +1635,8 @@ useEffect(() => {
                 </button>
               </form>
               
-              <p style={{ fontSize: "0.85rem", color: "#64748b", marginTop: "12px", marginBottom: 0 }}>
-                Don't have a code? You'll receive one after your next successful biometric login on a device with a webcam.
+                <p style={{ fontSize: "0.85rem", color: "#64748b", marginTop: "12px", marginBottom: 0 }}>
+                Don't have a code? You'll receive one after your next successful biometric authentication on a device with a webcam.
               </p>
             </div>
           )}
@@ -1606,7 +1716,7 @@ useEffect(() => {
             >
               <h3 style={{ marginTop: 0, color: "#991b1b" }}>⚠️ Webcam Required</h3>
               <p style={{ color: "#7f1d1d", marginBottom: "16px" }}>
-                Biometric verification is required to end your work day. Please use a device with a webcam to sign out.
+                Biometric verification is recommended to end your work day. If this device has no webcam you can paste a sign-out code instead.
               </p>
               
               <button
@@ -1625,10 +1735,26 @@ useEffect(() => {
               >
                 Retry Webcam Access
               </button>
+
+              <button
+                onClick={() => setShowTokenInput(true)}
+                style={{
+                  padding: "10px 20px",
+                  fontSize: "0.95rem",
+                  fontWeight: "600",
+                  backgroundColor: "#0284c7",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  marginRight: "8px",
+                }}
+              >
+                Use backup code
+              </button>
               
               <button
                 onClick={() => {
-                  // Prefer an onCancel handler from the caller (e.g. Logout modal) so we don't navigate history
                   try {
                     if (typeof onCancel === 'function') return onCancel();
                   } catch (e) {

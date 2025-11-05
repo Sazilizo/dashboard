@@ -25,6 +25,7 @@ export default function LoginForm() {
   const navigate = useNavigate();
   const location = useLocation();
   const { toasts, showToast, removeToast } = useToast();
+  const [hasCamera, setHasCamera] = useState(true);
 
   const { refreshUser } = useAuth() || {};  // get refreshUser method from context
   
@@ -99,17 +100,26 @@ export default function LoginForm() {
           }
 
           // Always prompt the user whether to record time or just login. We will NOT finalize the
-          // authenticated session until biometric authentication succeeds. To avoid leaving a live
-          // session open, sign out immediately after fetching profile and keep credentials in memory.
-          // Store credentials temporarily in-memory only.
+          // authenticated session until biometric authentication succeeds. Store credentials
+          // temporarily in-memory only. We purposely DO NOT sign out here so the client can
+          // persist a one-time token to the server (some environments require an authenticated
+          // client to insert into the auth_tokens table). The temporary session will be
+          // finalized/cleared after biometric completes or on cancel.
           setPendingCredentials({ email: form.email.trim(), password: form.password });
 
-          // Sign out the temporary session so the app remains unauthenticated until biometric passes
-          try {
-            await api.auth.signOut();
-          } catch (e) {
-            console.warn('Failed to sign out temporary session:', e);
-          }
+          const openBiometrics = async (profile, record) => {
+            // check for camera availability before opening biometric modal
+            try {
+              const devices = await navigator.mediaDevices.enumerateDevices();
+              const videoDevices = devices.filter((d) => d.kind === 'videoinput');
+              setHasCamera(Boolean(videoDevices && videoDevices.length > 0));
+            } catch (e) {
+              setHasCamera(false);
+            }
+            setUserProfile(profile);
+            setRecordAttendance(record);
+            setShowBiometrics(true);
+          };
 
           const toastId = showToast(
             '',
@@ -121,19 +131,13 @@ export default function LoginForm() {
               noText="No, Just Login"
               onYes={() => {
                 removeToast(toastId);
-                setRecordAttendance(true);
-                setUserProfile(profile);
-                setShowBiometrics(true);
                 setLoading(false);
-                showToast('Please complete biometric authentication to record your time.', 'info', 5000);
+                openBiometrics(profile, true).then(() => showToast('Please complete biometric authentication to record your time.', 'info', 5000));
               }}
               onNo={() => {
                 removeToast(toastId);
-                setRecordAttendance(false);
-                setUserProfile(profile);
-                setShowBiometrics(true);
                 setLoading(false);
-                showToast('Please complete biometric authentication (time will not be recorded).', 'info', 5000);
+                openBiometrics(profile, false).then(() => showToast('Please complete biometric authentication (time will not be recorded).', 'info', 5000));
               }}
             />
           );
@@ -270,19 +274,35 @@ export default function LoginForm() {
       )}
       
       {showBiometrics && userProfile ? (
-        <div className="biometric-modal-overlay">
-          <div className="biometric-modal">
-            <div className="biometric-modal-header">
-              <h2>Biometric Authentication Required</h2>
-              <button 
-                className="close-btn" 
-                onClick={handleBiometricCancel}
-                title="Cancel and logout"
-              >
-                ×
-              </button>
+        hasCamera ? (
+          <div className="biometric-modal-overlay">
+            <div className="biometric-modal">
+              <div className="biometric-modal-header">
+                <h2>Biometric Authentication Required</h2>
+                <button 
+                  className="close-btn" 
+                  onClick={handleBiometricCancel}
+                  title="Cancel and logout"
+                >
+                  ×
+                </button>
+              </div>
+              <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading biometric authentication...</div>}>
+                <BiometricsSignIn
+                  userId={userProfile.id}
+                  entityType="user"
+                  schoolId={userProfile.school_id}
+                  workerId={userProfile.worker_id}
+                  forceOperation="signin"
+                  onCompleted={handleBiometricComplete}
+                />
+              </Suspense>
             </div>
-            <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading biometric authentication...</div>}>
+          </div>
+        ) : (
+          // No camera: render small centered overlay with compact token-only UI
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.4)' }}>
+            <div style={{ background: '#fff', padding: 16, borderRadius: 8, width: '90vw', maxWidth: 420 }}>
               <BiometricsSignIn
                 userId={userProfile.id}
                 entityType="user"
@@ -291,9 +311,9 @@ export default function LoginForm() {
                 forceOperation="signin"
                 onCompleted={handleBiometricComplete}
               />
-            </Suspense>
+            </div>
           </div>
-        </div>
+        )
       ) : (
         <div className="login-container">
           <form
