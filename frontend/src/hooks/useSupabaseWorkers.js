@@ -30,14 +30,15 @@ export function useSupabaseWorkers() {
           contact_number,
           start_date,
           email,
-          roles(name)
+          roles(name),
           id_copy_pdf,
           cv_pdf,
           clearance_pdf,
           child_protection_pdf,
-          story
-          school:schools(name)
-          trainings:training_records(name, date, venue)  
+          story,
+          school:schools(name),
+          trainings:training_records(name, date, venue),
+          attendance_records:worker_attendance_records(id, date, sign_in_time, sign_out_time, hours, description, created_at)
         `);
 
         if (normalizedFilters.school_id.length > 0) {

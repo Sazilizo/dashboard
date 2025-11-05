@@ -740,7 +740,7 @@ const LearnerProfile = () => {
                           <div className="report-meta">
                             <span className="report-item">{student.category ?? '—'}</span>
                             <span className="report-sep">•</span>
-                            <span className="report-item">Grade: {student.grade ?? '—'}</span>
+                             <span className="report-item">Grade: {student.grade ?? '—'}</span>
                             <span className="report-sep">•</span>
                             <span className="report-item">Age: {student.age ?? '—'}</span>
                           </div>

@@ -70,6 +70,8 @@ const WorkerProfile = () => {
   const [joinedSessions, setJoinedSessions] = useState([]);
   const [sessionParticipants, setSessionParticipants] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
+  const [totalHours, setTotalHours] = useState(null);
+  const [loadingTotal, setLoadingTotal] = useState(false);
   const [showDisciplinary, setShowDisciplinary] = useState(false);
   const [disciplinaryType, setDisciplinaryType] = useState("warning");
   const [disciplinarySubject, setDisciplinarySubject] = useState("");
@@ -389,6 +391,49 @@ const WorkerProfile = () => {
         <button className="btn btn-primary" onClick={() => window.history.back()}>
           Back
         </button>
+        {/* Total hours button - visible to certain roles only (head coach/tutor/admin/hr/superuser) */}
+        {(() => {
+          const currentRole = (user?.profile?.roles?.name || "").toLowerCase();
+          const workerRole = (worker?.roles?.name || worker?.role || "").toLowerCase();
+          const allowed = ["admin", "hr", "superuser"].includes(currentRole)
+            || (currentRole === "head_coach" && workerRole === "coach")
+            || (currentRole === "head_tutor" && workerRole === "tutor");
+
+          if (!allowed) return null;
+
+          return (
+            <>
+              <button
+                className="btn btn-secondary"
+                onClick={async () => {
+                  try {
+                    setLoadingTotal(true);
+                    setTotalHours(null);
+                    const { data, error } = await api.from('worker_attendance_totals').select('total_hours').eq('worker_id', worker.id).single();
+                    if (error) throw error;
+                    setTotalHours(data?.total_hours ?? 0);
+                  } catch (err) {
+                    console.error('Failed to load worker total hours', err);
+                    setTotalHours(null);
+                    setError && setError(err?.message || String(err));
+                  } finally {
+                    setLoadingTotal(false);
+                  }
+                }}
+                disabled={loadingTotal}
+                title="Load total hours worked for this worker"
+              >
+                {loadingTotal ? 'Loading hours…' : 'Load Total Hours'}
+              </button>
+
+              {totalHours !== null && (
+                <span style={{ marginLeft: 12, fontWeight: 600 }}>
+                  Total hours: {Number(totalHours).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </span>
+              )}
+            </>
+          );
+        })()}
         <button className="btn btn-secondary" onClick={() => window.print()}>
           Print Profile
         </button>

@@ -102,6 +102,8 @@ const BiometricsSignIn = ({
   const navigate = useNavigate();
 
   const { addRow } = useOfflineTable("attendance_records");
+  // Separate offline table for worker attendance (profiles/workers)
+  const { addRow: addWorkerRow, updateRow: updateWorkerRow } = useOfflineTable("worker_attendance_records");
   const [workerReloadKey, setWorkerReloadKey] = useState(0);
   const faceapiRef = useRef(null);
   // Online status
@@ -1219,17 +1221,51 @@ useEffect(() => {
         method: "biometric"
       };
       
-      // Add either student_id or user_id based on entity type
-      // NOTE: attendance_records.user_id is profiles.id (integer), not auth_uid
+      // Add either student_id or user/profile mapping
       if (entityType === 'student') {
         record.student_id = attendanceData.entityId;
-      } else if (entityType === 'user') {
-        // For users, entityId is already profiles.id
-        record.user_id = attendanceData.entityId;
+        const res = await addRow(record);
+        return res;
       }
-      
-      const res = await addRow(record);
-      return res;
+
+      // For users, decide whether this profile maps to a worker (profiles.worker_id)
+      if (entityType === 'user') {
+        try {
+          const { data: profile, error: profileErr } = await api
+            .from('profiles')
+            .select('worker_id')
+            .eq('id', attendanceData.entityId)
+            .single();
+
+          if (!profileErr && profile && profile.worker_id) {
+            // Create a worker attendance record
+            const workerPayload = {
+              worker_id: profile.worker_id,
+              school_id: schoolId,
+              date,
+              // record sign-in timestamp explicitly
+              sign_in_time: attendanceData.signInTime,
+              sign_out_time: null,
+              // hours unknown at sign-in; will be set on sign-out
+              hours: 0,
+              status: 'present',
+              description: attendanceData.note || 'biometric sign in',
+              recorded_by: attendanceData.entityId,
+            };
+
+            const res = await addWorkerRow(workerPayload);
+            // Annotate return so callers know this was a worker attendance insert
+            return { __worker: true, worker_id: profile.worker_id, result: res };
+          }
+        } catch (err) {
+          console.warn('recordAttendance: failed to resolve profile->worker mapping', err);
+        }
+
+        // If not a worker profile, fall back to recording in attendance_records (user_id)
+        record.user_id = attendanceData.entityId;
+        const res = await addRow(record);
+        return res;
+      }
     } catch (err) {
       console.error("Failed to record attendance:", err);
       throw err;
@@ -1262,34 +1298,63 @@ useEffect(() => {
       try {
         if (!isSignOut) {
           // Sign in
-          const res = await recordAttendance({
-            entityId,
-            signInTime,
-            note: `biometric ${entityType} sign in`
-          });
-          
-          const pendingId = res?.tempId || null;
-          setPendingSignIns((prev) => ({
-            ...prev,
-            [entityId]: { id: pendingId, signInTime },
-          }));
-          setMessage(`${displayName} signed in and attendance recorded.`);
+            const res = await recordAttendance({
+              entityId,
+              signInTime,
+              note: `biometric ${entityType} sign in`
+            });
+
+            // recordAttendance may return a worker-insert wrapper when profile maps to worker
+            if (res && res.__worker) {
+              // res.result may be the created row (online) or temp object (offline)
+              const workerResult = res.result || {};
+              const pendingId = workerResult?.id || workerResult?.tempId || null;
+              setPendingSignIns((prev) => ({
+                ...prev,
+                [entityId]: { id: pendingId, signInTime, isWorker: true, worker_id: res.worker_id },
+              }));
+            } else {
+              const pendingId = res?.tempId || null;
+              setPendingSignIns((prev) => ({
+                ...prev,
+                [entityId]: { id: pendingId, signInTime, isWorker: false },
+              }));
+            }
+
+            setMessage(`${displayName} signed in and attendance recorded.`);
         } else {
           // Sign out
-          const pending = pendingSignIns[entityId];
-          if (pending) {
-            const signOutTime = new Date().toISOString();
-            const durationMs = new Date(signOutTime) - new Date(pending.signInTime);
-            const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(2);
-            
-            await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
-            setPendingSignIns((prev) => {
-              const copy = { ...prev };
-              delete copy[entityId];
-              return copy;
-            });
-            setMessage(`${displayName} signed out. Duration: ${durationHours} hrs`);
-          }
+            const pending = pendingSignIns[entityId];
+            if (pending) {
+              const signOutTime = new Date().toISOString();
+              const durationMs = new Date(signOutTime) - new Date(pending.signInTime);
+              const durationHours = (durationMs / (1000 * 60 * 60));
+
+              // If this was recorded into worker_attendance_records, update that row with hours
+              if (pending.isWorker) {
+                try {
+                  const workerRowId = pending.id; // tempId or real id
+                  // updateRow handles online/offline update
+                  await updateWorkerRow(workerRowId, { sign_out_time: signOutTime, hours: Number(durationHours.toFixed(2)), description: `biometric sign out @ ${signOutTime}` });
+                } catch (err) {
+                  console.error('Failed to update worker attendance record on sign-out', err);
+                }
+              } else {
+                // Existing behavior: update attendance_records sign_out_time
+                try {
+                  await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
+                } catch (err) {
+                  console.error('Failed to update attendance_records on sign-out', err);
+                }
+              }
+
+              setPendingSignIns((prev) => {
+                const copy = { ...prev };
+                delete copy[entityId];
+                return copy;
+              });
+              setMessage(`${displayName} signed out. Duration: ${durationHours.toFixed(2)} hrs`);
+            }
         }
       } catch (err) {
         setMessage(`Failed to record attendance for ${displayName}: ${err.message}`);
