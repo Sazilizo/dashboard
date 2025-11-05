@@ -18,7 +18,7 @@ import WorkerImpactSummary from "../charts/WorkerImpactSummary";
 import WorkerAttendanceTrend from "../charts/WorkerAttendanceTrend";
 import { getUserContext } from "../../utils/rlsCache";
 import "../../styles/Profile.css";
-import SeoHelmet from '../../components/SeoHelmet';
+import useSeo from '../../hooks/useSeo';
 
 /**
  * Check if current user has permission to view this worker's profile
@@ -65,6 +65,8 @@ const WorkerProfile = () => {
   const { id } = useParams();
   const { user } = useAuth();
   const { isOnline } = useOnlineStatus();
+
+  // SEO will be set once we compute pageTitle/pageDesc below
   const [worker, setWorker] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -303,12 +305,14 @@ const WorkerProfile = () => {
     console.log("Worker profile loaded:", worker); 
   }, [worker]);
 
+  // Derive page title/description early so we can call the hook consistently
+  const pageTitle = worker?.profile?.name || worker?.full_name || 'Worker Profile';
+  const pageDesc = worker?.profile?.name ? `${worker.profile.name}'s profile and activity` : 'Worker profile details';
+  useSeo({ title: `${pageTitle} - Profile`, description: pageDesc });
+
   if (loading) return <Loader variant="dots" size="xlarge" text="Loading worker profile..." fullScreen />;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
   if (!worker) return <p>No worker found</p>;
-
-  const pageTitle = worker?.profile?.name || worker?.full_name || 'Worker Profile';
-  const pageDesc = worker?.profile?.name ? `${worker.profile.name}'s profile and activity` : 'Worker profile details';
 
   const roleName = worker?.profile?.role?.name?.toLowerCase() || worker?.roles?.name?.toLowerCase();
   const currentUserRole = user?.profile?.roles?.name?.toLowerCase?.();
@@ -382,7 +386,7 @@ const WorkerProfile = () => {
 
   return (
     <div className="worker-profile">
-      <SeoHelmet title={`${pageTitle} - Profile`} description={pageDesc} />
+      {/* SEO handled by useSeo hook */}
       {/* Birthday Celebration - 5 second animation */}
       {isBirthdayFromId(worker?.id_number) && (
         <BirthdayConfetti duration={5000} persistent={false} />

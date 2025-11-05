@@ -16,7 +16,7 @@ import { isBirthday } from "../../utils/birthdayUtils";
 import Loader from "../widgets/Loader";
 import "../../styles/Profile.css"
 // import InfoCount from "../widgets/infoCount";
-import SeoHelmet from '../../components/SeoHelmet';
+import useSeo from '../../hooks/useSeo';
 
 const LearnerProfile = () => {
   const { id } = useParams();
@@ -541,11 +541,14 @@ const LearnerProfile = () => {
   }, [id]);
     
 
-  // Title/meta handled by SeoHelmet below
-
+  // Derive page title/description and set SEO tags
   useEffect(()=>{
     console.log("Student: ", student)
   })
+
+  const pageTitle = student ? `${student.full_name} - Profile` : 'Learner Profile';
+  const pageDesc = student?.full_name ? `${student.full_name}'s profile and progress report` : 'Student profile';
+  useSeo({ title: pageTitle, description: pageDesc });
 
   if (loading) return <Loader variant="pulse" size="xlarge" text="Loading student profile..." fullScreen />;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
@@ -553,7 +556,7 @@ const LearnerProfile = () => {
 
   return (
     <>
-      <SeoHelmet title={student ? `${student.full_name} - Profile` : 'Learner Profile'} description={student?.full_name ? `${student.full_name}'s profile and progress report` : 'Student profile'} />
+      {/* SEO handled by useSeo hook */}
       {/* Birthday Celebration - 5 second animation */}
       {isBirthday(student?.date_of_birth) && (
         <BirthdayConfetti duration={5000} persistent={false} />

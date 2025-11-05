@@ -7,7 +7,7 @@ import { SchoolsProvider } from "./context/SchoolsContext";
 import { FilterProvider } from "./context/FiltersContext";
 import { DataProvider } from "./context/DataContext";
 import OfflineIndicator from "./components/OfflineIndicator";
-import SeoHelmet from './components/SeoHelmet';
+import useSeo from './hooks/useSeo';
 import "./styles/main.css";
 import "./styles/graphs.css";
 import "./styles/DashboardHome.css"
@@ -18,6 +18,8 @@ function App() {
   // Show debug panel in development or if debug flag is set
   const showDebug = process.env.NODE_ENV === 'development' || localStorage.getItem('showSchoolsDebug') === 'true';
   
+  // Set basic SEO defaults for the app shell
+  useSeo();
   // Defer face-api model preloading to idle time - don't block initial render
   useEffect(() => {
     const runWhenIdle = (callback) => {
@@ -40,7 +42,7 @@ function App() {
       <FilterProvider>
         <SchoolsProvider>
           <DataProvider>
-            <SeoHelmet />
+            {/* SEO handled by useSeo hook */}
             <OfflineIndicator />
             {/* Schools debug panel removed from UI to avoid intrusive popup on small screens */}
             <RouterProvider router={router} />
