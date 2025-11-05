@@ -580,16 +580,16 @@ const LearnerProfile = () => {
         <Link to={`/dashboard/sessions/mark/${id}`} className="btn btn-primary">
           Mark Session
         </Link>
-        <Link to={`/dashboard/meals/distribute/${id}`} className="btn btn-secondary">
+        <Link to={`/dashboard/meals/distribute/${id}`} className="btn btn-secondary secondary-btn">
           Distribute Meal
         </Link>
         <Link to={`/dashboard/students/update/${id}`} className="btn btn-secondary">
           Edit Profile
         </Link>
-        <button className="btn btn-success mb-2" onClick={() => setAttendanceMode("calendar")}>
+        <button className="btn primary-btn btn-primary" onClick={() => setAttendanceMode("calendar")}>
           Calendar Attendance
         </button>
-        <button className="btn btn-success mb-2" onClick={() => setAttendanceMode("biometrics")}>
+        <button className="btn btn-success mb-2 secondary-btn btn-secondary" onClick={() => setAttendanceMode("biometrics")}>
           Biometric Attendance
         </button>
       </div>

@@ -27,7 +27,8 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
   const navigate = useNavigate();
   const { isOnline } = useOnlineStatus();
 
-  const sessionsTable = sessionType === "pe" ? "pe_sessions" : "academic_sessions";
+  // Always source sessions from academic_sessions per requirements
+  const sessionsTable = "academic_sessions";
   const participantsTable = sessionType === "pe" ? "pe_session_participants" : "academic_session_participants";
 
   // Offline-aware tables
@@ -204,143 +205,98 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
     return [];
   };
 
-  // Filter sessions using the same FiltersPanel filters so selecting a category/group limits sessions too
-  // Precompute desired category tokens from filters for clearer debugging
-  // StudentFilters sets `filters.category` to an array of strings like ['ww','pr']
-  // Normalize that explicitly here to a canonical array of lowercase tokens.
-  const desiredSessionCats = (Array.isArray(filters?.category) ? filters.category : [])
-    .flatMap(c => {
-      if (c === null || c === undefined) return [];
-      if (typeof c === 'string' || typeof c === 'number' || typeof c === 'boolean') {
-        return String(c).toLowerCase().trim().split(/[,;|\s]+/).filter(Boolean);
-      }
-      // support option objects { value } passed in some places
-      if (typeof c === 'object') {
-        const v = c.value ?? c.id ?? c.name ?? c.label ?? null;
-        if (v === null || v === undefined) return [];
-        return String(v).toLowerCase().trim().split(/[,;|\s]+/).filter(Boolean);
-      }
-      return [];
-    });
-  // (debug logs removed)
+  // optional date filter (ISO date string yyyy-mm-dd) and revision flag: stored in global filters
+  // keep small local mirrors for controlled inputs, initialize from global filters
+  const [filterDate, setFilterDate] = useState(filters?.session_date || null);
+  const [revisionMode, setRevisionMode] = useState(!!filters?.revision);
 
-  // determine selected session and its category (if any)
-  const currentSession = selectedSession ? sessionRows.find(sr => String(sr.id) === String(selectedSession)) : null;
-  const sessionCategory = currentSession?.category;
-
-  // No local session filters here — always show all sessions for selection
-  const displayedSessions = useMemo(() => (effectiveSessionRows || []), [effectiveSessionRows]);
-
-  // no per-session filter report (filters removed)
-
-  const filteredStudents = allStudents.filter((s) => {
-    if (!s) return false;
-    // sessionType specific filter: PE sessions only students flagged for PE
-    if (sessionType === "pe" && !s.physical_education) return false;
-
-    // school filter
-    if (filters?.school_id && filters.school_id.length) {
-      const schoolFilter = filters.school_id;
-      const val = Array.isArray(schoolFilter) ? schoolFilter.map(String) : [String(schoolFilter)];
-      if (!val.includes(String(s.school_id))) return false;
-    }
-
-    // grade filter
-    if (filters?.grade && filters.grade.length) {
-      const g = filters.grade;
-      const vals = Array.isArray(g) ? g : [g];
-      if (!vals.includes(String(s.grade))) return false;
-    }
-
-    // category filter (generic) - compare against desiredSessionCats (derived from StudentFilters)
-    if (desiredSessionCats.length) {
-      const studentCats = normalizeCats(s.category || s.fields || s.meta || s);
-      if (!studentCats.some(sc => desiredSessionCats.includes(sc))) return false;
-    }
-
-    // If the selected session has a category, only include students whose category intersects
-    if (sessionCategory) {
-      const sessionCats = normalizeCats(sessionCategory || currentSession?.fields || currentSession);
-      const studentCats = normalizeCats(s.category || s.fields || s.meta || s);
-      const matches = studentCats.some(sc => sessionCats.includes(sc));
-      if (!matches) return false;
-    }
-
-    // Exclude already participating students for the selected session
-    if (selectedSession) {
-      const participantIds = new Set(participantsForSelected.map(p => String(p.student_id)));
-      if (participantIds.has(String(s.id))) return false;
-    }
-
-    return true;
-  });
-
-  // (debug logs removed)
-
-
-  // sessionDebugMap removed (debugging) 
-
-  const filteredSessionRows = (Array.isArray(sessionRows) ? sessionRows : []).filter((sr) => {
-    if (!sr) return false;
-
-    // school filter
-    if (filters?.school_id && filters.school_id.length) {
-      const schoolFilter = filters.school_id;
-      const val = Array.isArray(schoolFilter) ? schoolFilter.map(String) : [String(schoolFilter)];
-      if (!val.includes(String(sr.school_id))) return false;
-    }
-
-    // session_type filter coming from FiltersPanel (e.g. ['academic_sessions','pe_sessions','academic'])
-    if (filters?.session_type && filters.session_type.length) {
-      const raw = Array.isArray(filters.session_type) ? filters.session_type : [filters.session_type];
-      const types = raw.map(t => String(t).toLowerCase().trim());
-      const mapped = types.map(t => {
-        // normalize common variants coming from StudentFilters / Filter options
-        if (t.includes('acad') || t === 'academic' || t === 'academic_sessions' || t === 'academics') return 'academic_sessions';
-        if (t.includes('pe') || t.includes('physical') || t === 'pe_sessions' || t === 'pe') return 'pe_sessions';
-        return t;
+  // update global filters when local date/revision change
+  useEffect(() => {
+    // sync session_date into global filters
+    if (filterDate) {
+      setFilters((f) => ({ ...(f || {}), session_date: filterDate }));
+    } else {
+      setFilters((f) => {
+        const copy = { ...(f || {}) };
+        delete copy.session_date;
+        return copy;
       });
-      if (!mapped.includes(sessionsTable)) return false;
     }
+  }, [filterDate]);
 
-    // category filter: use normalizeCats to compare
-    if (desiredSessionCats.length) {
-      const rawCat = sr.category;
-      // Fast path: direct string match
-      let intersects = false;
-      if (typeof rawCat === 'string') {
-        const v = rawCat.toLowerCase().trim();
-        intersects = desiredSessionCats.includes(v);
+  useEffect(() => {
+    if (revisionMode) setFilters((f) => ({ ...(f || {}), revision: true }));
+    else setFilters((f) => { const copy = { ...(f || {}) }; delete copy.revision; return copy; });
+  }, [revisionMode]);
+
+  // Compute displayed sessions based on academic_sessions source and the shared `filters`
+  const displayedSessions = useMemo(() => {
+    const rows = Array.isArray(sessionRows) ? sessionRows.slice() : [];
+
+    const sessionDateStr = (s) => {
+      if (!s) return null;
+      const d = s.date || s.session_date || s.start_date || s.created_at || null;
+      if (!d) return null;
+      try {
+        if (/^\d{4}-\d{2}-\d{2}/.test(String(d))) return String(d).slice(0,10);
+        const dt = new Date(d);
+        if (isNaN(dt)) return null;
+        return dt.toISOString().slice(0,10);
+      } catch (e) { return null; }
+    };
+
+    const wantedCats = normalizeCats(filters?.category || []);
+
+    let filtered = rows.filter(s => {
+      if (wantedCats.length) {
+        const sCats = normalizeCats(s.category || s.categories || s.tag || s.tags || []);
+        if (!wantedCats.some(c => sCats.includes(c))) return false;
       }
-      const sessionCats = normalizeCats(sr.category || sr.fields || sr);
-      if (!intersects) intersects = sessionCats.some(sc => desiredSessionCats.includes(sc));
-      if (!intersects) {
-        // fallback: check session name for tokens like '(ww)' or ' ww'
-        const name = String(sr.session_name || sr.name || '').toLowerCase();
-        intersects = desiredSessionCats.some(c => {
-          if (!c) return false;
-          if (name.includes(`(${c})`)) return true;
-          if (name.includes(` ${c}`)) return true;
-          if (name.endsWith(` ${c}`)) return true;
-          return false;
-        });
+
+      const sd = sessionDateStr(s);
+      if (filters?.session_date) {
+        if (!sd) return false;
+        if (sd !== String(filters.session_date)) return false;
       }
-      if (!intersects) return false;
-    }
 
-    // grade filter: if session has a grade or grades field, ensure intersection
-    if (filters?.grade && filters.grade.length) {
-      const g = Array.isArray(filters.grade) ? filters.grade.map(String) : [String(filters.grade)];
-      const sessionGrades = sr.grade ? (Array.isArray(sr.grade) ? sr.grade.map(String) : [String(sr.grade)]) : [];
-      if (sessionGrades.length && !sessionGrades.some(sg => g.includes(sg))) return false;
-    }
+      if (!filters?.revision && sd) {
+        const today = new Date(); today.setHours(0,0,0,0);
+        const sD = new Date(sd); sD.setHours(0,0,0,0);
+        if (sD < today) return false;
+      }
 
-    return true;
-  });
+      return true;
+    });
 
-  // (debug logs removed)
+    filtered.sort((a,b) => {
+      const da = sessionDateStr(a) || '';
+      const db = sessionDateStr(b) || '';
+      if (da < db) return -1;
+      if (da > db) return 1;
+      return 0;
+    });
 
-  // (debug logs removed)
+    return filtered;
+  }, [sessionRows, filters]);
+
+  // Filter students simultaneously using same category/grade filters (global filters)
+  const filteredStudents = useMemo(() => {
+    const list = Array.isArray(allStudents) ? allStudents.slice() : [];
+    const wantedCats = normalizeCats(filters?.category || []);
+    const wantedGrades = Array.isArray(filters?.grade) ? filters.grade.map(String) : (filters?.grade ? [String(filters.grade)] : []);
+
+    return list.filter(st => {
+      if (wantedCats.length) {
+        const sCats = normalizeCats(st.category || st.categories || st.tags || st.group || []);
+        if (!wantedCats.some(c => sCats.includes(c))) return false;
+      }
+      if (wantedGrades.length) {
+        const g = st.grade || st.class || st.level || '';
+        if (!wantedGrades.includes(String(g))) return false;
+      }
+      return true;
+    });
+  }, [allStudents, filters]);
 
   // helper: add selected students to session (bulk, offline-aware)
   const handleAddSelected = useCallback(async () => {
@@ -453,7 +409,8 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
 
   // always show all sessions (no session filter toggle in this view)
   const effectiveSessionRows = (sessionRows || []);
-
+ 
+ 
   return (
     <div className="max-w-4xl mx-auto p-6">
       <ToastContainer toasts={toasts} removeToast={removeToast} />
@@ -461,8 +418,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
       <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg overflow-hidden">
         <div className="px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <button onClick={() => window.history.back()} className="inline-flex items-center gap-2 rounded-md px-3 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 transition">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-700" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            <button onClick={() => window.history.back()} className="btn secondary-btn">
               <span className="text-sm">Back</span>
             </button>
             <div>
@@ -472,8 +428,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
           </div>
 
           <div className="flex items-center gap-2">
-            <Link to={`/dashboard/sessions/create`} className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-white border hover:shadow-sm transition">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+            <Link to={`/dashboard/sessions/create`} className="btn primary-btn">
               <span className="text-sm">Create Session</span>
             </Link>
           </div>
@@ -485,13 +440,31 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
               <FiltersPanel
                 user={user}
                 schools={schools}
-                filters={{ ...filters, session_type: sessionType ? [sessionType] : [] }}
+                filters={filters}
                 setFilters={setFilters}
                 resource="students"
                 gradeOptions={gradeOptions}
                 sessionTypeOptions={role === "superuser" || role === "admin" ? ["academic_sessions", "pe_sessions"] : []}
                 showDeletedOption={["admin", "hr", "superviser"].includes(role)}
               />
+
+              {/* Optional date filter + revision toggle (kept local but synced to global filters) */}
+              <div style={{ marginTop: 8, display: 'flex', gap: 12, alignItems: 'center' }}>
+                <div>
+                  <label className="text-sm font-medium">Filter by date</label>
+                  <div>
+                    <input type="date" value={filterDate || ''} onChange={(e) => setFilterDate(e.target.value || null)} className="p-2 border rounded" />
+                    <button onClick={() => setFilterDate(null)} className="ml-2 px-2 py-1 border rounded">Clear</button>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input type="checkbox" checked={revisionMode} onChange={(e) => setRevisionMode(e.target.checked)} />
+                    <span className="text-sm">Revision (include past sessions)</span>
+                  </label>
+                </div>
+              </div>
             </div>
           )}
 

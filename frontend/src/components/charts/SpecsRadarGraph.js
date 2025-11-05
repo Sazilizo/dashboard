@@ -22,23 +22,35 @@ const formatDateParts = (dateStr) => {
 
 const SpecsRadarChart = ({ student, user, className }) => {
   const role = user?.profile?.roles?.name?.toLowerCase();
-
-  console.log(student)
-  //Merge participants and tag type
+  // normalize student object and extract specs/date robustly from participant records
   const allSessions = useMemo(() => {
     if (!student) return [];
 
-    const academic = (student.completed_academic_sessions || []).map((s) => ({
-      ...s,
-      session_type: "academic",
-      date: s.date, 
-    }));
+    // helper to extract specs and date from various possible shapes
+    const normalize = (entry) => {
+      // try common locations for specs on participant records
+      const specs = entry?.specs || entry?.participant?.specs || entry?.session_participant?.specs || entry?.academic_session?.specs || entry?.pe_session?.specs || null;
 
-    const pe = (student.pe_session_participants || []).map((s) => ({
-      ...s,
-      session_type: "pe",
-      date: s.date, 
-    }));
+      // date may live on the participant entry or on a nested session object
+      const date = entry?.date || entry?.participant?.date || entry?.academic_session?.date || entry?.session?.date || entry?.pe_session?.date || null;
+
+      // bring other useful props through (term, etc.)
+      const term = entry?.term || entry?.academic_session?.term || entry?.session?.term || entry?.pe_session?.term || null;
+
+      return {
+        ...entry,
+        specs: specs || null,
+        date,
+        term,
+      };
+    };
+
+    // Prefer the dedicated participant arrays. Fall back to older property names if needed.
+    const academicSource = student.academic_session_participants || student.academic_sessions || student.completed_academic_sessions || [];
+    const peSource = student.pe_session_participants || student.pe_sessions || student.pe_participants || [];
+
+    const academic = (academicSource || []).map((s) => ({ ...normalize(s), session_type: "academic" }));
+    const pe = (peSource || []).map((s) => ({ ...normalize(s), session_type: "pe" }));
 
     if (role === "admin" || role === "superuser") return [...academic, ...pe];
     if (role === "head tutor") return academic;

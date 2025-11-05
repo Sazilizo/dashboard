@@ -91,30 +91,3 @@
   font-size: 0.9rem;
   text-align: center;
 }
-.btn {
-  display: inline-block;
-  padding: 10px;
-  font-size: 1rem;
-  margin:0.2rem;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  text-decoration: none;
-  font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
-}
-.btn-primary{
-  background-color: coral;
-  color: white;
-}
-
-.btn-primary:hover {
-  background-color: rgb(240, 162, 133);
-}
-
-.btn-secondary {
-  background-color: #f0f0f0;
-  color: #333;
-}
-.btn-secondary:hover {
-  background-color: #e0e0e0;
-}

@@ -11,6 +11,7 @@ import SeoHelmet from './components/SeoHelmet';
 import "./styles/main.css";
 import "./styles/graphs.css";
 import "./styles/DashboardHome.css"
+import "./styles/Buttons.css"
 import { preloadFaceApiModels, areFaceApiModelsLoaded } from "./utils/FaceApiLoader";
 
 function App() {

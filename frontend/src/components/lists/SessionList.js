@@ -68,9 +68,9 @@ export default function SessionList({deleted}) {
           />
         </div>
       </div>
-      <Link to="/dashboard/sessions/create" className="app-btn btn-primary">Create Session</Link>
+      <Link to="/dashboard/sessions/create" className="btn btn-primary">Create Session</Link>
 
-      <Link to="/dashboard/sessions/mark" className="app-btn app-btn-primary">Distribute Session</Link>
+      <Link to="/dashboard/sessions/mark" className="btn btn-primary">Distribute Session</Link>
       {/* {loading && <div>Loading...</div>} */}
       {/* {error && <div style={{ color: "red" }}>{error}</div>} */}
       {/* {!loading && !error && (
