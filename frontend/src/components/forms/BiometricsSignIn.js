@@ -274,11 +274,12 @@ const BiometricsSignIn = ({
       console.error("Webcam access failed:", err);
       setWebcamError(true);
       
-      // Only show token input for sign-in (not sign-out) and only for users
-      if (entityType === 'user' && forceOperation === 'signin') {
-        setMessage("No webcam detected. You can use your backup authentication code to sign in.");
+      // Show token input for users in both signin and signout flows to support devices without webcams.
+      if (entityType === 'user' && (forceOperation === 'signin' || forceOperation === 'signout')) {
+        setMessage("No webcam detected. You can use your backup authentication code to proceed.");
         setShowTokenInput(true);
       } else if (forceOperation === 'signout') {
+        // For sign-out on non-user entities, enforce webcam
         setMessage("⚠️ Webcam required for sign-out. Please use a device with a webcam to end your work day.");
       } else {
         setMessage("Could not access webcam. Check permissions or use a device with a webcam.");

@@ -11,6 +11,8 @@ const LogoutButton = () => {
   const [showBiometrics, setShowBiometrics] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
   const [recordSignOut, setRecordSignOut] = useState(false);
+  const [autoCloseTimer, setAutoCloseTimer] = useState(null);
+  const [showEndDayConfirm, setShowEndDayConfirm] = useState(false);
   const { toasts, showToast, removeToast } = useToast();
 
   const handleLogout = async () => {
@@ -25,32 +27,9 @@ const LogoutButton = () => {
           .maybeSingle();
 
         if (profile?.id) {
-          // Prompt: End your work day? (using toast with buttons)
-          const toastId = showToast(
-            '',
-            'info',
-            0, // No auto-dismiss
-            <ConfirmToast
-              message="End your work day? This will record your sign-out time."
-              yesText="Yes, End Day"
-              noText="No, Just Logout"
-              onYes={() => {
-                removeToast(toastId);
-                setRecordSignOut(true);
-                setUserProfile(profile);
-                setShowBiometrics(true);
-                showToast('Please complete biometric verification to end your day.', 'info', 5000);
-              }}
-              onNo={() => {
-                removeToast(toastId);
-                setRecordSignOut(false);
-                setUserProfile(profile);
-                setShowBiometrics(true);
-                showToast('Please complete biometric verification to logout (time not recorded).', 'info', 5000);
-              }}
-            />
-          );
-          
+          // open centered confirm modal instead of toast
+          setUserProfile(profile);
+          setShowEndDayConfirm(true);
           return;
         }
       }
@@ -97,6 +76,11 @@ const LogoutButton = () => {
     }
 
     setShowBiometrics(false);
+    // clear any scheduled auto-close once we finish biometric flow
+    if (autoCloseTimer) {
+      clearTimeout(autoCloseTimer);
+      setAutoCloseTimer(null);
+    }
     // Attempt to revoke any server-side auth tokens associated with this profile
     try {
       // fetch auth_uid if not present
@@ -136,7 +120,11 @@ const LogoutButton = () => {
     try {
       const { error } = await api.auth.signOut();
       if (error) throw error;
-
+      // clear scheduled auto-close on explicit logout
+      if (autoCloseTimer) {
+        clearTimeout(autoCloseTimer);
+        setAutoCloseTimer(null);
+      }
       localStorage.clear();
       navigate("/login");
     } catch (err) {
@@ -148,6 +136,54 @@ const LogoutButton = () => {
   return (
     <>
       <ToastContainer toasts={toasts} removeToast={removeToast} />
+      {showEndDayConfirm && userProfile && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.4)' }}>
+          <div style={{ background: 'white', padding: 20, borderRadius: 8, maxWidth: '90vw', width: 520 }}>
+            <ConfirmToast
+              message="End your work day? This will record your sign-out time."
+              yesText="Yes, End Day"
+              noText="No, Keep Recording"
+              onYes={() => {
+                setShowEndDayConfirm(false);
+                setRecordSignOut(true);
+                // show biometric modal to verify and then record sign-out
+                setShowBiometrics(true);
+                showToast('Please complete biometric verification to end your day.', 'info', 5000);
+              }}
+              onNo={() => {
+                setShowEndDayConfirm(false);
+                setRecordSignOut(false);
+                // Schedule automatic non-recording close at 17:15 local time
+                const now = new Date();
+                const auto = new Date(now);
+                auto.setHours(17, 15, 0, 0);
+                if (auto <= now) {
+                  // if already past 17:15 today, schedule for next day
+                  auto.setDate(auto.getDate() + 1);
+                }
+                const msUntil = auto.getTime() - now.getTime();
+
+                showToast(`You chose to keep recording. Your session will be auto-closed at ${auto.toLocaleString()}.`, 'info', 8000);
+
+                // best-effort timeout to auto-logout (non-recording). Note: this relies on the app staying open.
+                const timerId = setTimeout(async () => {
+                  try {
+                    showToast('Auto-closing work day (time not recorded).', 'info', 5000);
+                    // perform logout without recording sign-out time
+                    await performLogout();
+                  } catch (err) {
+                    console.warn('Auto-close failed', err);
+                    try { await performLogout(); } catch(e){}
+                  }
+                }, msUntil);
+
+                // store timer id on state so it can be cleared if user logs out manually
+                setAutoCloseTimer(timerId);
+              }}
+            />
+          </div>
+        </div>
+      )}
       
       {showBiometrics && userProfile ? (
         <div className="biometric-modal-overlay">
