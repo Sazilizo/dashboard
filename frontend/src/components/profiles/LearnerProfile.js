@@ -16,6 +16,7 @@ import { isBirthday } from "../../utils/birthdayUtils";
 import Loader from "../widgets/Loader";
 import "../../styles/Profile.css"
 // import InfoCount from "../widgets/infoCount";
+import SeoHelmet from '../../components/SeoHelmet';
 
 const LearnerProfile = () => {
   const { id } = useParams();
@@ -540,9 +541,7 @@ const LearnerProfile = () => {
   }, [id]);
     
 
-  useEffect(() => {
-    document.title = student ? `${student.full_name} - Profile` : "Learner Profile";
-  }, [student]);
+  // Title/meta handled by SeoHelmet below
 
   useEffect(()=>{
     console.log("Student: ", student)
@@ -554,6 +553,7 @@ const LearnerProfile = () => {
 
   return (
     <>
+      <SeoHelmet title={student ? `${student.full_name} - Profile` : 'Learner Profile'} description={student?.full_name ? `${student.full_name}'s profile and progress report` : 'Student profile'} />
       {/* Birthday Celebration - 5 second animation */}
       {isBirthday(student?.date_of_birth) && (
         <BirthdayConfetti duration={5000} persistent={false} />

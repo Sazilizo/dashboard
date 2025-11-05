@@ -5,6 +5,7 @@ import FiltersPanel from "../filters/FiltersPanel"
 import { useAuth } from "../../context/AuthProvider"
 import PieChartStats from "../charts/PieChart"
 import DashboardSummary from "../charts/DashboardSummary"
+import SeoHelmet from '../../components/SeoHelmet';
 
 const gradeOptions = ["1", "2", "3", "4", "5", "6", "7"];
 const groupByOptions = ["ww", "pr", "un"];
@@ -80,7 +81,9 @@ const SchoolProfile =()=>{
     if (!school) return <div>No school data available</div>;
 
     return (
-    <div>
+    <>
+      <SeoHelmet title={`${school.name} - School Profile`} description={`Overview and statistics for ${school.name}`} />
+      <div>
       <h2>Schools Dashboard</h2>
       <div className="page-filters">
         <FiltersPanel
@@ -124,8 +127,9 @@ const SchoolProfile =()=>{
           </div>
       </div>
     </div>
+    </>
   );
 
 }
 
-export default SchoolProfile
+export default SchoolProfile;

@@ -18,6 +18,7 @@ import WorkerImpactSummary from "../charts/WorkerImpactSummary";
 import WorkerAttendanceTrend from "../charts/WorkerAttendanceTrend";
 import { getUserContext } from "../../utils/rlsCache";
 import "../../styles/Profile.css";
+import SeoHelmet from '../../components/SeoHelmet';
 
 /**
  * Check if current user has permission to view this worker's profile
@@ -294,11 +295,7 @@ const WorkerProfile = () => {
 
     if (id) fetchWorker();
   }, [id, user]);
-  useEffect(() => {
-    if (worker) {
-      document.title = `${worker.profile?.name || "Worker"} Profile`;
-    };
-  },[worker])
+  // Title/meta handled by SeoHelmet in render
 
   useEffect(() => {
     console.log("Worker profile loaded:", worker); 
@@ -307,6 +304,9 @@ const WorkerProfile = () => {
   if (loading) return <Loader variant="dots" size="xlarge" text="Loading worker profile..." fullScreen />;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
   if (!worker) return <p>No worker found</p>;
+
+  const pageTitle = worker?.profile?.name || worker?.full_name || 'Worker Profile';
+  const pageDesc = worker?.profile?.name ? `${worker.profile.name}'s profile and activity` : 'Worker profile details';
 
   const roleName = worker?.profile?.role?.name?.toLowerCase() || worker?.roles?.name?.toLowerCase();
   const currentUserRole = user?.profile?.roles?.name?.toLowerCase?.();
@@ -380,6 +380,7 @@ const WorkerProfile = () => {
 
   return (
     <div className="worker-profile">
+      <SeoHelmet title={`${pageTitle} - Profile`} description={pageDesc} />
       {/* Birthday Celebration - 5 second animation */}
       {isBirthdayFromId(worker?.id_number) && (
         <BirthdayConfetti duration={5000} persistent={false} />

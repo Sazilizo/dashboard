@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthProvider";
 import { Link } from "react-router-dom";
 import { useSchools } from "../context/SchoolsContext";
 import { useFilters } from "../context/FiltersContext";
+import SeoHelmet from '../components/SeoHelmet';
 
 export default function SchoolsDashboard() {
   const { schools } = useSchools();
@@ -42,6 +43,8 @@ export default function SchoolsDashboard() {
   }, [displayedSchools]);
 
   return (
+    <>
+      <SeoHelmet title="Schools - GCU Dashboard" description="Browse and manage schools in your organization." />
     <div>
       <h2>Schools Dashboard</h2>
 
@@ -77,5 +80,6 @@ export default function SchoolsDashboard() {
         <p>No schools selected or available.</p>
       )}
     </div>
+    </>
   );
 }

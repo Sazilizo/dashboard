@@ -7,6 +7,7 @@ import { SchoolsProvider } from "./context/SchoolsContext";
 import { FilterProvider } from "./context/FiltersContext";
 import { DataProvider } from "./context/DataContext";
 import OfflineIndicator from "./components/OfflineIndicator";
+import SeoHelmet from './components/SeoHelmet';
 import "./styles/main.css";
 import "./styles/graphs.css";
 import "./styles/DashboardHome.css"
@@ -38,6 +39,7 @@ function App() {
       <FilterProvider>
         <SchoolsProvider>
           <DataProvider>
+            <SeoHelmet />
             <OfflineIndicator />
             {/* Schools debug panel removed from UI to avoid intrusive popup on small screens */}
             <RouterProvider router={router} />

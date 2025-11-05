@@ -1,7 +1,8 @@
-import React, { useEffect } from "react";
+import React from "react";
 import { useNavigate } from "react-router-dom";
 import "../styles/LandingPage.css"; 
 import backgroundImage from "../assets/education-bg.png";
+import SeoHelmet from '../components/SeoHelmet';
 const LandingPage = () => {
   const navigate = useNavigate();
 
@@ -9,12 +10,12 @@ const LandingPage = () => {
     navigate("/login");
   };
 
-  useEffect(() =>{
-    document.title = "GCU Schools";
-  },[])
+  // Title and meta handled by SeoHelmet
 
   return (
-    <div
+    <>
+      <SeoHelmet title="GCU Schools" description="Empowering educators and tracking learner growth with ease." />
+      <div
       className="landing-container"
       style={{
         backgroundImage: `url(${backgroundImage})`,
@@ -32,7 +33,8 @@ const LandingPage = () => {
         </div>
 
         </div>
-    </div>
+      </div>
+    </>
   );
 };
 
