@@ -526,6 +526,8 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
             <div className="mt-4 border rounded p-4 bg-white">
               <BiometricsSignIn
                 entityType="student"
+                // If user selected students, pass those IDs; otherwise fall back to the first filtered student
+                studentId={selectedStudentIds && selectedStudentIds.length ? selectedStudentIds : (filteredStudents[0]?.id ? [filteredStudents[0].id] : null)}
                 schoolId={filteredStudents[0]?.school_id || null}
                 sessionType={participantsTable}
                 bucketName="student-uploads"

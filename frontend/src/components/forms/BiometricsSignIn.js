@@ -53,6 +53,7 @@ const BiometricsSignIn = ({
   sessionType,
   forceOperation = null, // null | 'signout' (force sign-out on face match)
   onCompleted,
+  onCancel, // optional callback when user cancels the biometric flow (avoid history navigation)
 }) => {
   // Essential states with defaults
   const [loadingModels, setLoadingModels] = useState(!areFaceApiModelsLoaded());
@@ -266,6 +267,30 @@ const BiometricsSignIn = ({
       });
       streamRef.current = stream;
       if (webcamRef.current) webcamRef.current.srcObject = stream;
+      // Wait for video metadata to be available (mobile devices may delay dimensions)
+      try {
+        if (webcamRef.current) {
+          await new Promise((resolve) => {
+            let resolved = false;
+            const onMeta = () => {
+              if (!webcamRef.current) return resolve();
+              if ((webcamRef.current.videoWidth || webcamRef.current.videoHeight) && !resolved) {
+                resolved = true;
+                webcamRef.current.removeEventListener('loadedmetadata', onMeta);
+                resolve();
+              }
+            };
+            webcamRef.current.addEventListener('loadedmetadata', onMeta);
+            // fallback timeout in case loadedmetadata doesn't fire
+            setTimeout(() => {
+              try { webcamRef.current.removeEventListener('loadedmetadata', onMeta); } catch (e) {}
+              resolve();
+            }, 2000);
+          });
+        }
+      } catch (e) {
+        if (DEBUG) console.warn('startWebcam: waiting for metadata failed', e);
+      }
       await webcamRef.current.play();
       perfRef.current.cameraEnd = (performance.now ? performance.now() : Date.now());
       if (PERF_UI) snapPerf();
@@ -922,6 +947,25 @@ useEffect(() => {
       return;
     }
 
+  // Ensure video has valid dimensions on mobile before capture
+  const waitForVideoReady = async (timeoutMs = 2000) => {
+    const start = Date.now();
+    return new Promise((resolve) => {
+      const check = () => {
+        if (!webcamRef.current) return resolve(false);
+        if (webcamRef.current.videoWidth > 0 && webcamRef.current.videoHeight > 0) return resolve(true);
+        if (Date.now() - start > timeoutMs) return resolve(false);
+        requestAnimationFrame(check);
+      };
+      check();
+    });
+  };
+  const videoReady = await waitForVideoReady(1500);
+  if (!videoReady) {
+    setMessage('Camera not ready — try tapping the video or retry webcam access.');
+    return;
+  }
+
   setIsProcessing(true);
   perfRef.current.captureStart = (performance.now ? performance.now() : Date.now());
   setMessage("Detecting face(s)...");
@@ -1071,7 +1115,8 @@ useEffect(() => {
       }
     } catch (err) {
       console.error("handleCapture error:", err);
-      setMessage("Failed to detect or record attendance.");
+      const msg = err?.message || String(err) || 'unknown error';
+      setMessage(`Failed to detect or record attendance: ${msg}`);
       setIsProcessing(false);
     }
   };
@@ -1079,6 +1124,21 @@ useEffect(() => {
   // Process a single frame (used by continuous mode)
   const processFrame = useCallback(async () => {
     if (isProcessing || !referencesReady || !faceMatcher || !webcamRef.current) return;
+    // Ensure video has valid dimensions on mobile (prevents drawImage errors)
+    const waitForVideoReady = async (timeoutMs = 2000) => {
+      const start = Date.now();
+      return new Promise((resolve) => {
+        const check = () => {
+          if (!webcamRef.current) return resolve(false);
+          if (webcamRef.current.videoWidth > 0 && webcamRef.current.videoHeight > 0) return resolve(true);
+          if (Date.now() - start > timeoutMs) return resolve(false);
+          requestAnimationFrame(check);
+        };
+        check();
+      });
+    };
+    const ready = await waitForVideoReady(1500);
+    if (!ready) return; // skip this frame if video not ready
     try {
       setIsProcessing(true);
       // draw downscaled frame
@@ -1128,7 +1188,7 @@ useEffect(() => {
       }
     } catch (err) {
       console.error("processFrame error:", err);
-      setMessage("Unable to process faces. Please try again.");
+      setMessage(`Unable to process faces: ${err?.message || 'unknown error'}`);
     } finally {
       setIsProcessing(false);
     }
@@ -1567,7 +1627,16 @@ useEffect(() => {
               </button>
               
               <button
-                onClick={() => window.history.back()}
+                onClick={() => {
+                  // Prefer an onCancel handler from the caller (e.g. Logout modal) so we don't navigate history
+                  try {
+                    if (typeof onCancel === 'function') return onCancel();
+                  } catch (e) {
+                    console.warn('onCancel handler failed', e);
+                  }
+                  // Fallback for legacy callers: navigate back
+                  window.history.back();
+                }}
                 style={{
                   padding: "10px 20px",
                   fontSize: "0.95rem",
