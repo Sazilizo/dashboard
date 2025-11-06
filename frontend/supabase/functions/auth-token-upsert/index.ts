@@ -52,10 +52,33 @@ Deno.serve(async (req) => {
       created_at: new Date().toISOString()
     };
 
-    const { data: upserted, error: upsertError } = await supabaseAdmin
-      .from('auth_tokens')
-      .upsert(payload, { onConflict: 'auth_uid' })
-      .select();
+    // Try the plural table name first, then fall back to singular if it doesn't exist
+    let upserted = null;
+    let upsertError = null;
+    try {
+      const res = await supabaseAdmin
+        .from('auth_tokens')
+        .upsert(payload, { onConflict: 'auth_uid' })
+        .select();
+      upserted = res.data;
+      upsertError = res.error;
+    } catch (e) {
+      upsertError = e;
+    }
+
+    if (upsertError) {
+      console.warn('[auth-token-upsert] auth_tokens upsert failed, trying auth_token singular', upsertError?.message || upsertError);
+      try {
+        const res2 = await supabaseAdmin
+          .from('auth_token')
+          .upsert(payload, { onConflict: 'auth_uid' })
+          .select();
+        upserted = res2.data;
+        upsertError = res2.error;
+      } catch (e2) {
+        upsertError = e2;
+      }
+    }
 
     if (upsertError) {
       console.error('[auth-token-upsert] DB upsert error', upsertError);
