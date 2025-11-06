@@ -48,54 +48,43 @@ export async function storeAuthToken(profileId, token, expiresInMinutes = 60) {
     }
     
     const authUid = profile.auth_uid;
-    console.log('[storeAuthToken] Got auth_uid:', authUid, 'attempting database insert...');
-    
-    // Store in auth_tokens table using auth_uid
-    const { data, error } = await api
-      .from('auth_tokens')
-      .upsert({
-        auth_uid: authUid,
-        token: token,
-        expires_at: expiresAt,
-        used: false,
-        created_at: new Date().toISOString()
-      }, {
-        onConflict: 'auth_uid'
-      })
-      .select();
+    console.log('[storeAuthToken] Got auth_uid:', authUid, 'attempting server-side upsert via Edge Function...');
 
-    console.log('[storeAuthToken] Database upsert result:', { data, error });
+    try {
+      // Get the current authenticated user's auth UID (caller)
+      const { data: { user: currentUser } = {} } = await api.auth.getUser();
+      const current_user_id = currentUser?.id || null;
 
-    if (error) {
-      console.error('[storeAuthToken] Database error details:', {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code
+      // Call the Edge Function that upserts auth tokens using the service role key
+      const { data: fnData, error: fnError } = await api.functions.invoke('auth-token-upsert', {
+        body: {
+          profileId,
+          token,
+          expiresAt,
+          current_user_id
+        }
       });
-      console.warn('[storeAuthToken] Failed to store auth token in database, using localStorage fallback');
-      // Fallback to localStorage
-      const tokenData = {
-        token,
-        profileId,
-        authUid,
-        expiresAt,
-        used: false
-      };
+
+      console.log('[storeAuthToken] Edge function response:', { fnData, fnError });
+
+      if (fnError || !fnData) {
+        console.warn('[storeAuthToken] Edge function failed, falling back to localStorage', fnError);
+        const tokenData = { token, profileId, authUid, expiresAt, used: false };
+        localStorage.setItem(`auth_token_${profileId}`, JSON.stringify(tokenData));
+        console.log('[storeAuthToken] Stored in localStorage (edge function failed):', tokenData);
+      } else {
+        console.log('[storeAuthToken] ✅ Successfully stored via edge function');
+        // Also store a local backup
+        const tokenData = { token, profileId, authUid, expiresAt, used: false };
+        localStorage.setItem(`auth_token_${profileId}`, JSON.stringify(tokenData));
+        console.log('[storeAuthToken] Also stored backup in localStorage');
+      }
+    } catch (e) {
+      console.error('[storeAuthToken] Edge function invocation exception:', e);
+      console.warn('[storeAuthToken] Falling back to localStorage');
+      const tokenData = { token, profileId, authUid, expiresAt, used: false };
       localStorage.setItem(`auth_token_${profileId}`, JSON.stringify(tokenData));
-      console.log('[storeAuthToken] Stored in localStorage (database failed):', tokenData);
-    } else {
-      console.log('[storeAuthToken] ✅ Successfully stored in database!');
-      // Also store in localStorage as backup
-      const tokenData = {
-        token,
-        profileId,
-        authUid,
-        expiresAt,
-        used: false
-      };
-      localStorage.setItem(`auth_token_${profileId}`, JSON.stringify(tokenData));
-      console.log('[storeAuthToken] Also stored backup in localStorage');
+      console.log('[storeAuthToken] Stored in localStorage (exception):', tokenData);
     }
 
     return { token, expiresAt };
