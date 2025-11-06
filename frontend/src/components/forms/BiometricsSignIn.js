@@ -1009,7 +1009,9 @@ useEffect(() => {
       ctx.drawImage(webcamRef.current, 0, 0, targetW, targetH);
 
       const faceapi = faceapiRef.current;
-      const DETECTOR_SIZE = isSmallScreen ? 112 : 128;
+  // inputSize must be a number divisible by 32 for TinyFaceDetector/TinyYolov2
+  // Use 96 for small screens (32*3) and 128 for larger screens (32*4)
+  const DETECTOR_SIZE = isSmallScreen ? 96 : 128;
       const detections = await faceapi
         .detectAllFaces(
           canvas,
@@ -1232,7 +1234,9 @@ useEffect(() => {
       ctx.drawImage(webcamRef.current, 0, 0, targetW, targetH);
 
       const faceapi = faceapiRef.current;
-      const DETECTOR_SIZE = isSmallScreen ? 112 : 128;
+  // inputSize must be a number divisible by 32 for TinyFaceDetector/TinyYolov2
+  // Use 96 for small screens (32*3) and 128 for larger screens (32*4)
+  const DETECTOR_SIZE = isSmallScreen ? 96 : 128;
       const detections = await faceapi
         .detectAllFaces(
           canvas,
@@ -1543,254 +1547,134 @@ useEffect(() => {
   };
 
   return (
-    <div className="student-signin-container">
-      <h2>Biometric Sign In / Out</h2>
-
-      {loadingModels && <p>Loading face detection models...</p>}
+    <div
+      className="student-signin-container"
+      style={{ width: isSmallScreen ? '80vw' : '40vw', margin: '0 auto' }}
+    >
+      {loadingModels && <p style={{ textAlign: 'center' }}>Loading models…</p>}
 
       {!loadingModels && (
         <>
           {(workerError || !workerAvailable) && (
-            <div
-              style={{
-                background: "#fff4e5",
-                borderLeft: "4px solid #f59e0b",
-                padding: 12,
-                marginBottom: 12,
-              }}
-              role="alert"
-            >
-              <div className="controls-row">
-                <strong style={{ color: "#92400e" }}>Processing Notice:</strong>
-                <div style={{ color: "#92400e" }}>Face recognition temporarily using fallback mode. This may be slower but will not affect functionality.</div>
-              </div>
+            <div style={{ textAlign: 'center', color: '#92400e', marginBottom: 8 }}>
+              Using fallback processing mode
             </div>
           )}
 
           {/* Token Input for Sign-In/Sign-Out when webcam unavailable */}
           {showTokenInput && entityType === 'user' && (forceOperation === 'signin' || forceOperation === 'signout') && (
-            <div
-              style={{
-                background: "#f0f9ff",
-                border: "2px solid #0284c7",
-                borderRadius: "8px",
-                padding: "20px",
-                marginBottom: "16px",
-                textAlign: "center",
-              }}
-            >
-              <h3 style={{ marginTop: 0, color: "#0369a1" }}>{forceOperation === 'signout' ? 'Backup Sign-out Code' : 'Backup Authentication'}</h3>
-              <p style={{ color: "#0c4a6e", marginBottom: "16px" }}>
-                {forceOperation === 'signout'
-                  ? 'Enter the 6-digit sign-out code you received from the device that recorded the end of day.'
-                  : 'Enter the 6-digit authentication code you received after your last successful login.'}
-              </p>
-              
-              <form onSubmit={handleTokenSubmit} style={{ maxWidth: "300px", margin: "0 auto" }}>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]{6}"
-                  maxLength="6"
-                  value={tokenInput}
-                  onChange={(e) => setTokenInput(e.target.value.replace(/\D/g, ''))}
-                  placeholder="000000"
-                  disabled={isProcessing}
-                  style={{
-                    width: "100%",
-                    padding: "12px",
-                    fontSize: "1.5rem",
-                    textAlign: "center",
-                    letterSpacing: "0.3em",
-                    border: tokenError ? "2px solid #dc2626" : "2px solid #0284c7",
-                    borderRadius: "4px",
-                    marginBottom: "12px",
-                  }}
-                  aria-label="Authentication code"
-                  autoFocus
-                />
-                
-                {tokenError && (
-                  <p style={{ color: "#dc2626", fontSize: "0.9rem", marginBottom: "12px" }}>
-                    {tokenError}
-                  </p>
-                )}
-                
-                <button
-                  type="submit"
-                  disabled={isProcessing || tokenInput.length !== 6}
-                  style={{
-                    width: "100%",
-                    padding: "12px",
-                    fontSize: "1rem",
-                    fontWeight: "600",
-                    backgroundColor: isProcessing || tokenInput.length !== 6 ? "#94a3b8" : "#0284c7",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "4px",
-                    cursor: isProcessing || tokenInput.length !== 6 ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {isProcessing ? "Validating..." : "Sign In with Code"}
-                </button>
-              </form>
-              
-                <p style={{ fontSize: "0.85rem", color: "#64748b", marginTop: "12px", marginBottom: 0 }}>
-                Don't have a code? You'll receive one after your next successful biometric authentication on a device with a webcam.
-              </p>
-            </div>
+            <>
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1200 }} />
+              <div
+                role="dialog"
+                aria-modal="true"
+                style={{
+                  position: 'fixed',
+                  left: '50%',
+                  top: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  zIndex: 1201,
+                  background: '#fff',
+                  padding: 18,
+                  borderRadius: 8,
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+                  width: isSmallScreen ? '90vw' : '400px',
+                  textAlign: 'center'
+                }}
+              >
+                <h3 style={{ marginTop: 0 }}>{forceOperation === 'signout' ? 'Sign-out code' : 'Authentication code'}</h3>
+                {message && <div style={{ fontSize: '0.9rem', color: '#374151', marginBottom: 8 }}>{message}</div>}
+
+                <form onSubmit={handleTokenSubmit} style={{ maxWidth: '320px', margin: '0 auto' }}>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]{6}"
+                    maxLength="6"
+                    value={tokenInput}
+                    onChange={(e) => setTokenInput(e.target.value.replace(/\D/g, ''))}
+                    placeholder="000000"
+                    disabled={isProcessing}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      fontSize: '1.5rem',
+                      textAlign: 'center',
+                      letterSpacing: '0.3em',
+                      border: tokenError ? '2px solid #dc2626' : '2px solid #0284c7',
+                      borderRadius: 6,
+                      marginBottom: 12,
+                    }}
+                    aria-label="Authentication code"
+                    autoFocus
+                  />
+
+                  {tokenError && <p style={{ color: '#dc2626', fontSize: '0.9rem', marginBottom: 12 }}>{tokenError}</p>}
+
+                  <button
+                    type="submit"
+                    disabled={isProcessing || tokenInput.length !== 6}
+                    className="submit-btn"
+                    style={{ width: '100%' }}
+                  >
+                    {isProcessing ? 'Validating...' : 'Sign In with Code'}
+                  </button>
+                </form>
+
+                <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'center' }}>
+                  <button onClick={() => { startWebcam(); }} className="submit-btn">Retry</button>
+                  <button onClick={() => { setShowTokenInput(false); }} className="submit-btn">Cancel</button>
+                </div>
+              </div>
+            </>
           )}
 
           {/* Attendance Recording Prompt */}
           {showAttendancePrompt && pendingAttendanceData && (
-            <div
-              style={{
-                background: "#f0fdf4",
-                border: "2px solid #16a34a",
-                borderRadius: "8px",
-                padding: "20px",
-                marginBottom: "16px",
-                textAlign: "center",
-              }}
-            >
-              <h3 style={{ marginTop: 0, color: "#15803d" }}>
-                {pendingAttendanceData.isSignOut ? '👋 Sign Out' : '👍 Sign In'}
-              </h3>
-              <p style={{ color: "#166534", marginBottom: "20px", fontSize: "1.1rem" }}>
-                <strong>{pendingAttendanceData.displayName}</strong>
-              </p>
-              <p style={{ color: "#166534", marginBottom: "20px" }}>
-                Would you like to record attendance for the day?
-              </p>
-              
-              <div style={{ display: "flex", gap: "12px", justifyContent: "center" }}>
-                <button
-                  onClick={() => handleAttendanceResponse(true)}
-                  style={{
-                    padding: "12px 24px",
-                    fontSize: "1rem",
-                    fontWeight: "600",
-                    backgroundColor: "#16a34a",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "4px",
-                    cursor: "pointer",
-                    minWidth: "120px",
-                  }}
-                >
-                  Yes, Record It
-                </button>
-                
-                <button
-                  onClick={() => handleAttendanceResponse(false)}
-                  style={{
-                    padding: "12px 24px",
-                    fontSize: "1rem",
-                    fontWeight: "600",
-                    backgroundColor: "#6b7280",
-                    color: "white",
-                    border: "none",
-                    borderRadius: "4px",
-                    cursor: "pointer",
-                    minWidth: "120px",
-                  }}
-                >
-                  No, Just {pendingAttendanceData.isSignOut ? 'Logout' : 'Login'}
-                </button>
+            <div style={{ padding: 12, marginBottom: 12, textAlign: 'center' }}>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>{pendingAttendanceData.displayName}</div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                <button onClick={() => handleAttendanceResponse(true)} className="submit-btn">Sign In</button>
+                <button onClick={() => handleAttendanceResponse(false)} className="submit-btn">No, Just Login</button>
               </div>
             </div>
           )}
 
           {/* Webcam Warning for Sign-Out */}
-          {webcamError && forceOperation === 'signout' && (
-            <div
-              style={{
-                background: "#fef2f2",
-                border: "2px solid #dc2626",
-                borderRadius: "8px",
-                padding: "20px",
-                marginBottom: "16px",
-                textAlign: "center",
-              }}
-              role="alert"
-            >
-              <h3 style={{ marginTop: 0, color: "#991b1b" }}>⚠️ Webcam Required</h3>
-              <p style={{ color: "#7f1d1d", marginBottom: "16px" }}>
-                Biometric verification is recommended to end your work day. If this device has no webcam you can paste a sign-out code instead.
-              </p>
-              
-              <button
-                onClick={() => startWebcam()}
+          {webcamError && forceOperation === 'signout' && !showTokenInput && (
+            <>
+              <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1200 }} />
+              <div
+                role="alertdialog"
                 style={{
-                  padding: "10px 20px",
-                  fontSize: "0.95rem",
-                  fontWeight: "600",
-                  backgroundColor: "#dc2626",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  marginRight: "8px",
+                  position: 'fixed',
+                  left: '50%',
+                  top: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  zIndex: 1201,
+                  background: '#fff',
+                  padding: 18,
+                  borderRadius: 8,
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+                  width: isSmallScreen ? '90vw' : '420px',
+                  textAlign: 'center'
                 }}
               >
-                Retry Webcam Access
-              </button>
-
-              <button
-                onClick={() => setShowTokenInput(true)}
-                style={{
-                  padding: "10px 20px",
-                  fontSize: "0.95rem",
-                  fontWeight: "600",
-                  backgroundColor: "#0284c7",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  marginRight: "8px",
-                }}
-              >
-                Use backup code
-              </button>
-              
-              <button
-                onClick={() => {
-                  try {
-                    if (typeof onCancel === 'function') return onCancel();
-                  } catch (e) {
-                    console.warn('onCancel handler failed', e);
-                  }
-                  // Fallback for legacy callers: navigate back
-                  window.history.back();
-                }}
-                style={{
-                  padding: "10px 20px",
-                  fontSize: "0.95rem",
-                  fontWeight: "600",
-                  backgroundColor: "#6b7280",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                }}
-              >
-                Cancel
-              </button>
-            </div>
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>Webcam required for sign-out</div>
+                {message && <div style={{ fontSize: '0.9rem', color: '#374151', marginBottom: 8 }}>{message}</div>}
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                  <button onClick={() => startWebcam()} className="submit-btn">Retry</button>
+                  <button onClick={() => setShowTokenInput(true)} className="submit-btn">Use code</button>
+                  <button onClick={() => { try { if (typeof onCancel === 'function') onCancel(); } catch (e) {} window.history.back(); }} className="submit-btn">Cancel</button>
+                </div>
+              </div>
+            </>
           )}
 
           {/* Only show video and controls when not using token fallback or showing webcam warning */}
           {!showTokenInput && !(webcamError && forceOperation === 'signout') && (
             <>
               <div className="video-container">
-            {PERF_UI && perfSnapshot && (
-              <div className="perf-overlay" aria-label="Performance timings">
-                <div>Models: {perfSnapshot.modelsStart != null && perfSnapshot.modelsEnd != null ? Math.round(perfSnapshot.modelsEnd - perfSnapshot.modelsStart) + 'ms' : '-'}</div>
-                <div>Refs: {perfSnapshot.refsStart != null && perfSnapshot.refsEnd != null ? Math.round(perfSnapshot.refsEnd - perfSnapshot.refsStart) + 'ms' : '-'}</div>
-                <div>Camera: {perfSnapshot.cameraStart != null && perfSnapshot.cameraEnd != null ? Math.round(perfSnapshot.cameraEnd - perfSnapshot.cameraStart) + 'ms' : '-'}</div>
-                <div>Capture: {perfSnapshot.captureStart != null && perfSnapshot.captureEnd != null ? Math.round(perfSnapshot.captureEnd - perfSnapshot.captureStart) + 'ms' : '-'}</div>
-              </div>
-            )}
             <video
               ref={webcamRef}
               autoPlay
@@ -1833,47 +1717,44 @@ useEffect(() => {
           </div>
 
           <div style={{ marginBottom: 12 }}>
-            <div style={{ marginBottom: 6 }}>
-              <strong>Mode:</strong> {mode === "continuous" ? "Continuous (recommended for groups)" : "Snapshot (single capture)"}
-            </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <button
-                className="submit-btn"
-                onClick={handleCapture}
-                disabled={!referencesReady || isProcessing || mode === "continuous"}
-              >
-                {isProcessing
-                  ? "Processing..."
-                  : Object.keys(pendingSignIns).length === 0
-                  ? "Sign In Snapshot"
-                  : "Sign Out Snapshot"}
-              </button>
-
-              {mode === "snapshot" ? (
+              <div style={{ marginBottom: 6 }}>
+                <div style={{ textAlign: 'center' }}>{mode === 'continuous' ? 'Recording…' : ''}</div>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: 'center' }}>
                 <button
                   className="submit-btn"
-                  onClick={startContinuous}
+                  onClick={handleCapture}
                   disabled={!referencesReady || isProcessing}
-                  title="Start continuous mode: processes frames repeatedly (better for groups)"
                 >
-                  Start group(Video)
+                  {isProcessing ? 'Processing...' : (Object.keys(pendingSignIns).length === 0 ? 'Sign In' : 'Sign Out')}
                 </button>
-              ) : (
-                <button
-                  className="submit-btn"
-                  onClick={stopContinuous}
-                  disabled={isProcessing}
-                  title="Stop continuous processing"
-                >
-                  Stop group
-                </button>
-              )}
-            </div>
+
+                {mode === "snapshot" ? (
+                  <button
+                    className="submit-btn"
+                    onClick={startContinuous}
+                    disabled={!referencesReady || isProcessing}
+                    title="Record session"
+                  >
+                    Record Session
+                  </button>
+                ) : (
+                  <button
+                    className="submit-btn"
+                    onClick={stopContinuous}
+                    disabled={isProcessing}
+                    title="End session"
+                  >
+                    End Session
+                  </button>
+                )}
+              </div>
           </div>
             </>
           )}
 
-          {message && <pre className="message">{message}</pre>}
+          {/* Don't show the global floating message when token input or webcam fallback UI is active to avoid overlap */}
+          {message && !showTokenInput && !webcamError && <pre className="message">{message}</pre>}
         </>
       )}
     </div>

@@ -377,6 +377,12 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
     // attendanceData expected to contain { studentId, type: 'signin'|'signout', timestamp, note }
     try {
       if (!attendanceData) return;
+      // If biometric component called onCompleted with a simple id (to signal it's done),
+      // hide the biometric UI and return early.
+      if (typeof attendanceData === 'string' || typeof attendanceData === 'number') {
+        setShowBiometrics(false);
+        return;
+      }
       const rows = Array.isArray(attendanceData) ? attendanceData : [attendanceData];
       const results = [];
   for (const r of rows) {
@@ -393,6 +399,8 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
       }
       setLastActionResult({ attendanceRecorded: results });
       addToast(`Recorded ${results.length} attendance entries`, "success");
+  // hide biometric UI after recording attendance
+  setShowBiometrics(false);
       return results;
     } catch (err) {
       console.error("Failed to record attendance from biometrics", err);
@@ -530,6 +538,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                 studentId={selectedStudentIds && selectedStudentIds.length ? selectedStudentIds : (filteredStudents[0]?.id ? [filteredStudents[0].id] : null)}
                 schoolId={filteredStudents[0]?.school_id || null}
                 sessionType={participantsTable}
+                academicSessionId={selectedSession}
                 bucketName="student-uploads"
                 folderName="faces"
                 onCompleted={(data) => handleBiometricsCompleted(data)}
