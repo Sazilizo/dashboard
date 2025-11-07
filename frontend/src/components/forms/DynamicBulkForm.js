@@ -410,6 +410,77 @@ export default function DynamicBulkFormRHF({
     setValue("coach_id", "");
   }, [selectedSchool]);
 
+  // ---------------------- Dynamic grouping from another record ----------------------
+  // Support schema fields that declare `group_dynamic` which maps a json_object
+  // field to the structure stored on another table (for example: answers -> academic_sessions.sections)
+  useEffect(() => {
+    if (!schema || !schema.length) return;
+
+    // find fields that declare group_dynamic
+    const dynamicFields = schema.filter((f) => f.group_dynamic && f.group_dynamic.source && f.group_dynamic.field);
+    if (!dynamicFields.length) return;
+
+    // determine a candidate session id from form values or presetFields
+    const sessionIdCandidate = watchAll.session_id || presetFields?.session_id || null;
+    if (!sessionIdCandidate) {
+      console.log('[DynamicBulkForm] group_dynamic: no session id candidate found (watchAll.session_id, presetFields.session_id)', watchAll.session_id, presetFields && presetFields.session_id);
+      return;
+    }
+
+    (async () => {
+      try {
+        console.log('[DynamicBulkForm] group_dynamic: populating dynamic fields for session', sessionIdCandidate, dynamicFields.map(d => d.name));
+
+        await Promise.all(dynamicFields.map(async (f) => {
+          const srcTable = f.group_dynamic.source;
+          const srcField = f.group_dynamic.field; // e.g. 'sections'
+          const mapping = f.group_dynamic.mapping || {};
+
+          try {
+            const { data: src, error: srcErr } = await api.from(srcTable).select(`${srcField}`).eq('id', sessionIdCandidate).single();
+            if (srcErr || !src) {
+              console.warn('[DynamicBulkForm] group_dynamic: source fetch returned no data or error', srcErr, src);
+              return;
+            }
+
+            console.log('[DynamicBulkForm] group_dynamic: fetched source', src);
+
+            const srcObj = src[srcField];
+            // srcObj may be an object with { sections: [...] } or directly the sections array
+            const srcSections = Array.isArray(srcObj) ? srcObj : (srcObj && Array.isArray(srcObj.sections) ? srcObj.sections : []);
+
+            // Map source sections -> answers structure expected by participant form
+            const answersSections = (srcSections || []).map((s) => {
+              const srcQuestions = Array.isArray(s.questions) ? s.questions : [];
+              const questions = srcQuestions.map((q) => ({
+                // preserve original question text/type/options so UI can render contextual fields
+                question: q.question || q.text || "",
+                type: q.type || "text",
+                options: Array.isArray(q.options) ? q.options : (q.options ? q.options.split(",").map(o => o.trim()) : []),
+                // placeholder for the student's answer
+                answer: null,
+              }));
+
+              return {
+                // Use mapped section_title key (mapping.section_title) if present, otherwise common names
+                [mapping.section_title || 'section']: s.section_title || s.section || "",
+                questions,
+              };
+            });
+
+            // set the answers field value in the form — overwrite so changing session updates questionnaire
+            setValue(f.name, { sections: answersSections });
+            console.log('[DynamicBulkForm] group_dynamic: setValue for', f.name, { sections: answersSections });
+          } catch (err) {
+            console.warn('[DynamicBulkForm] group_dynamic mapping failed for', f.name, err);
+          }
+        }));
+      } catch (err) {
+        console.warn('[DynamicBulkForm] group_dynamic processing failed', err);
+      }
+    })();
+  }, [schema, watchAll.session_id, presetFields]);
+
   // ---------------------- Conditional validation tweaks ----------------------
   // If coach is not applicable (physical education not selected), make it optional
   useEffect(() => {
@@ -656,92 +727,196 @@ export default function DynamicBulkFormRHF({
 
       case "json_object": {
         // Check if this field has repeater logic (sections/questions)
-        const groupArr = Array.isArray(field.group) ? field.group : [];
-        const hasRepeater = groupArr.some((g) => g?.type === "repeater");
+          const groupArr = Array.isArray(field.group) ? field.group : [];
+          // treat group_dynamic as a repeater-like source as well
+          const hasRepeater = groupArr.some((g) => g?.type === "repeater") || !!field.group_dynamic;
 
-        if (hasRepeater) {
+          if (hasRepeater) {
           // Repeater field for sections with nested questions
-          const sectionsData = (watchAll[field.name] && Array.isArray(watchAll[field.name].sections))
-            ? watchAll[field.name].sections
-            : [];
+            const sectionsData = (watchAll[field.name] && Array.isArray(watchAll[field.name].sections))
+              ? watchAll[field.name].sections
+              : [];
 
-          return (
-            <div key={field.name} className="mb-4 border p-2 rounded">
-              <label className="font-medium">{field.label}</label>
-              <div className="mb-2">
-                <button type="button" onClick={handleAddSection} className="px-2 py-1 bg-green-500 text-white rounded">
-                  + Add Section
-                </button>
-              </div>
-              {sectionsData.map((section, sIndex) => (
-                <div key={sIndex} className="mb-4 border p-2 rounded bg-gray-50">
-                  <input
-                    type="text"
-                    placeholder={`Section ${sIndex + 1} Title`}
-                    value={section.section_title || ""}
-                    onChange={(e) => handleSectionChange(sIndex, "section_title", e.target.value)}
-                    className="w-full mb-2 p-2 border rounded"
-                    required
-                  />
-                  <input
-                    type="number"
-                    placeholder="Number of Questions"
-                    min={0}
-                    max={20}
-                    value={section.number_of_questions ?? 0}
-                    onChange={(e) => handleSectionChange(sIndex, "number_of_questions", e.target.value)}
-                    className="w-full mb-2 p-2 border rounded"
-                    required
-                  />
-                  <div>
-                    <button type="button" onClick={() => handleAddQuestion(sIndex)} className="px-2 py-1 bg-blue-500 text-white rounded mb-2">
-                      + Add Question
-                    </button>
-                  </div>
-                  {(Array.isArray(section.questions) ? section.questions : []).map((q, qIndex) => (
-                    <div key={qIndex} className="mb-2 p-2 border rounded bg-white">
-                      <input
-                        type="text"
-                        placeholder={`Question ${qIndex + 1}`}
-                        value={q.question || ""}
-                        onChange={(e) => handleQuestionChange(sIndex, qIndex, "question", e.target.value)}
-                        className="w-full mb-1 p-2 border rounded"
-                        required
-                      />
-                      <select
-                        value={q.type || ""}
-                        onChange={(e) => handleQuestionChange(sIndex, qIndex, "type", e.target.value)}
-                        className="w-full mb-1 p-2 border rounded"
-                        required
-                      >
-                        <option value="">Select Type</option>
-                        <option value="text">Text</option>
-                        <option value="image_choice">Image Choice</option>
-                        <option value="multiple_choice">Multiple Choice</option>
-                        <option value="long_text">Long Text</option>
-                      </select>
-                      {(q.type === "multiple_choice" || q.type === "image_choice") && (
-                        <input
-                          type="text"
-                          placeholder="Options (comma separated)"
-                          value={Array.isArray(q.options) ? q.options.join(",") : (q.options || "")}
-                          onChange={(e) => handleQuestionChange(sIndex, qIndex, "options", e.target.value.split(",").map(o => o.trim()))}
-                          className="w-full mb-1 p-2 border rounded"
-                        />
-                      )}
-                      <input
-                        type="text"
-                        placeholder="Correct Answer"
-                        value={q.correct_answer || ""}
-                        onChange={(e) => handleQuestionChange(sIndex, qIndex, "correct_answer", e.target.value)}
-                        className="w-full mb-1 p-2 border rounded"
-                      />
+            // If this is a dynamically-mapped field (group_dynamic), render questions as read-only prompts
+            if (field.group_dynamic) {
+              return (
+                <div key={field.name} className="mb-4 border p-2 rounded">
+                  <label className="font-medium">{field.label}</label>
+                  {sectionsData.map((section, sIndex) => (
+                    <div key={sIndex} className="mb-4 border p-3 rounded bg-gray-50">
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <div className="text-sm text-gray-500">Section {sIndex + 1}</div>
+                          <div className="text-lg font-semibold">{section.section || section.section_title || `Section ${sIndex + 1}`}</div>
+                        </div>
+                      </div>
+
+                      {(Array.isArray(section.questions) ? section.questions : []).map((q, qIndex) => (
+                        <div key={qIndex} className="mb-3 p-3 border rounded bg-white">
+                          <label className="block mb-2 font-medium">
+                            {`${sIndex + 1}.${qIndex + 1} ${q.question || `Question ${qIndex + 1}`}`}
+                          </label>
+
+                          <Controller
+                            control={control}
+                            name={`${field.name}.sections.${sIndex}.questions.${qIndex}.answer`}
+                            render={({ field: ansField }) => {
+                              const qtype = (q.type || 'text');
+                              // long text -> textarea
+                              if (qtype === 'long_text') {
+                                return (
+                                  <textarea
+                                    {...ansField}
+                                    rows={4}
+                                    className="w-full p-2 border rounded"
+                                    placeholder="Your answer"
+                                  />
+                                );
+                              }
+
+                              // multiple choice -> select
+                              if (qtype === 'multiple_choice') {
+                                const opts = Array.isArray(q.options) ? q.options : [];
+                                return (
+                                  <select {...ansField} className="w-full p-2 border rounded">
+                                    <option value="">Select answer</option>
+                                    {opts.map((opt, i) => (
+                                      <option key={i} value={opt}>{opt}</option>
+                                    ))}
+                                  </select>
+                                );
+                              }
+
+                              // image choice -> radio list with thumbnails when URLs provided
+                              if (qtype === 'image_choice') {
+                                const opts = Array.isArray(q.options) ? q.options : [];
+                                if (!opts.length) return <input {...ansField} className="w-full p-2 border rounded" placeholder="Answer" />;
+                                return (
+                                  <div className="grid grid-cols-2 gap-2">
+                                    {opts.map((opt, i) => {
+                                      const isUrl = typeof opt === 'string' && /^(https?:|data:)/.test(opt);
+                                      const id = `${field.name}_${sIndex}_${qIndex}_opt_${i}`;
+                                      return (
+                                        <label key={i} htmlFor={id} className="flex items-center gap-2 p-2 border rounded cursor-pointer">
+                                          <input
+                                            id={id}
+                                            type="radio"
+                                            value={opt}
+                                            checked={ansField.value === opt}
+                                            onChange={() => ansField.onChange(opt)}
+                                          />
+                                          {isUrl ? (
+                                            <img src={opt} alt={`option-${i}`} style={{ width: 80, height: 60, objectFit: 'cover' }} />
+                                          ) : (
+                                            <span>{opt}</span>
+                                          )}
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              }
+
+                              // default -> short text input
+                              return (
+                                <input
+                                  {...ansField}
+                                  className="w-full p-2 border rounded"
+                                  placeholder="Your answer"
+                                />
+                              );
+                            }}
+                          />
+
+                          {q.correct_answer && (
+                            <div className="text-xs text-gray-500 mt-2">Correct answer: <strong>{q.correct_answer}</strong></div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>
-              ))}
-            </div>
-          );
+              );
+            }
+
+            // Fallback: static repeater UI (editable sections/questions)
+            return (
+              <div key={field.name} className="mb-4 border p-2 rounded">
+                <label className="font-medium">{field.label}</label>
+                <div className="mb-2">
+                  <button type="button" onClick={handleAddSection} className="px-2 py-1 bg-green-500 text-white rounded">
+                    + Add Section
+                  </button>
+                </div>
+                {sectionsData.map((section, sIndex) => (
+                  <div key={sIndex} className="mb-4 border p-2 rounded bg-gray-50">
+                    <input
+                      type="text"
+                      placeholder={`Section ${sIndex + 1} Title`}
+                      value={section.section_title || ""}
+                      onChange={(e) => handleSectionChange(sIndex, "section_title", e.target.value)}
+                      className="w-full mb-2 p-2 border rounded"
+                      required
+                    />
+                    <input
+                      type="number"
+                      placeholder="Number of Questions"
+                      min={0}
+                      max={20}
+                      value={section.number_of_questions ?? 0}
+                      onChange={(e) => handleSectionChange(sIndex, "number_of_questions", e.target.value)}
+                      className="w-full mb-2 p-2 border rounded"
+                      required
+                    />
+                    <div>
+                      <button type="button" onClick={() => handleAddQuestion(sIndex)} className="px-2 py-1 bg-blue-500 text-white rounded mb-2">
+                        + Add Question
+                      </button>
+                    </div>
+                    {(Array.isArray(section.questions) ? section.questions : []).map((q, qIndex) => (
+                      <div key={qIndex} className="mb-2 p-2 border rounded bg-white">
+                        <input
+                          type="text"
+                          placeholder={`Question ${qIndex + 1}`}
+                          value={q.question || ""}
+                          onChange={(e) => handleQuestionChange(sIndex, qIndex, "question", e.target.value)}
+                          className="w-full mb-1 p-2 border rounded"
+                          required
+                        />
+                        <select
+                          value={q.type || ""}
+                          onChange={(e) => handleQuestionChange(sIndex, qIndex, "type", e.target.value)}
+                          className="w-full mb-1 p-2 border rounded"
+                          required
+                        >
+                          <option value="">Select Type</option>
+                          <option value="text">Text</option>
+                          <option value="image_choice">Image Choice</option>
+                          <option value="multiple_choice">Multiple Choice</option>
+                          <option value="long_text">Long Text</option>
+                        </select>
+                        {(q.type === "multiple_choice" || q.type === "image_choice") && (
+                          <input
+                            type="text"
+                            placeholder="Options (comma separated)"
+                            value={Array.isArray(q.options) ? q.options.join(",") : (q.options || "")}
+                            onChange={(e) => handleQuestionChange(sIndex, qIndex, "options", e.target.value.split(",").map(o => o.trim()))}
+                            className="w-full mb-1 p-2 border rounded"
+                          />
+                        )}
+                        <input
+                          type="text"
+                          placeholder="Correct Answer"
+                          value={q.correct_answer || ""}
+                          onChange={(e) => handleQuestionChange(sIndex, qIndex, "correct_answer", e.target.value)}
+                          className="w-full mb-1 p-2 border rounded"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            );
         }
 
         // Standard json_object field (not a repeater)

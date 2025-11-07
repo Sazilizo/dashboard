@@ -208,9 +208,9 @@ export default function LoginForm() {
           if (refreshUser) await refreshUser(true);
         }
       } else if (authToken && userProfile?.id) {
-        // fallback: if no credentials but token was issued, attempt to persist token server-side
+        // fallback: if no credentials but token was issued, persist token via storeAuthToken
         try {
-          await api.from('auth_tokens').insert({ profile_id: userProfile.id, token: authToken });
+          await storeAuthToken(userProfile.id, authToken, 60);
         } catch (e) {
           console.warn('Failed to persist token after biometric:', e);
         }

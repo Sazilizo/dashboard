@@ -159,7 +159,7 @@ export async function validateAuthToken(profileId, token) {
       // First try matching by auth_uid
       let dbQuery = await api
         .from('auth_tokens')
-        .select('id, token, expires_at, used, profile_id')
+        .select('id, token, expires_at, used, auth_uid')
         .eq('auth_uid', authUid)
         .eq('token', token)
         .maybeSingle();
@@ -169,24 +169,7 @@ export async function validateAuthToken(profileId, token) {
 
       console.log('[validateAuthToken] Database query (by auth_uid) result:', { data, error });
 
-      // If not found by auth_uid, try matching by profile_id (some code paths insert with profile_id)
-      if ((!data || !data.token) && !error) {
-        try {
-          const byProfile = await api
-            .from('auth_tokens')
-            .select('id, token, expires_at, used, auth_uid')
-            .eq('profile_id', profileId)
-            .eq('token', token)
-            .maybeSingle();
-          if (byProfile && !byProfile.error && byProfile.data) {
-            data = byProfile.data;
-            error = null;
-            console.log('[validateAuthToken] Database query (by profile_id) result:', { data });
-          }
-        } catch (e) {
-          console.warn('[validateAuthToken] profile_id lookup failed', e);
-        }
-      }
+      // If not found by auth_uid, we'll fall back to localStorage (no profile_id fallback)
 
       if (!error && data) {
         const isExpired = new Date(data.expires_at) < new Date();
@@ -215,12 +198,7 @@ export async function validateAuthToken(profileId, token) {
                 .eq('auth_uid', data.auth_uid)
                 .eq('token', token);
             } else {
-              // fallback to profile_id
-              await api
-                .from('auth_tokens')
-                .update({ used: true })
-                .eq('profile_id', profileId)
-                .eq('token', token);
+              // No suitable DB identifier available - skip DB mark and rely on local fallback
             }
             console.log('[validateAuthToken] Token marked as used in database');
           } catch (e) {
@@ -297,7 +275,7 @@ export async function getActiveToken(profileId) {
     try {
       let q = await api
         .from('auth_tokens')
-        .select('id, token, expires_at, used, profile_id')
+        .select('id, token, expires_at, used, auth_uid')
         .eq('auth_uid', authUid)
         .eq('used', false)
         .maybeSingle();
@@ -308,19 +286,7 @@ export async function getActiveToken(profileId) {
         if (!isExpired) return data;
       }
 
-      // Try DB by profile_id as a fallback (some insert paths use profile_id)
-      let q2 = await api
-        .from('auth_tokens')
-        .select('id, token, expires_at, used, auth_uid')
-        .eq('profile_id', profileId)
-        .eq('used', false)
-        .maybeSingle();
-
-      if (q2 && !q2.error && q2.data) {
-        const data = q2.data;
-        const isExpired = new Date(data.expires_at) < new Date();
-        if (!isExpired) return data;
-      }
+      // Do not attempt DB lookup by profile_id; rely on auth_uid or localStorage fallback
     } catch (err) {
       console.warn('[getActiveToken] DB lookup failed, falling back to localStorage', err);
     }

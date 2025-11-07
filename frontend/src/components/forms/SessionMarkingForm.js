@@ -9,10 +9,11 @@ import { getTable } from "../../utils/tableCache";
 export default function SessionMarkingForm() {
   const { user } = useAuth();
   const { id } = useParams(); // student id
-  const { addRow } = useOfflineTable("academic_session_participants"); // can extend to PE later
+  const { addRow, updateRow } = useOfflineTable("academic_session_participants"); // can extend to PE later
 
   const [student, setStudent] = useState(null);
   const [sessions, setSessions] = useState([]);
+  const [participantMap, setParticipantMap] = useState({}); // session_id -> participant id
   const [selectedSession, setSelectedSession] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -47,7 +48,7 @@ export default function SessionMarkingForm() {
         let cachedParticipants = await getTable("academic_session_participants");
         cachedParticipants = cachedParticipants || [];
 
-        const studentParticipants = cachedParticipants.filter(
+        let studentParticipants = cachedParticipants.filter(
           (p) =>
             Number(p.student_id) === Number(fetchedStudent.id) &&
             p.academic_sessions?.category === fetchedStudent.category
@@ -55,7 +56,7 @@ export default function SessionMarkingForm() {
 
         let sessionsList = studentParticipants.map((p) => p.academic_sessions);
 
-        // If none offline, fetch online
+        // If none offline, fetch online and use those participants
         if (sessionsList.length === 0) {
           const { data, error } = await api
             .from("academic_session_participants")
@@ -64,13 +65,22 @@ export default function SessionMarkingForm() {
             .order("created_at", { ascending: false });
 
           if (error) throw error;
-          sessionsList = data.filter((p) => p.academic_sessions?.category === fetchedStudent.category)
-                             .map((p) => p.academic_sessions);
+          const filtered = (data || []).filter((p) => p.academic_sessions?.category === fetchedStudent.category);
+          studentParticipants = filtered;
+          sessionsList = filtered.map((p) => p.academic_sessions);
         }
 
         // Remove duplicates by session ID
         const uniqueSessions = Array.from(new Map(sessionsList.map((s) => [s.id, s])).values());
 
+        // Build map of session_id -> participant id so we can update instead of inserting
+        const map = {};
+        (studentParticipants || []).forEach((p) => {
+          const sid = p.session_id || p.academic_sessions?.id;
+          if (sid && p.id) map[sid] = p.id;
+        });
+
+        setParticipantMap(map);
         setSessions(uniqueSessions);
       } catch (err) {
         console.error(err);
@@ -88,12 +98,20 @@ export default function SessionMarkingForm() {
   const handleMarking = async (formData) => {
     if (!student || !selectedSession) return;
     try {
-      await addRow({
+      const payload = {
         ...formData,
         student_id: student.id,
         session_id: selectedSession,
         school_id: student.school_id,
-      });
+      };
+
+      const existingParticipantId = participantMap[selectedSession];
+      if (existingParticipantId) {
+        // Update existing participant record to avoid duplicate constraint errors
+        await updateRow(existingParticipantId, payload);
+      } else {
+        await addRow(payload);
+      }
     } catch (err) {
       console.error(err);
     }
@@ -105,7 +123,9 @@ export default function SessionMarkingForm() {
 
   return (
     <div className="p-6 space-y-4">
-      <Link to="/dashboard/students" className="btn btn-primary">Back</Link>
+      <button className="btn btn-primary" onClick={() => window.history.back()}>
+        Back to Student {student.full_name || student.name}
+      </button>
       <h2 className="text-xl font-bold">Mark Session for {student.full_name || student.name}</h2>
 
       <select
@@ -124,7 +144,10 @@ export default function SessionMarkingForm() {
       {selectedSession && (
         <DynamicBulkForm
           schema_name="Academic_session_participants"
-          presetFields={{ session_id: selectedSession }}
+          // pass session and student as preset fields so the form populates student_id
+          presetFields={{ session_id: selectedSession, student_id: student.id }}
+          // also pass studentId prop so DynamicBulkForm can use it for file uploads / externalRecordId
+          studentId={student.id}
           user={user}
           onSubmit={handleMarking}
         />

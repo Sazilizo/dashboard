@@ -110,10 +110,8 @@ const LogoutButton = () => {
           }
         }
 
-        // Also attempt delete by profile_id if the table stored it
-        try {
-          await api.from('auth_tokens').delete().eq('profile_id', userProfile.id);
-        } catch (e) { /* ignore */ }
+        // Do not attempt delete by profile_id (table schema uses auth_uid). If we couldn't
+        // fetch auth_uid above, skip revocation to avoid invalid-column errors.
       } catch (err) {
         console.warn('Failed to revoke auth tokens during logout flow', err);
       }
@@ -170,7 +168,25 @@ const LogoutButton = () => {
 
     (async () => {
       try {
-        const { data: existingTokens, error } = await api.from('auth_tokens').select('id').eq('profile_id', userProfile.id);
+  // Try to look up by auth_uid first (preferred). If profiles table doesn't have one, skip detection
+        let existingTokens = null;
+        let error = null;
+        try {
+          const { data: prof } = await api.from('profiles').select('auth_uid').eq('id', userProfile.id).maybeSingle();
+          const authUid = prof?.auth_uid;
+          if (authUid) {
+            const res = await api.from('auth_tokens').select('id').eq('auth_uid', authUid);
+            existingTokens = res.data; error = res.error;
+          } else {
+            // If we don't have an auth_uid for this profile, skip best-effort detection
+            // rather than querying by profile_id which may not exist on the table.
+            existingTokens = [];
+            error = null;
+          }
+        } catch (e) {
+          console.warn('Failed to detect existing tokens by auth_uid/profile_id', e);
+        }
+
         if (!error && Array.isArray(existingTokens) && existingTokens.length > 1) {
           const token = generateAuthToken();
           const { token: storedToken, expiresAt } = await storeAuthToken(userProfile.id, token, 60);
@@ -249,9 +265,13 @@ const LogoutButton = () => {
                   if (!userProfile?.id) return;
                   // optional: detect other active sessions/tokens (best-effort)
                   try {
-                    const { data: existingTokens } = await api.from('auth_tokens').select('id').eq('profile_id', userProfile.id);
-                    // if multiple tokens exist, we may choose to generate a new code automatically
-                    // but we'll allow manual generation in any case
+                    // Try auth_uid lookup first
+                    const { data: prof } = await api.from('profiles').select('auth_uid').eq('id', userProfile.id).maybeSingle();
+                    const authUid = prof?.auth_uid;
+                    if (authUid) {
+                      const { data: existingTokens } = await api.from('auth_tokens').select('id').eq('auth_uid', authUid);
+                    }
+                    // if no auth_uid, skip detection (we'll still generate a code)
                   } catch (e) {
                     // ignore detection errors
                   }

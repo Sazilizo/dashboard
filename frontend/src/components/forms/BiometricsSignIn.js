@@ -37,126 +37,64 @@ const DEBUG = false;
 // Lightweight in-app performance overlay for timing key steps
 const PERF_UI = false;
 
-// Global cache to persist face descriptors across mounts
-const faceDescriptorCache = {};
-
-// Retry configuration for loading face references
-const maxRetries = 3;
-const retryTimeouts = [2000, 5000, 10000]; // ms between retries
-
+// Component wrapper (was accidentally removed during edits) — recreate component and needed hooks/refs
 const BiometricsSignIn = ({
-  studentId,
-  userId,
-  entityType = 'student', // 'student' | 'user'
-  schoolId,
-  bucketName,
-  folderName,
-  sessionType,
+  entityType = 'student',
+  studentId = null,
+  userId = null,
+  schoolId = null,
   academicSessionId = null,
-  forceOperation = null, // null | 'signout' (force sign-out on face match)
-  onCompleted,
-  onCancel, // optional callback when user cancels the biometric flow (avoid history navigation)
+  onCompleted = null,
+  onCancel = null,
+  forceOperation = null,
+  mode: initialMode = 'snapshot',
 }) => {
-  // Essential states with defaults
-  const [loadingModels, setLoadingModels] = useState(!areFaceApiModelsLoaded());
-  const [message, setMessage] = useState("");
-  const [faceMatcher, setFaceMatcher] = useState(null);
-  const [pendingSignIns, setPendingSignIns] = useState({});
+  // basic UI/state refs
+  const [message, setMessage] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
   const [captureDone, setCaptureDone] = useState(false);
   const [referencesReady, setReferencesReady] = useState(false);
-  const [loadingReferences, setLoadingReferences] = useState(false);
+  const [faceMatcher, setFaceMatcher] = useState(null);
   const [studentNames, setStudentNames] = useState({});
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [facingMode, setFacingMode] = useState("user");
+  const [loadingModels, setLoadingModels] = useState(true);
+  const [loadingReferences, setLoadingReferences] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(null);
   const [availableCameras, setAvailableCameras] = useState([]);
-  const [mode, setMode] = useState("snapshot");
-  const [isSmallScreen, setIsSmallScreen] = useState(window.innerWidth <= 900);
-  const [retryAttempt, setRetryAttempt] = useState(0);
-  const [retryInSec, setRetryInSec] = useState(null);
-  const [loadingProgress, setLoadingProgress] = useState({ loaded: 0, total: 0 });
+  const [facingMode, setFacingMode] = useState('user');
   const [webcamError, setWebcamError] = useState(false);
   const [showTokenInput, setShowTokenInput] = useState(false);
-  const [tokenInput, setTokenInput] = useState("");
-  const [tokenError, setTokenError] = useState("");
+  const [tokenInput, setTokenInput] = useState('');
+  const [tokenError, setTokenError] = useState('');
   const [showAttendancePrompt, setShowAttendancePrompt] = useState(false);
   const [pendingAttendanceData, setPendingAttendanceData] = useState(null);
-  const retryIntervalRef = useRef(null);
-  const effectiveBucket = bucketName || (entityType === 'user' ? 'profile-avatars' : bucketName);
-
-  // Minimal performance timers
-  const perfRef = useRef({
-    start: (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now(),
-    modelsStart: null,
-    modelsEnd: null,
-    refsStart: null,
-    refsEnd: null,
-    cameraStart: null,
-    cameraEnd: null,
-    captureStart: null,
-    captureEnd: null,
-  });
-  const [perfSnapshot, setPerfSnapshot] = useState(null);
-  const snapPerf = useCallback(() => setPerfSnapshot({ ...perfRef.current }), []);
+  const [pendingSignIns, setPendingSignIns] = useState({});
+  const [workerAvailable, setWorkerAvailable] = useState(false);
+  const [workerError, setWorkerError] = useState(null);
+  const [workerReloadKey, setWorkerReloadKey] = useState(0);
+  const [mode, setMode] = useState(initialMode);
 
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
-  const streamRef = useRef(null);
-  const threshold = 0.6;
-  const navigate = useNavigate();
-
-  const { addRow } = useOfflineTable("attendance_records");
-  // Separate offline table for worker attendance (profiles/workers)
-  const { addRow: addWorkerRow, updateRow: updateWorkerRow } = useOfflineTable("worker_attendance_records");
-  const [workerReloadKey, setWorkerReloadKey] = useState(0);
-  const faceapiRef = useRef(null);
-  // Online status
-  const { isOnline } = useOnlineStatus();
-  // Refs for capture/processing and worker
   const captureCanvasRef = useRef(null);
+  const streamRef = useRef(null);
   const processIntervalRef = useRef(null);
+  const perfRef = useRef({});
   const descriptorWorkerRef = useRef(null);
-  const [workerAvailable, setWorkerAvailable] = useState(false);
-  const [workerError, setWorkerError] = useState(null);
-  const { showToast } = useToast();
-  const pendingSignInsRef = useRef({});
+  const faceapiRef = useRef(null);
 
-  // ✅ Detect screen size for camera switch visibility
-  useEffect(() => {
-    const handleResize = () => setIsSmallScreen(window.innerWidth <= 900);
-    window.addEventListener("resize", handleResize);
-    handleResize();
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  // small helpers / hooks
+  const isSmallScreen = window && window.innerWidth && window.innerWidth < 640;
+  const isOnline = useOnlineStatus();
+  const toast = useToast();
 
-  // ✅ Load pending sign-ins
-  useEffect(() => {
-    const stored = localStorage.getItem("pendingSignIns");
-    if (stored) setPendingSignIns(JSON.parse(stored));
-  }, []);
+  // Offline table hooks for attendance and worker attendance
+  const { addRow, updateRow } = useOfflineTable('attendance_records');
+  const { addRow: addWorkerRow, updateRow: updateWorkerRow } = useOfflineTable('worker_attendance_records');
 
-  // ✅ Persist pending sign-ins
-  useEffect(() => {
-    localStorage.setItem("pendingSignIns", JSON.stringify(pendingSignIns));
-    // Keep a ref copy so unmount cleanup can access latest value
-    try { pendingSignInsRef.current = pendingSignIns; } catch (e) {}
-  }, [pendingSignIns]);
+  // cache for descriptors (module-level in original; keep per-instance here)
+  const faceDescriptorCache = {};
 
-  // When the component unmounts (navigating away) and there are active sessions,
-  // show a toast reminding the user to sign them out first.
-  useEffect(() => {
-    return () => {
-      try {
-        const active = pendingSignInsRef.current || {};
-        if (Object.keys(active).length > 0) {
-          showToast('You have active student sessions. Please sign out students before leaving this page.', 'warning', 8000);
-        }
-      } catch (e) {
-        // ignore failures during unmount
-      }
-    };
-  }, []);
 
-  // ✅ Ensure models are ready (fast if preloaded)
   useEffect(() => {
     let cancelled = false;
     const ensureModelsReady = async () => {
@@ -294,10 +232,10 @@ const BiometricsSignIn = ({
         },
       });
       streamRef.current = stream;
-      if (webcamRef.current) webcamRef.current.srcObject = stream;
-      // Wait for video metadata to be available (mobile devices may delay dimensions)
-      try {
-        if (webcamRef.current) {
+
+      if (webcamRef.current) {
+        try {
+          webcamRef.current.srcObject = stream;
           await new Promise((resolve) => {
             let resolved = false;
             const onMeta = () => {
@@ -315,11 +253,12 @@ const BiometricsSignIn = ({
               resolve();
             }, 2000);
           });
+          await webcamRef.current.play();
+        } catch (e) {
+          if (DEBUG) console.warn('startWebcam: waiting for metadata failed', e);
         }
-      } catch (e) {
-        if (DEBUG) console.warn('startWebcam: waiting for metadata failed', e);
       }
-      await webcamRef.current.play();
+
       perfRef.current.cameraEnd = (performance.now ? performance.now() : Date.now());
       if (PERF_UI) snapPerf();
       setWebcamError(false);
@@ -1094,8 +1033,9 @@ useEffect(() => {
           try {
             if (!pendingSignIns[match.label]) {
               // Sign in: record attendance immediately
-              await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign in' });
-              const pendingId = null; // addRow returns tempId which recordAttendance already handled; we don't rely on it here
+              const res = await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign in' });
+              // addRow may return the inserted row (online) or an object with tempId (offline)
+              const pendingId = res?.id || res?.tempId || (res?.result && (res.result.id || res.result.tempId)) || null;
               setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime: nowIso } }));
               setMessage(`${displayName} authenticated and attendance recorded.`);
 
@@ -1123,7 +1063,13 @@ useEffect(() => {
                 const signOutTime = nowIso;
                 const durationMs = new Date(signOutTime) - new Date(pending.signInTime);
                 const durationHours = (durationMs / (1000 * 60 * 60)).toFixed(2);
-                await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
+                // Use updateRow to update an existing attendance record (online/offline aware)
+                try {
+                  await updateRow(pending.id, { sign_out_time: signOutTime });
+                } catch (uerr) {
+                  // Fallback to previous behaviour if updateRow fails
+                  await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
+                }
                 setPendingSignIns((prev) => {
                   const copy = { ...prev };
                   delete copy[match.label];
@@ -1265,7 +1211,7 @@ useEffect(() => {
             date,
             sign_in_time: signInTime,
           });
-          const pendingId = res?.tempId || null;
+          const pendingId = res?.id || res?.tempId || null;
           setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime } }));
           const displayName = studentNames[match.label] || `Student ${match.label}`;
           setMessage(`${displayName} authenticated successfully.`);
@@ -1460,7 +1406,7 @@ useEffect(() => {
                 [entityId]: { id: pendingId, signInTime, isWorker: true, worker_id: res.worker_id },
               }));
             } else {
-              const pendingId = res?.tempId || null;
+              const pendingId = res?.id || res?.tempId || null;
               setPendingSignIns((prev) => ({
                 ...prev,
                 [entityId]: { id: pendingId, signInTime, isWorker: false },
@@ -1505,12 +1451,16 @@ useEffect(() => {
               } else {
                 // Existing behavior: update attendance_records sign_out_time
                 try {
-                  await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
+                  await updateRow(pending.id, { sign_out_time: signOutTime });
                 } catch (err) {
-                  console.error('Failed to update attendance_records on sign-out', err);
+                  console.error('updateRow failed, falling back to addRow update for attendance_records', err);
+                  try {
+                    await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
+                  } catch (err2) {
+                    console.error('Failed to update attendance_records on sign-out', err2);
+                  }
                 }
               }
-
               setPendingSignIns((prev) => {
                 const copy = { ...prev };
                 delete copy[entityId];

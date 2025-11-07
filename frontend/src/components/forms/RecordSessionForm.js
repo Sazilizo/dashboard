@@ -312,12 +312,19 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
       try {
         const payload = {
           session_id: selectedSession,
-          student_id: sId,
+          student_id: Number(sId),
           school_id: studentById[String(sId)]?.school_id || null,
           added_at: now,
         };
+        console.log('[RecordSessionForm] addParticipant payload', payload);
         const res = await addParticipant(payload);
-        added.push({ studentId: sId, res });
+        console.log('[RecordSessionForm] addParticipant result', res);
+        // detect errors returned by useOfflineTable
+        if (res && res.__error) {
+          errors.push({ studentId: sId, error: res.error || res });
+        } else {
+          added.push({ studentId: sId, res });
+        }
       } catch (err) {
         errors.push({ studentId: sId, error: err });
       }
