@@ -116,6 +116,8 @@ const BiometricsSignIn = ({
   // Offline table hooks for attendance and worker attendance
   const { addRow, updateRow } = useOfflineTable('attendance_records');
   const { addRow: addWorkerRow, updateRow: updateWorkerRow } = useOfflineTable('worker_attendance_records');
+  // offline hook for session participants (academic_session_participants)
+  const { addRow: addParticipantRow, updateRow: updateParticipantRow } = useOfflineTable('academic_session_participants');
 
   // cache for descriptors (module-level in original; keep per-instance here)
   const faceDescriptorCache = {};
@@ -1277,14 +1279,14 @@ useEffect(() => {
     try { recordingStartRef.current = new Date().toISOString(); } catch (e) { recordingStartRef.current = null; }
   };
 
-  const stopContinuous = () => {
+  const stopContinuous = async () => {
     if (processIntervalRef.current) {
       clearInterval(processIntervalRef.current);
       processIntervalRef.current = null;
     }
     const stopTime = new Date().toISOString();
 
-    // collect participant info captured during this recording
+    // Prepare participants info captured during recording
     const participants = Object.keys(pendingSignIns || {}).map((k) => {
       const v = pendingSignIns[k] || {};
       return {
@@ -1295,6 +1297,105 @@ useEffect(() => {
         worker_id: v.worker_id || null,
       };
     });
+
+    // Attempt to sign out all pending participants by updating their attendance rows
+    if (participants.length) {
+      setMessage('Ending recording — finalizing sign-outs...');
+      try {
+        const signOutResults = await Promise.all(participants.map(async (p) => {
+          try {
+            const v = pendingSignIns[p.student_id] || {};
+            if (!v || !v.id) return { student_id: p.student_id, updated: false, reason: 'no-id' };
+            // compute hours if we have a signInTime
+            let hours = 0;
+            if (v.signInTime) {
+              const durationMs = new Date(stopTime) - new Date(v.signInTime);
+              hours = durationMs > 0 ? (durationMs / (1000 * 60 * 60)) : 0;
+            }
+
+            if (v.isWorker) {
+              // worker attendance record
+              try {
+                await updateWorkerRow(v.id, { sign_out_time: stopTime, hours });
+              } catch (err) {
+                // best-effort: still return failure
+                return { student_id: p.student_id, updated: false, reason: String(err) };
+              }
+            } else {
+              try {
+                await updateRow(v.id, { sign_out_time: stopTime, hours });
+              } catch (err) {
+                return { student_id: p.student_id, updated: false, reason: String(err) };
+              }
+            }
+
+            return { student_id: p.student_id, updated: true };
+          } catch (err) {
+            return { student_id: p.student_id, updated: false, reason: String(err) };
+          }
+        }));
+
+        const successCount = signOutResults.filter(r => r.updated).length;
+        setMessage(`Ended recording. Signed out ${successCount}/${signOutResults.length} participant(s).`);
+      } catch (err) {
+        console.warn('Failed to perform sign-outs on stopContinuous', err);
+        setMessage('Ended recording. Some sign-outs may have failed.');
+      }
+
+      // clear pending sign-ins locally so UI reflects end of recording
+      setPendingSignIns({});
+    }
+
+      // Ensure participants are recorded in academic_session_participants
+      if (academicSessionId && participants.length) {
+        setMessage((m) => `${m}\nRecording session participants...`);
+        try {
+          const ensured = await Promise.all(participants.map(async (p) => {
+            try {
+              const sid = Number(p.student_id);
+              // If online, check remote first to avoid duplicates
+              if (isOnline) {
+                try {
+                  const { data: existing, error: existingErr } = await api
+                    .from('academic_session_participants')
+                    .select('id')
+                    .match({ session_id: academicSessionId, student_id: sid })
+                    .limit(1);
+                  if (!existingErr && existing && existing.length) {
+                    return { student_id: sid, added: false, reason: 'exists' };
+                  }
+                } catch (e) {
+                  // ignore and fallback to cache
+                }
+              }
+
+              // Check local cache to avoid duplicate offline inserts
+              try {
+                const cached = await getTable('academic_session_participants');
+                const found = (cached || []).some(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === Number(p.student_id));
+                if (found) return { student_id: Number(p.student_id), added: false, reason: 'cached' };
+              } catch (e) {
+                // ignore cache errors
+              }
+
+              // Finally insert via offline-aware addRow so it queues when offline
+              try {
+                await addParticipantRow({ session_id: academicSessionId, student_id: Number(p.student_id), school_id: schoolId });
+                return { student_id: Number(p.student_id), added: true };
+              } catch (err) {
+                return { student_id: Number(p.student_id), added: false, reason: String(err) };
+              }
+            } catch (err) {
+              return { student_id: p.student_id, added: false, reason: String(err) };
+            }
+          }));
+
+          const addedCount = ensured.filter(r => r.added).length;
+          setMessage((m) => `${m}\nParticipants added to session: ${addedCount}/${ensured.length}`);
+        } catch (err) {
+          console.warn('Failed to ensure session participants', err);
+        }
+      }
 
     // notify parent with start/end/participants if provided
     try {
@@ -1310,7 +1411,7 @@ useEffect(() => {
       if (DEBUG) console.warn('onRecordingStop callback failed', e);
     }
 
-    // clear recording timestamp
+    // clear recording timestamp and return to snapshot mode
     recordingStartRef.current = null;
     setMode("snapshot");
   };
@@ -1757,33 +1858,19 @@ useEffect(() => {
                 <div style={{ textAlign: 'center' }}>{mode === 'continuous' ? 'Recording…' : ''}</div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: 'center' }}>
+                {/* Single toggle button: start recording (Record Session) or stop recording (End Session)
+                    This button handles automatic sign-ins while recording and will sign participants out when stopping. */}
                 <button
                   className="submit-btn"
-                  onClick={handleCapture}
+                  onClick={() => {
+                    if (mode === 'snapshot') return startContinuous();
+                    return stopContinuous();
+                  }}
                   disabled={!referencesReady || isProcessing}
+                  title={recordToggleLabel}
                 >
-                  {computedPrimaryLabel}
+                  {recordToggleLabel}
                 </button>
-
-                {mode === "snapshot" ? (
-                  <button
-                    className="submit-btn"
-                    onClick={startContinuous}
-                    disabled={!referencesReady || isProcessing}
-                    title={recordToggleLabel}
-                  >
-                    {recordToggleLabel}
-                  </button>
-                ) : (
-                  <button
-                    className="submit-btn"
-                    onClick={stopContinuous}
-                    disabled={isProcessing}
-                    title={recordToggleLabel}
-                  >
-                    {recordToggleLabel}
-                  </button>
-                )}
               </div>
           </div>
             </>
