@@ -47,7 +47,14 @@ const BiometricsSignIn = ({
   onCompleted = null,
   onCancel = null,
   forceOperation = null,
+  // initial mode: 'snapshot' or 'continuous'
   mode: initialMode = 'snapshot',
+  // UI customization props
+  primaryActionLabel = null, // override main capture button label (e.g., 'Log In')
+  primaryRecordStartLabel = null, // override 'Record Session' label
+  primaryRecordEndLabel = null, // override 'End Session' label
+  closeOnStart = true, // whether to close/unmount the biometric UI when recording session starts
+  onRecordingStart = null, // optional callback fired when continuous recording starts
 }) => {
   // basic UI/state refs
   const [message, setMessage] = useState('');
@@ -72,6 +79,14 @@ const BiometricsSignIn = ({
   const [workerError, setWorkerError] = useState(null);
   const [workerReloadKey, setWorkerReloadKey] = useState(0);
   const [mode, setMode] = useState(initialMode);
+  
+  // Retry indicators for loading face references
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const [retryInSec, setRetryInSec] = useState(null);
+  const retryIntervalRef = useRef(null);
+  // small retry tuning
+  const maxRetries = 3;
+  const retryTimeouts = [2000, 4000, 8000];
 
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
@@ -1232,6 +1247,21 @@ useEffect(() => {
       processFrame();
     }, 800); // ~1.25 FPS - tuneable for performance vs responsiveness
     setMode("continuous");
+
+    // notify parent that recording started
+    try {
+      if (typeof onRecordingStart === 'function') onRecordingStart();
+    } catch (e) {
+      if (DEBUG) console.warn('onRecordingStart callback failed', e);
+    }
+
+    // Optionally close/unmount the biometric UI so the parent can continue other tasks
+    if (closeOnStart && typeof onCancel === 'function') {
+      // short delay to allow UI to reflect recording state
+      setTimeout(() => {
+        try { onCancel(); } catch (e) { if (DEBUG) console.warn('onCancel failed', e); }
+      }, 200);
+    }
   };
 
   const stopContinuous = () => {
@@ -1496,6 +1526,19 @@ useEffect(() => {
     setPendingAttendanceData(null);
   };
 
+  // Compute button labels (allow parent to override via props)
+  const computedPrimaryLabel = (() => {
+    if (isProcessing) return 'Processing...';
+    if (primaryActionLabel) return primaryActionLabel;
+    if (forceOperation === 'signin' && typeof onCompleted === 'function') return 'Log In';
+    if (forceOperation === 'signout' && typeof onCompleted === 'function') return 'Log Out';
+    return Object.keys(pendingSignIns).length === 0 ? 'Sign In' : 'Sign Out';
+  })();
+
+  const recordToggleLabel = mode === 'snapshot'
+    ? (primaryRecordStartLabel || 'Record Session')
+    : (primaryRecordEndLabel || 'End Session');
+
   return (
     <div
       className="student-signin-container"
@@ -1676,7 +1719,7 @@ useEffect(() => {
                   onClick={handleCapture}
                   disabled={!referencesReady || isProcessing}
                 >
-                  {isProcessing ? 'Processing...' : (Object.keys(pendingSignIns).length === 0 ? 'Sign In' : 'Sign Out')}
+                  {computedPrimaryLabel}
                 </button>
 
                 {mode === "snapshot" ? (
@@ -1684,18 +1727,18 @@ useEffect(() => {
                     className="submit-btn"
                     onClick={startContinuous}
                     disabled={!referencesReady || isProcessing}
-                    title="Record session"
+                    title={recordToggleLabel}
                   >
-                    Record Session
+                    {recordToggleLabel}
                   </button>
                 ) : (
                   <button
                     className="submit-btn"
                     onClick={stopContinuous}
                     disabled={isProcessing}
-                    title="End session"
+                    title={recordToggleLabel}
                   >
-                    End Session
+                    {recordToggleLabel}
                   </button>
                 )}
               </div>

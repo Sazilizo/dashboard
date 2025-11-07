@@ -62,6 +62,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
   const [selectedStudentIds, setSelectedStudentIds] = useState([]);
   const [working, setWorking] = useState(false);
   const [showBiometrics, setShowBiometrics] = useState(false);
+  const [recordingActive, setRecordingActive] = useState(false);
   // always show all sessions by default in this view
   const [lastActionResult, setLastActionResult] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -416,6 +417,14 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
     }
   }, [addAttendanceRow, studentById]);
 
+  // Called when the biometric component begins continuous recording
+  const handleRecordingStart = useCallback(() => {
+    setRecordingActive(true);
+    addToast('Session recording started. You can now close the biometric modal and add more students.', 'info', 5000);
+    // Ensure modal is closed so teacher can continue selecting students
+    setShowBiometrics(false);
+  }, [addToast]);
+
   const openLearnerCalendar = (studentId) => {
     // Navigate to learner attendance page (existing route used by LearnerAttendance uses /students/:id/attendance maybe)
     // Fallback: open profile page
@@ -549,6 +558,12 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                 bucketName="student-uploads"
                 folderName="faces"
                 onCompleted={(data) => handleBiometricsCompleted(data)}
+                // Customize labels for recording flows
+                primaryRecordStartLabel={recordingActive ? 'Recording…' : 'Record Session'}
+                primaryRecordEndLabel={'End Session'}
+                // Close modal on recording start and notify parent
+                closeOnStart={true}
+                onRecordingStart={handleRecordingStart}
               />
             </div>
           )}
