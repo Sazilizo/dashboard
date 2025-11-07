@@ -425,6 +425,63 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
     setShowBiometrics(false);
   }, [addToast]);
 
+  // Called when biometric component reports recording stopped
+  const handleRecordingStop = useCallback(async ({ start, end, participants, academicSessionId }) => {
+    setRecordingActive(false);
+    const startDate = start ? start.split('T')[0] : null;
+    const endDate = end ? end.split('T')[0] : null;
+    const results = { updatedParticipants: [], updatedAttendance: [], errors: [] };
+
+    for (const p of participants || []) {
+      try {
+        // update academic_session_participants sign_out_time for this session/student
+        if (selectedSession) {
+          try {
+            await api.from('academic_session_participants')
+              .update({ sign_out_time: end })
+              .match({ session_id: selectedSession, student_id: Number(p.student_id) });
+            results.updatedParticipants.push(p.student_id);
+          } catch (e) {
+            results.errors.push({ type: 'participant_update', student_id: p.student_id, error: e?.message || String(e) });
+          }
+        }
+
+        // try to update attendance_records: find an open record for the same date and student
+        try {
+          const dateToMatch = startDate || (new Date()).toISOString().split('T')[0];
+          const { data: openRows, error: openErr } = await api
+            .from('attendance_records')
+            .select('id, sign_out_time')
+            .eq('student_id', Number(p.student_id))
+            .eq('date', dateToMatch)
+            .order('id', { ascending: false });
+
+          if (!openErr && Array.isArray(openRows) && openRows.length) {
+            const open = openRows.find(r => !r.sign_out_time) || openRows[0];
+            if (open && !open.sign_out_time) {
+              // compute hours
+              try {
+                const hours = start && end ? ((new Date(end) - new Date(start)) / (1000 * 60 * 60)).toFixed(2) : null;
+                await api.from('attendance_records').update({ sign_out_time: end, hours: hours ? Number(hours) : undefined }).eq('id', open.id);
+                results.updatedAttendance.push({ student_id: p.student_id, attendance_id: open.id });
+              } catch (uerr) {
+                results.errors.push({ type: 'attendance_update', student_id: p.student_id, error: uerr?.message || String(uerr) });
+              }
+            }
+          }
+        } catch (attErr) {
+          results.errors.push({ type: 'attendance_query', student_id: p.student_id, error: attErr?.message || String(attErr) });
+        }
+      } catch (err) {
+        results.errors.push({ type: 'unknown', student_id: p.student_id, error: err?.message || String(err) });
+      }
+    }
+
+    setLastActionResult(results);
+    if ((results.errors || []).length) addToast(`Recording ended with ${results.errors.length} errors`, 'warning');
+    else addToast(`Recording ended. Updated ${results.updatedParticipants.length} participants.`, 'success');
+  }, [selectedSession]);
+
   const openLearnerCalendar = (studentId) => {
     // Navigate to learner attendance page (existing route used by LearnerAttendance uses /students/:id/attendance maybe)
     // Fallback: open profile page
@@ -529,18 +586,15 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
           <div className="mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div className="flex items-center gap-3">
               <button className="btn primary-btn inline-flex items-center gap-2" onClick={handleAddSelected} disabled={working || !selectedSession || !selectedStudentIds.length}>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
                 <span>{working ? 'Working...' : 'Add Selected'}</span>
               </button>
               <button className="btn secondary-btn inline-flex items-center gap-2" onClick={handleRemoveSelected} disabled={working || !selectedSession || !selectedStudentIds.length}>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7L5 21M5 7l14 14" /></svg>
                 <span>{working ? 'Working...' : 'Remove Selected'}</span>
               </button>
             </div>
 
             <div className="flex items-center gap-3">
               <button className="btn inline-flex items-center gap-2" onClick={() => setShowBiometrics(v => !v)} disabled={!selectedSession}>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c0 3-4 5-4 5s4 2 8 2 8-2 8-2-4-2-4-5a4 4 0 10-8 0z" /></svg>
                 <span className="text-sm">{showBiometrics ? 'Hide Biometrics' : 'Open Biometrics'}</span>
               </button>
             </div>
@@ -564,6 +618,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                 // Close modal on recording start and notify parent
                 closeOnStart={true}
                 onRecordingStart={handleRecordingStart}
+                onRecordingStop={handleRecordingStop}
               />
             </div>
           )}

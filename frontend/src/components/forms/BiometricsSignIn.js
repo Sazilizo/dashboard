@@ -55,6 +55,10 @@ const BiometricsSignIn = ({
   primaryRecordEndLabel = null, // override 'End Session' label
   closeOnStart = true, // whether to close/unmount the biometric UI when recording session starts
   onRecordingStart = null, // optional callback fired when continuous recording starts
+  onRecordingStop = null, // optional callback fired when continuous recording stops
+  // storage customization (optional) - used when loading student images
+  bucketName = null, // e.g. 'student-uploads' or 'worker-uploads'
+  folderName = null,
 }) => {
   // basic UI/state refs
   const [message, setMessage] = useState('');
@@ -87,6 +91,10 @@ const BiometricsSignIn = ({
   // small retry tuning
   const maxRetries = 3;
   const retryTimeouts = [2000, 4000, 8000];
+  // Recording start timestamp (ISO) when continuous recording begins
+  const recordingStartRef = useRef(null);
+  // Face matcher distance threshold (lower = stricter). 0.6 is a common default for face-api
+  const threshold = 0.6;
 
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
@@ -101,6 +109,9 @@ const BiometricsSignIn = ({
   const isSmallScreen = window && window.innerWidth && window.innerWidth < 640;
   const isOnline = useOnlineStatus();
   const toast = useToast();
+
+  // Determine effective storage bucket to use when fetching images
+  const effectiveBucket = bucketName || (entityType === 'user' ? 'profile-avatars' : 'student-uploads');
 
   // Offline table hooks for attendance and worker attendance
   const { addRow, updateRow } = useOfflineTable('attendance_records');
@@ -1262,6 +1273,8 @@ useEffect(() => {
         try { onCancel(); } catch (e) { if (DEBUG) console.warn('onCancel failed', e); }
       }, 200);
     }
+    // record start timestamp for duration calculation
+    try { recordingStartRef.current = new Date().toISOString(); } catch (e) { recordingStartRef.current = null; }
   };
 
   const stopContinuous = () => {
@@ -1269,6 +1282,36 @@ useEffect(() => {
       clearInterval(processIntervalRef.current);
       processIntervalRef.current = null;
     }
+    const stopTime = new Date().toISOString();
+
+    // collect participant info captured during this recording
+    const participants = Object.keys(pendingSignIns || {}).map((k) => {
+      const v = pendingSignIns[k] || {};
+      return {
+        student_id: k,
+        signInTime: v.signInTime || null,
+        attendanceId: v.id || null,
+        isWorker: v.isWorker || false,
+        worker_id: v.worker_id || null,
+      };
+    });
+
+    // notify parent with start/end/participants if provided
+    try {
+      if (typeof onRecordingStop === 'function') {
+        onRecordingStop({
+          start: recordingStartRef.current,
+          end: stopTime,
+          participants,
+          academicSessionId,
+        });
+      }
+    } catch (e) {
+      if (DEBUG) console.warn('onRecordingStop callback failed', e);
+    }
+
+    // clear recording timestamp
+    recordingStartRef.current = null;
     setMode("snapshot");
   };
 

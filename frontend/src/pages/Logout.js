@@ -56,7 +56,7 @@ const LogoutButton = () => {
       try {
         const { data: openRows } = await api
           .from('attendance_records')
-          .select('id')
+          .select('id, sign_in_time, sign_out_time')
           .eq('user_id', userProfile.id)
           .eq('date', today)
           .order('id', { ascending: false });
@@ -65,11 +65,20 @@ const LogoutButton = () => {
         const openSession = openRows?.filter(row => !row.sign_out_time)?.[0];
 
         if (openSession) {
+          const nowIso = new Date().toISOString();
+          let hours = null;
+          try {
+            if (openSession.sign_in_time) {
+              const dur = new Date(nowIso) - new Date(openSession.sign_in_time);
+              hours = Number(((dur / (1000 * 60 * 60))).toFixed(2));
+            }
+          } catch (e) { /* ignore */ }
+
           await api
             .from('attendance_records')
-            .update({ sign_out_time: new Date().toISOString(), method: 'biometric' })
+            .update({ sign_out_time: nowIso, method: 'biometric', hours: hours })
             .eq('id', openSession.id);
-          
+
           showToast('Work day ended successfully.', 'success');
         } else {
           showToast('No open session found to close.', 'warning');
