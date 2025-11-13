@@ -109,6 +109,7 @@ const BiometricsSignIn = ({
   const isSmallScreen = window && window.innerWidth && window.innerWidth < 640;
   const isOnline = useOnlineStatus();
   const toast = useToast();
+  const navigate = useNavigate();
 
   // Determine effective storage bucket to use when fetching images
   const effectiveBucket = bucketName || (entityType === 'user' ? 'profile-avatars' : 'student-uploads');
@@ -442,6 +443,23 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
    const isLargeSet = ids.length > 5;
  
   setLoadingReferences(true);
+  // Ensure face-api models are loaded before attempting any inference or creating FaceMatcher
+  try {
+    if (!areFaceApiModelsLoaded()) {
+      setMessage('Preparing face detection models...');
+      await preloadFaceApiModels();
+      try {
+        faceapiRef.current = await getFaceApi();
+      } catch (e) {
+        if (DEBUG) console.warn('Failed to import faceapi after preloading models', e);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to ensure models loaded before loading references', err);
+    setMessage('Face detection models are not available. Please download models in Offline Settings.');
+    setLoadingReferences(false);
+    return false;
+  }
   if (attempt === 0) {
     // reset retry indicators on fresh load
     setRetryAttempt(0);
@@ -473,6 +491,15 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
       const persisted = await descriptorDB.getDescriptor(i);
       if (persisted && persisted.length) {
         try {
+          // Ensure faceapi module is available before constructing descriptors
+          if (!faceapiRef.current) {
+            try {
+              faceapiRef.current = await getFaceApi();
+            } catch (e) {
+              if (DEBUG) console.warn('getFaceApi failed while hydrating descriptors', e);
+            }
+          }
+          if (!faceapiRef.current) throw new Error('faceapi not available');
           const faceapi = faceapiRef.current;
           const labeled = new faceapi.LabeledFaceDescriptors(
             i.toString(),
@@ -816,10 +843,19 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
         }
 
         if (descriptors.length) {
-          const faceapi = faceapiRef.current;
-          const labeled = new faceapi.LabeledFaceDescriptors(id.toString(), descriptors);
-          faceDescriptorCache[id] = labeled;
-          loadedDescriptors.push(labeled);
+          try {
+            if (!faceapiRef.current) {
+              try { faceapiRef.current = await getFaceApi(); } catch (e) { if (DEBUG) console.warn('getFaceApi failed while creating labeled descriptors', e); }
+            }
+            if (!faceapiRef.current) throw new Error('faceapi not available');
+            const faceapi = faceapiRef.current;
+            const labeled = new faceapi.LabeledFaceDescriptors(id.toString(), descriptors);
+            faceDescriptorCache[id] = labeled;
+            loadedDescriptors.push(labeled);
+          } catch (err) {
+            console.warn('Failed to create labeled descriptors for', id, err);
+            // still persist raw descriptors so we can retry later
+          }
           
           // Persist to IndexedDB
           const persist = descriptors.map((d) => Array.from(d));
@@ -939,6 +975,23 @@ useEffect(() => {
     }
     if (!webcamRef.current) {
       setMessage("Webcam not initialized.");
+      return;
+    }
+
+    // Ensure face-api models are loaded before attempting detection
+    try {
+      if (!areFaceApiModelsLoaded()) {
+        setMessage('Face models not loaded — preparing now...');
+        await preloadFaceApiModels();
+        try {
+          faceapiRef.current = await getFaceApi();
+        } catch (e) {
+          if (DEBUG) console.warn('Failed to import faceapi after preloading models', e);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to ensure models loaded before capture', err);
+      setMessage('Face detection models are unavailable. Please download models in Offline Settings.');
       return;
     }
 
@@ -1197,6 +1250,11 @@ useEffect(() => {
     const ready = await waitForVideoReady(1500);
     if (!ready) return; // skip this frame if video not ready
     try {
+      // Ensure face-api models are loaded before attempting detection
+      if (!areFaceApiModelsLoaded()) {
+        if (DEBUG) console.warn('Skipping frame: models not loaded');
+        return;
+      }
       setIsProcessing(true);
       // draw downscaled frame
       const canvas = captureCanvasRef.current || document.createElement("canvas");
@@ -1878,6 +1936,20 @@ useEffect(() => {
 
           {/* Don't show the global floating message when token input or webcam fallback UI is active to avoid overlap */}
           {message && !showTokenInput && !webcamError && <pre className="message">{message}</pre>}
+
+          {/* If models are not loaded, provide a quick link to Offline Settings so users can download models */}
+          {!loadingModels && !areFaceApiModelsLoaded() && (
+            <div style={{ textAlign: 'center', marginTop: 10 }}>
+              <button
+                className="submit-btn"
+                onClick={() => {
+                  try { navigate('/settings/offline'); } catch (e) { window.location.href = '/settings/offline'; }
+                }}
+              >
+                Open Offline Settings
+              </button>
+            </div>
+          )}
         </>
       )}
     </div>

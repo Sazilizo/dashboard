@@ -30,7 +30,27 @@ async function probeModelUrl(baseUrl, testFile) {
   try {
     const url = baseUrl + testFile;
     const resp = await fetch(url, { mode: 'cors' });
-    return resp && resp.ok;
+    if (!resp || !resp.ok) return false;
+    const ct = resp.headers && resp.headers.get ? resp.headers.get('content-type') : null;
+    // Prefer JSON manifests; if we get HTML (e.g., 403/404 page), reject
+    if (ct && !/application\/json/i.test(ct)) {
+      // Try to parse JSON anyway in case server omitted content-type
+      try {
+        await resp.clone().json();
+        return true;
+      } catch (e) {
+        console.warn('[FaceApiLoader] probeModelUrl: non-JSON response for', url);
+        return false;
+      }
+    }
+    // If content-type suggests JSON or is absent, attempt to parse
+    try {
+      await resp.clone().json();
+      return true;
+    } catch (e) {
+      console.warn('[FaceApiLoader] probeModelUrl: failed to parse JSON for', url, e);
+      return false;
+    }
   } catch (e) {
     return false;
   }
@@ -102,7 +122,29 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
         const manifestUrl = workingPath + 'models-manifest.json';
         const mresp = await fetch(manifestUrl, { mode: 'cors' });
         if (mresp && mresp.ok) {
-          manifest = await mresp.json();
+          try {
+            const ct = mresp.headers && mresp.headers.get ? mresp.headers.get('content-type') : null;
+            if (ct && !/application\/json/i.test(ct)) {
+              // content-type indicates non-JSON; attempt parse once, then fail clearly
+              try {
+                manifest = await mresp.clone().json();
+              } catch (e) {
+                console.warn('[FaceApiLoader] models-manifest.json is not valid JSON (content-type:', ct, ')');
+                return { success: false, reason: 'models_unavailable', error: 'invalid_manifest' };
+              }
+            } else {
+              // try parse; if it fails, return a clear failure so UI can guide the user
+              try {
+                manifest = await mresp.json();
+              } catch (e) {
+                console.warn('[FaceApiLoader] Failed to parse models-manifest.json', e);
+                return { success: false, reason: 'models_unavailable', error: 'invalid_manifest' };
+              }
+            }
+          } catch (e) {
+            console.warn('[FaceApiLoader] Unexpected error while reading manifest headers', e);
+            return { success: false, reason: 'models_unavailable', error: String(e) };
+          }
         }
       } catch (e) {
         // no manifest available; we'll continue without checks
