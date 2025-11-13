@@ -37,6 +37,44 @@ import { getTable, cacheTable } from "../../utils/tableCache";
 import '../../styles/formStyles.css'
 import { autoResizeTextarea } from "../../utils/autoResizeTextarea";
 
+// Inline ListItems component (replacement for hooks/EntityMultiSelect.js)
+// This renders a checkbox list and is exported so other forms can import it
+export function ListItems({ label = "Please Select", options = [], value, onChange, location = null }) {
+  const safeValue = Array.isArray(value) ? value : value ? [value] : [];
+
+  const handleToggle = (id) => {
+    if (safeValue.includes(id)) {
+      onChange(safeValue.filter((v) => v !== id));
+    } else {
+      onChange([...(safeValue || []), id]);
+    }
+  };
+
+  const displayLabel = (opt) => opt.full_name || opt.name || opt.label || opt.value || `ID: ${opt.id || opt}`;
+
+  return (
+    <div className="entity-multiselect mb-4 w-full">
+      <h2 className="font-medium mb-2">{label}</h2>
+
+      <div className="entity-multiselect-list">
+        {options.map((opt) => {
+          const id = opt.id ?? opt.value ?? opt;
+          return (
+            <label key={id} className="block px-2 py-1 hover:bg-gray-50 rounded cursor-pointer">
+              <input
+                type="checkbox"
+                checked={safeValue.includes(id)}
+                onChange={() => handleToggle(id)}
+              />
+              <span className="ml-2">{displayLabel(opt)}</span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // Grade regex & transform
 const gradeRegex = /^(R[1-4]|[1-7][A-D])$/;
 const gradeTransform = (v) => v?.toUpperCase().trim() || "";

@@ -26,6 +26,7 @@ import Logout from "./pages/Logout";
 import LandingPage from "./pages/LandingPage";
 import SessionMarkingForm from "./components/forms/SessionMarkingForm";
 import Users from "./components/lists/Users";
+import OfflineSettings from "./components/Settings/OfflineSettings";
 import ProtectedRoute from "./components/ProtectedRoute";
 import ErrorBoundary from "./components/ErrorBoundary";
 import IndividualSessionForm from "./components/forms/IndividualSession";
@@ -140,7 +141,8 @@ const router = createBrowserRouter([
       },
 
       { path: "register", element: <Register /> },
-      { path: "logout", element: <Logout /> },
+  { path: "logout", element: <Logout /> },
+  { path: "settings", element: <OfflineSettings /> },
 
       { path: "*", element: <Navigate to="/dashboard" /> },
     ],

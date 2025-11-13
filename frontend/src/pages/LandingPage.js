@@ -2,19 +2,19 @@ import React from "react";
 import { useNavigate } from "react-router-dom";
 import "../styles/LandingPage.css"; 
 import backgroundImage from "../assets/education-bg.png";
-import useSeo from '../hooks/useSeo';
+import SeoHelmet from '../components/SeoHelmet';
 const LandingPage = () => {
   const navigate = useNavigate();
-
-  useSeo({ title: 'GCU Schools', description: 'Empowering educators and tracking learner growth with ease.' });
 
   const handleLogin = () => {
     navigate("/login");
   };
 
+  // Title and meta handled by SeoHelmet
+
   return (
     <>
-      {/* SEO handled by useSeo hook */}
+      <SeoHelmet title="GCU Schools" description="Empowering educators and tracking learner growth with ease." />
       <div
       className="landing-container"
       style={{

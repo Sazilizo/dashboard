@@ -1,7 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./app";
-// SeoHelmet removed dependency on react-helmet-async; no global provider needed
+import { HelmetProvider } from 'react-helmet-async';
 import cacheFormSchemasIfOnline from "./utils/proactiveCache";
 import { preloadFaceApiModels } from "./utils/FaceApiLoader";
 import { syncOfflineChanges } from "./api/offlineClient";
@@ -97,7 +97,11 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-root.render(<App />);
+root.render(
+  <HelmetProvider>
+    <App />
+  </HelmetProvider>
+);
 
 // Monitor performance in development
 measurePerformance();

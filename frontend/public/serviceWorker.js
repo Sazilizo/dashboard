@@ -81,18 +81,15 @@ self.addEventListener('fetch', (event) => {
 // Handle API requests with network-first strategy
 async function handleApiRequest(request) {
   try {
-    // Try network first
+    // Try network first. For safety we avoid writing API responses to the public cache
+    // because API responses may contain authenticated / sensitive user data.
     const response = await fetch(request);
     if (response.ok) {
-      // Clone and cache successful responses
-      const responseToCache = response.clone();
-      const cache = await caches.open(CACHE_NAME);
-      await cache.put(request, responseToCache);
       return response;
     }
     throw new Error('Network response was not ok');
   } catch (err) {
-    // Fallback to cache
+    // Fallback to cache only if a cached copy exists (do not cache API responses here)
     const cachedResponse = await caches.match(request);
     if (cachedResponse) return cachedResponse;
     throw err;

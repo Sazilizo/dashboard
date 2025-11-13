@@ -5,7 +5,7 @@ import FiltersPanel from "../filters/FiltersPanel"
 import { useAuth } from "../../context/AuthProvider"
 import PieChartStats from "../charts/PieChart"
 import DashboardSummary from "../charts/DashboardSummary"
-import useSeo from '../../hooks/useSeo';
+import SeoHelmet from '../../components/SeoHelmet';
 
 const gradeOptions = ["1", "2", "3", "4", "5", "6", "7"];
 const groupByOptions = ["ww", "pr", "un"];
@@ -80,11 +80,9 @@ const SchoolProfile =()=>{
     }));
     if (!school) return <div>No school data available</div>;
 
-    // SEO
-    useSeo({ title: `${school.name} - School Profile`, description: `Overview and statistics for ${school.name}` });
-
     return (
     <>
+      <SeoHelmet title={`${school.name} - School Profile`} description={`Overview and statistics for ${school.name}`} />
       <div>
       <h2>Schools Dashboard</h2>
       <div className="page-filters">

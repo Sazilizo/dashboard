@@ -12,7 +12,8 @@ const navItems = [
   {icon:"workers", to: "/dashboard/workers", label: "Workers" },
   {icon:"trainings", to: "/dashboard/trainings/create", label: "Trainings" },
   {icon:"meals", to: "/dashboard/meals/create", label: "Create Meal"},
-  {icon:"user", to: "/dashboard/workers/users", label: "Users"}
+  {icon:"user", to: "/dashboard/workers/users", label: "Users"},
+  {icon: "settings", to: "/dashboard/settings", label: "Settings"}
   // { to: "/dashboard/settings", label: "Settings" },
 ];
 

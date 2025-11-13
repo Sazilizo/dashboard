@@ -3,7 +3,7 @@ import DynamicBulkForm from "./DynamicBulkForm";
 import useOfflineTable from "../../hooks/useOfflineTable";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { useParams } from "react-router-dom";
-import EntityMultiSelect from "../../hooks/EntityMultiSelect";
+import SelectableList from "../widgets/SelectableList";
 import { useAuth } from "../../context/AuthProvider";
 import { useSupabaseWorkers } from "../../hooks/useSupabaseWorkers";
 import { cacheTable, getTable } from "../../utils/tableCache";
@@ -72,11 +72,14 @@ export default function TrainingForm() {
       {/* Bulk mode: show MultiSelect */}
       {!id &&(
         <div className="mb-4">
-          <EntityMultiSelect
-            label="Select Workers"
-            options={workers}
+          <SelectableList
+            students={workers}
+            resource="workers"
+            checkbox={true}
             value={selectedWorkers}
             onChange={setSelectedWorkers}
+            bucketName="worker-uploads"
+            folderName="workers"
           />
         </div>
       )}

@@ -1,17 +1,19 @@
 import React, { useState } from "react";
-import { Link } from "react-router-dom";
 import Photos from "../profiles/Photos";
 import { isBirthday } from "../../utils/birthdayUtils";
 
-export default function ListItems({
+// Non-linking selectable list — mirrors styling of ListItems/WorkerListItems
+// but does not use <Link>. Clicking an item or its checkbox selects it
+// without navigating to the profile page. Use for selection flows (attendance, training).
+export default function SelectableList({
   students,
   items,
   onDelete,
   onUpdate,
+  onSelect, // optional single-select callback (id)
   resource = "students",
   bucketName = "student-uploads",
   folderName = "students",
-  // selection props
   checkbox = false,
   value = [],
   onChange,
@@ -19,9 +21,7 @@ export default function ListItems({
   const [editId, setEditId] = useState(null);
   const [editName, setEditName] = useState("");
 
-  // Support both 'students' and 'items' props for flexibility
   const data = students || items || [];
-
   if (!data || data.length === 0) return <p className="no-data-message">No {resource} found.</p>;
 
   const safeValue = Array.isArray(value) ? value.map(String) : [];
@@ -30,11 +30,17 @@ export default function ListItems({
     if (e && e.stopPropagation) e.stopPropagation();
     if (!onChange) return;
     const sid = String(id);
-    if (safeValue.includes(sid)) {
-      onChange(safeValue.filter((v) => v !== sid));
-    } else {
-      onChange([...(safeValue || []), sid]);
+    if (safeValue.includes(sid)) onChange(safeValue.filter((v) => v !== sid));
+    else onChange([...(safeValue || []), sid]);
+  };
+
+  const handleItemClick = (s, e) => {
+    // If checkbox mode, toggle selection
+    if (checkbox) {
+      toggleSelect(s.id ?? s.value ?? s, e);
     }
+    // Fire optional single-select callback
+    if (typeof onSelect === "function") onSelect(s.id ?? s.value ?? s);
   };
 
   return (
@@ -44,7 +50,13 @@ export default function ListItems({
         const strId = String(id);
         return (
           <li key={strId} className="flex items-center justify-between gap-3">
-            <Link to={`/dashboard/${resource}/${id}`} className="flex items-center gap-3 flex-1">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={(e) => handleItemClick(s, e)}
+              onKeyPress={(e) => { if (e.key === 'Enter') handleItemClick(s, e); }}
+              className="flex items-center gap-3 flex-1 cursor-pointer"
+            >
               <div className="app-profile-photo">
                 <Photos
                   bucketName={bucketName}
@@ -54,6 +66,7 @@ export default function ListItems({
                   restrictToProfileFolder={true}
                 />
               </div>
+
               <div className="app-list-item-details">
                 <div className="item-info">
                   <p className="item-name">
@@ -75,7 +88,7 @@ export default function ListItems({
                   )}
                 </div>
               </div>
-            </Link>
+            </div>
 
             <div className="flex items-center gap-2">
               {checkbox && (

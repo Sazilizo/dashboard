@@ -1,73 +1,40 @@
-import React, { useEffect } from 'react';
+import React from 'react';
+import { Helmet } from 'react-helmet-async';
 
 /**
- * SeoHelmet - lightweight replacement for react-helmet-async.
- * Sets document.title and common meta tags via DOM manipulation so we can remove react-helmet dependency.
+ * SeoHelmet - Default SEO/head tags for the app. Use props to override per-page values.
+ * Favicons paths assume assets are served at /assets/
  */
 export default function SeoHelmet({
   title = 'Dashboard',
   description = 'School dashboard and attendance system',
-  url = (typeof window !== 'undefined' && window.location) ? window.location.href : '/',
+  url = window?.location?.href || '/',
   image = '/assets/og-image.png',
   themeColor = '#0ea5e9',
 }) {
-  useEffect(() => {
-    try {
-      if (title) document.title = title;
+  return (
+    <Helmet>
+      <title>{title}</title>
+      <meta name="description" content={description} />
+      <meta property="og:title" content={title} />
+      <meta property="og:description" content={description} />
+      <meta property="og:type" content="website" />
+      <meta property="og:url" content={url} />
+      <meta property="og:image" content={image} />
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta name="twitter:title" content={title} />
+      <meta name="twitter:description" content={description} />
+      <meta name="theme-color" content={themeColor} />
 
-      const setMeta = (attr, key, content) => {
-        if (!content && content !== '') return;
-        const selector = `${attr}="${key}"`;
-        let el = document.head.querySelector(`meta[${selector}]`);
-        if (!el) {
-          el = document.createElement('meta');
-          el.setAttribute(attr, key);
-          document.head.appendChild(el);
-        }
-        el.setAttribute('content', content);
-      };
+      {/* Favicons (adjust filenames in /assets/ if yours differ) */}
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png" />
+      <link rel="manifest" href="/assets/site.webmanifest" />
+      <link rel="shortcut icon" href="/assets/favicon.ico" />
 
-      setMeta('name', 'description', description);
-      setMeta('property', 'og:title', title);
-      setMeta('property', 'og:description', description);
-      setMeta('property', 'og:type', 'website');
-      setMeta('property', 'og:url', url);
-      setMeta('property', 'og:image', image);
-      setMeta('name', 'twitter:card', 'summary_large_image');
-      setMeta('name', 'twitter:title', title);
-      setMeta('name', 'twitter:description', description);
-      setMeta('name', 'theme-color', themeColor);
-
-      // canonical link
-      if (url) {
-        let link = document.head.querySelector('link[rel="canonical"]');
-        if (!link) {
-          link = document.createElement('link');
-          link.setAttribute('rel', 'canonical');
-          document.head.appendChild(link);
-        }
-        link.setAttribute('href', url);
-      }
-
-      // Favicons: ensure basic favicon exists (do not override if user configured)
-      const ensureLink = (rel, href, attrs = {}) => {
-        let l = document.head.querySelector(`link[rel="${rel}"]`);
-        if (!l) {
-          l = document.createElement('link');
-          l.setAttribute('rel', rel);
-          Object.entries(attrs).forEach(([k,v]) => l.setAttribute(k,v));
-          l.setAttribute('href', href);
-          document.head.appendChild(l);
-        }
-      };
-
-      ensureLink('icon', '/assets/favicon-32x32.png', { type: 'image/png', sizes: '32x32' });
-      ensureLink('shortcut icon', '/assets/favicon.ico');
-    } catch (err) {
-      // swallow DOM errors in unusual environments
-      console.warn('SeoHelmet: failed to set head tags', err);
-    }
-  }, [title, description, url, image, themeColor]);
-
-  return null; // no visual output - manipulates head directly
+      {/* Optional: canonical link - keep if you have a canonical URL */}
+      <link rel="canonical" href={url} />
+    </Helmet>
+  );
 }

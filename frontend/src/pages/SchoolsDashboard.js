@@ -4,14 +4,12 @@ import { useAuth } from "../context/AuthProvider";
 import { Link } from "react-router-dom";
 import { useSchools } from "../context/SchoolsContext";
 import { useFilters } from "../context/FiltersContext";
-import useSeo from '../hooks/useSeo';
+import SeoHelmet from '../components/SeoHelmet';
 
 export default function SchoolsDashboard() {
   const { schools } = useSchools();
   const { user } = useAuth();
   const { filters, setFilters } = useFilters();
-
-  useSeo({ title: 'Schools - GCU Dashboard', description: 'Browse and manage schools in your organization.' });
 
   const isAllSchoolRole = ["superuser", "admin", "hr", "viewer"].includes(
     user?.profile?.roles?.name
@@ -46,6 +44,7 @@ export default function SchoolsDashboard() {
 
   return (
     <>
+      <SeoHelmet title="Schools - GCU Dashboard" description="Browse and manage schools in your organization." />
     <div>
       <h2>Schools Dashboard</h2>
 

@@ -18,7 +18,7 @@ import WorkerImpactSummary from "../charts/WorkerImpactSummary";
 import WorkerAttendanceTrend from "../charts/WorkerAttendanceTrend";
 import { getUserContext } from "../../utils/rlsCache";
 import "../../styles/Profile.css";
-import useSeo from '../../hooks/useSeo';
+import SeoHelmet from '../../components/SeoHelmet';
 
 /**
  * Check if current user has permission to view this worker's profile
@@ -65,16 +65,12 @@ const WorkerProfile = () => {
   const { id } = useParams();
   const { user } = useAuth();
   const { isOnline } = useOnlineStatus();
-
-  // SEO will be set once we compute pageTitle/pageDesc below
   const [worker, setWorker] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [joinedSessions, setJoinedSessions] = useState([]);
   const [sessionParticipants, setSessionParticipants] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
-  const [totalHours, setTotalHours] = useState(null);
-  const [loadingTotal, setLoadingTotal] = useState(false);
   const [showDisciplinary, setShowDisciplinary] = useState(false);
   const [disciplinaryType, setDisciplinaryType] = useState("warning");
   const [disciplinarySubject, setDisciplinarySubject] = useState("");
@@ -305,14 +301,12 @@ const WorkerProfile = () => {
     console.log("Worker profile loaded:", worker); 
   }, [worker]);
 
-  // Derive page title/description early so we can call the hook consistently
-  const pageTitle = worker?.profile?.name || worker?.full_name || 'Worker Profile';
-  const pageDesc = worker?.profile?.name ? `${worker.profile.name}'s profile and activity` : 'Worker profile details';
-  useSeo({ title: `${pageTitle} - Profile`, description: pageDesc });
-
   if (loading) return <Loader variant="dots" size="xlarge" text="Loading worker profile..." fullScreen />;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
   if (!worker) return <p>No worker found</p>;
+
+  const pageTitle = worker?.profile?.name || worker?.full_name || 'Worker Profile';
+  const pageDesc = worker?.profile?.name ? `${worker.profile.name}'s profile and activity` : 'Worker profile details';
 
   const roleName = worker?.profile?.role?.name?.toLowerCase() || worker?.roles?.name?.toLowerCase();
   const currentUserRole = user?.profile?.roles?.name?.toLowerCase?.();
@@ -386,7 +380,7 @@ const WorkerProfile = () => {
 
   return (
     <div className="worker-profile">
-      {/* SEO handled by useSeo hook */}
+      <SeoHelmet title={`${pageTitle} - Profile`} description={pageDesc} />
       {/* Birthday Celebration - 5 second animation */}
       {isBirthdayFromId(worker?.id_number) && (
         <BirthdayConfetti duration={5000} persistent={false} />
@@ -396,49 +390,6 @@ const WorkerProfile = () => {
         <button className="btn btn-primary" onClick={() => window.history.back()}>
           Back
         </button>
-        {/* Total hours button - visible to certain roles only (head coach/tutor/admin/hr/superuser) */}
-        {(() => {
-          const currentRole = (user?.profile?.roles?.name || "").toLowerCase();
-          const workerRole = (worker?.roles?.name || worker?.role || "").toLowerCase();
-          const allowed = ["admin", "hr", "superuser"].includes(currentRole)
-            || (currentRole === "head_coach" && workerRole === "coach")
-            || (currentRole === "head_tutor" && workerRole === "tutor");
-
-          if (!allowed) return null;
-
-          return (
-            <>
-              <button
-                className="btn btn-secondary"
-                onClick={async () => {
-                  try {
-                    setLoadingTotal(true);
-                    setTotalHours(null);
-                    const { data, error } = await api.from('worker_attendance_totals').select('total_hours').eq('worker_id', worker.id).single();
-                    if (error) throw error;
-                    setTotalHours(data?.total_hours ?? 0);
-                  } catch (err) {
-                    console.error('Failed to load worker total hours', err);
-                    setTotalHours(null);
-                    setError && setError(err?.message || String(err));
-                  } finally {
-                    setLoadingTotal(false);
-                  }
-                }}
-                disabled={loadingTotal}
-                title="Load total hours worked for this worker"
-              >
-                {loadingTotal ? 'Loading hours…' : 'Load Total Hours'}
-              </button>
-
-              {totalHours !== null && (
-                <span style={{ marginLeft: 12, fontWeight: 600 }}>
-                  Total hours: {Number(totalHours).toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                </span>
-              )}
-            </>
-          );
-        })()}
         <button className="btn btn-secondary" onClick={() => window.print()}>
           Print Profile
         </button>

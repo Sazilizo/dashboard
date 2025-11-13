@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import api from "../../api/client";
-import EntityMultiSelect from "../../hooks/EntityMultiSelect";
+import SelectableList from "../widgets/SelectableList";
 import FiltersPanel from "../filters/FiltersPanel";
 import { useFilters } from "../../context/FiltersContext";
 import { useAuth } from "../../context/AuthProvider";
@@ -571,9 +571,10 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
             <div className="flex flex-col items-center justify-center">
               <label className="block text-sm font-medium text-gray-700">Select students to add/remove</label>
               <div className="mt-2 w-full max-w-md">
-                <EntityMultiSelect
-                  label="Students"
-                  options={filteredStudents}
+                <SelectableList
+                  students={filteredStudents}
+                  resource="students"
+                  checkbox={true}
                   value={selectedStudentIds}
                   onChange={setSelectedStudentIds}
                 />

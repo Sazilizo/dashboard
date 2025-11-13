@@ -10,7 +10,7 @@ import PieChartStats from "../components/charts/PieChart";
 import StackedCategoryGradeChart from "../components/charts/StackedChart";
 import StackedStudentsGradeChart from "../components/charts/StackedStudentsGradeCharts";
 import SkeletonList from "../components/widgets/SkeletonList";
-import useSeo from '../hooks/useSeo';
+import SeoHelmet from '../components/SeoHelmet';
 
 
 export default function DashboardHome() {
@@ -18,8 +18,6 @@ export default function DashboardHome() {
   const {schools, loading: schoolsLoading} = useSchools();
   const {filters, setFilters} = useFilters();
   const { workers: allWorkers, students: allStudents, meals: allMeals, schools: schoolsData, loading, fetchData } = useData();
-
-  useSeo({ title: `Dashboard - ${user?.profile?.username || 'GCU Schools'}`, description: 'Overview of schools, students and staff.' });
 
   console.log('[DashboardHome] Schools:', schools?.length || 0, 'schools loaded');
 
@@ -117,6 +115,7 @@ export default function DashboardHome() {
   const totalMeals = meals?.length || 0;
   return (
     <div>
+      <SeoHelmet title={`Dashboard - ${user?.profile?.username || 'GCU Schools'}`} description="Overview of schools, students and staff." />
       <h2>School Overview</h2>
       <div className="app-list-filters">
           <FiltersPanel

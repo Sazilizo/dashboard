@@ -37,5 +37,8 @@
 
     <!-- Permissions -->
 
+    <!-- Network required for sync and model downloads -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Camera is required for biometric face capture (used only with explicit user action/consent) -->
+    <uses-permission android:name="android.permission.CAMERA" />
 </manifest>

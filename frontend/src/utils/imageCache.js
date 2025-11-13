@@ -106,35 +106,122 @@ export async function cacheImage(bucket, path, blob, entityId, metadata = {}) {
   try {
     const db = await openDb();
     const cacheKey = getCacheKey(bucket, path);
-    
+    // If the blob is an image and relatively large, compress it before storing to save space.
+    let storeBlob = blob;
+    try {
+      if (blob && blob.type && blob.type.startsWith('image/') && blob.size > 80 * 1024) {
+        const compressed = await compressImageBlob(blob, { maxWidthOrHeight: 1024, quality: 0.75, outputType: 'image/webp' });
+        if (compressed) {
+          storeBlob = compressed;
+        }
+      }
+    } catch (e) {
+      console.warn('[imageCache] image compression before cache failed', e);
+      storeBlob = blob;
+    }
+
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, "readwrite");
       const store = tx.objectStore(STORE_NAME);
-      
+
       const record = {
         cacheKey,
         bucket,
         path,
-        blob,
+        blob: storeBlob,
         entityId: String(entityId),
         updatedAt: Date.now(),
-        size: blob.size,
-        type: blob.type,
+        size: storeBlob.size,
+        type: storeBlob.type,
         ...metadata
       };
-      
+
       const req = store.put(record);
-      
+
       req.onsuccess = () => {
-        console.log(`[imageCache] Cached ${bucket}/${path} (${(blob.size / 1024).toFixed(1)}KB)`);
+        console.log(`[imageCache] Cached ${bucket}/${path} (${(storeBlob.size / 1024).toFixed(1)}KB)`);
         resolve(true);
       };
-      
+
       req.onerror = () => reject(req.error);
     });
   } catch (err) {
     console.warn("[imageCache] cacheImage failed", err);
     return false;
+  }
+}
+
+/**
+ * Compress an image Blob by drawing it to a canvas and exporting as a smaller WebP/JPEG blob.
+ * Returns a new Blob or null if compression failed.
+ */
+export async function compressImageBlob(blob, { maxWidthOrHeight = 800, quality = 0.8, outputType = 'image/webp' } = {}) {
+  try {
+    // Create an image bitmap for better performance when available
+    let imgBitmap;
+    if (typeof createImageBitmap === 'function') {
+      imgBitmap = await createImageBitmap(blob);
+    } else {
+      // Fallback: load into HTMLImageElement
+      await new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            URL.revokeObjectURL(url);
+            resolve({ canvas, img });
+          } catch (e) { reject(e); }
+        };
+        img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+        img.src = url;
+      });
+    }
+
+    // Use canvas to resize
+    const sourceWidth = imgBitmap ? imgBitmap.width : null;
+    const sourceHeight = imgBitmap ? imgBitmap.height : null;
+    const ratio = sourceWidth && sourceHeight ? Math.min(1, maxWidthOrHeight / Math.max(sourceWidth, sourceHeight)) : 1;
+
+    const outWidth = sourceWidth ? Math.round(sourceWidth * ratio) : undefined;
+    const outHeight = sourceHeight ? Math.round(sourceHeight * ratio) : undefined;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = outWidth || maxWidthOrHeight;
+    canvas.height = outHeight || maxWidthOrHeight;
+    const ctx = canvas.getContext('2d');
+
+    if (imgBitmap) {
+      ctx.drawImage(imgBitmap, 0, 0, canvas.width, canvas.height);
+      try { imgBitmap.close && imgBitmap.close(); } catch (e) {}
+    } else {
+      // In the fallback branch above we created a canvas and image; reuse if available
+      // Create an image from blob and draw
+      const url = URL.createObjectURL(blob);
+      const img = await new Promise((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => { URL.revokeObjectURL(url); resolve(el); };
+        el.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+        el.src = url;
+      });
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    }
+
+    // Export as blob
+    const compressedBlob = await new Promise((resolve) => {
+      canvas.toBlob((b) => resolve(b), outputType, quality);
+    });
+
+    if (!compressedBlob) return null;
+    // Ensure filename/type consistent: keep original name unknown here, return blob
+    return compressedBlob;
+  } catch (err) {
+    console.warn('[imageCache] compressImageBlob failed', err);
+    return null;
   }
 }
 

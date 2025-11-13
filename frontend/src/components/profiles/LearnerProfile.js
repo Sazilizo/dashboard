@@ -16,7 +16,7 @@ import { isBirthday } from "../../utils/birthdayUtils";
 import Loader from "../widgets/Loader";
 import "../../styles/Profile.css"
 // import InfoCount from "../widgets/infoCount";
-import useSeo from '../../hooks/useSeo';
+import SeoHelmet from '../../components/SeoHelmet';
 
 const LearnerProfile = () => {
   const { id } = useParams();
@@ -541,14 +541,11 @@ const LearnerProfile = () => {
   }, [id]);
     
 
-  // Derive page title/description and set SEO tags
+  // Title/meta handled by SeoHelmet below
+
   useEffect(()=>{
     console.log("Student: ", student)
   })
-
-  const pageTitle = student ? `${student.full_name} - Profile` : 'Learner Profile';
-  const pageDesc = student?.full_name ? `${student.full_name}'s profile and progress report` : 'Student profile';
-  useSeo({ title: pageTitle, description: pageDesc });
 
   if (loading) return <Loader variant="pulse" size="xlarge" text="Loading student profile..." fullScreen />;
   if (error) return <p style={{ color: "red" }}>Error: {error}</p>;
@@ -556,7 +553,7 @@ const LearnerProfile = () => {
 
   return (
     <>
-      {/* SEO handled by useSeo hook */}
+      <SeoHelmet title={student ? `${student.full_name} - Profile` : 'Learner Profile'} description={student?.full_name ? `${student.full_name}'s profile and progress report` : 'Student profile'} />
       {/* Birthday Celebration - 5 second animation */}
       {isBirthday(student?.date_of_birth) && (
         <BirthdayConfetti duration={5000} persistent={false} />
@@ -583,16 +580,16 @@ const LearnerProfile = () => {
         <Link to={`/dashboard/sessions/mark/${id}`} className="btn btn-primary">
           Mark Session
         </Link>
-        <Link to={`/dashboard/meals/distribute/${id}`} className="btn btn-secondary secondary-btn">
+        <Link to={`/dashboard/meals/distribute/${id}`} className="btn btn-secondary">
           Distribute Meal
         </Link>
         <Link to={`/dashboard/students/update/${id}`} className="btn btn-secondary">
           Edit Profile
         </Link>
-        <button className="btn primary-btn btn-primary" onClick={() => setAttendanceMode("calendar")}>
+        <button className="btn btn-success mb-2" onClick={() => setAttendanceMode("calendar")}>
           Calendar Attendance
         </button>
-        <button className="btn btn-success mb-2 secondary-btn btn-secondary" onClick={() => setAttendanceMode("biometrics")}>
+        <button className="btn btn-success mb-2" onClick={() => setAttendanceMode("biometrics")}>
           Biometric Attendance
         </button>
       </div>
@@ -743,7 +740,7 @@ const LearnerProfile = () => {
                           <div className="report-meta">
                             <span className="report-item">{student.category ?? '—'}</span>
                             <span className="report-sep">•</span>
-                             <span className="report-item">Grade: {student.grade ?? '—'}</span>
+                            <span className="report-item">Grade: {student.grade ?? '—'}</span>
                             <span className="report-sep">•</span>
                             <span className="report-item">Age: {student.age ?? '—'}</span>
                           </div>

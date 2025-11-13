@@ -30,6 +30,9 @@
 	<array>
 		<string>armv7</string>
 	</array>
+	<!-- Usage descriptions required by App Store review when accessing device hardware -->
+	<key>NSCameraUsageDescription</key>
+	<string>Camera access is required to capture a face for biometric sign-in when you choose to use offline facial authentication.</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
