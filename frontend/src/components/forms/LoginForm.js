@@ -295,6 +295,8 @@ export default function LoginForm() {
                   workerId={userProfile.worker_id}
                   forceOperation="signin"
                   onCompleted={handleBiometricComplete}
+                  primaryActionLabel="Sign In"
+                  
                 />
               </Suspense>
             </div>
@@ -310,6 +312,7 @@ export default function LoginForm() {
                 workerId={userProfile.worker_id}
                 forceOperation="signin"
                 onCompleted={handleBiometricComplete}
+                primaryActionLabel="Sign In"
               />
             </div>
           </div>
@@ -348,7 +351,7 @@ export default function LoginForm() {
             {error && <div style={{ color: "red" }}>{error}</div>}
 
             <button type="submit" disabled={loading}>
-              {loading ? "Logging in..." : "Login"}
+              {loading ? "Signing in..." : "Sign In"}
             </button>
           </form>
         </div>

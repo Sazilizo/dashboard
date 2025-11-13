@@ -10,29 +10,41 @@ export default function SchoolFilter({ user, schools, onChange }) {
   const [selectedSchools, setSelectedSchools] = useState([]);
   const [initialized, setInitialized] = useState(false);
 
+  useEffect(() => {
+    // Remove previous incorrect sync. Do not call onChange here with unexpected args.
+    // Initialization and selection are handled in the main init effect below.
+  }, [user]);
+
   // Initialize: If role is single-school, preselect their school
   // If multi-school role, select all schools by default
   useEffect(() => {
+    // Initialize selection once when either user or schools become available
     if (initialized) return;
-    
+
+    // Single-school role: lock to their school immediately if available
     if (!isAllSchoolRole && user?.profile?.school_id) {
-      // Single school role - lock to their school
       const schoolId = user.profile.school_id;
       setSelectedSchools([schoolId]);
-      onChange([schoolId]);
+      if (typeof onChange === 'function') onChange([schoolId]);
       setInitialized(true);
-    } else if (isAllSchoolRole && schools.length > 0) {
-      // Multi-school role - select all schools by default
-      const allSchoolIds = schools.map(s => s.id);
+      return;
+    }
+
+    // Multi-school role: if schools are already loaded, select all
+    if (isAllSchoolRole && Array.isArray(schools) && schools.length > 0) {
+      const allSchoolIds = schools.map((s) => s.id);
       setSelectedSchools(allSchoolIds);
-      onChange(allSchoolIds);
+      if (typeof onChange === 'function') onChange(allSchoolIds);
       setInitialized(true);
-    } else if (isAllSchoolRole && schools.length === 0) {
-      // Fallback for mobile/initial runs when schools haven't loaded yet
-      // Use sentinel -1 meaning "All Schools"
+      return;
+    }
+
+    // If multi-school role but schools not yet loaded, select sentinel indicating all
+    if (isAllSchoolRole && (!schools || schools.length === 0)) {
       setSelectedSchools([-1]);
-      onChange([-1]);
+      if (typeof onChange === 'function') onChange([-1]);
       setInitialized(true);
+      return;
     }
   }, [isAllSchoolRole, user, schools, onChange, initialized]);
 

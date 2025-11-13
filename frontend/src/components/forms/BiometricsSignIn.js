@@ -58,6 +58,9 @@ const BiometricsSignIn = ({
   onRecordingStop = null, // optional callback fired when continuous recording stops
   // storage customization (optional) - used when loading student images
   bucketName = null, // e.g. 'student-uploads' or 'worker-uploads'
+  // Optional hooks parents can pass to receive structured events
+  onSignIn = null, // (info) => {}
+  onSignOut = null, // (info) => {}
   folderName = null,
 }) => {
   // basic UI/state refs
@@ -575,6 +578,9 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
         if (DEBUG) console.log(`[BiometricsSignIn] Attempting to load face references for ID ${id} from:`, 
           sourcesToTry.map(s => `${s.label} (${s.bucket}/${s.path || '(root)'})`).join(', '));
 
+        // Fetch cached images once per id (avoid repeated IndexedDB reads)
+        const cachedImages = await imageCache.getCachedImagesByEntity(id);
+
         // Try each source until we get descriptors
         for (const source of sourcesToTry) {
           if (descriptors.length > 0) break; // Already got descriptors, skip remaining sources
@@ -582,8 +588,7 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
           if (DEBUG) console.log(`[BiometricsSignIn] Trying ${source.label}: ${source.bucket}/${source.path || '(root)'}`);
 
           // Check cache first for offline support
-          const cachedImages = await imageCache.getCachedImagesByEntity(id);
-          const cachedForSource = cachedImages.filter(img => img.bucket === source.bucket);
+          const cachedForSource = (cachedImages || []).filter(img => img.bucket === source.bucket);
           
           let imageFiles = [];
           let paths = [];
@@ -608,49 +613,65 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
             
             // Optimize: For profile-avatars with ID filter, try direct file access instead of listing entire bucket
             if (source.useIdFilter && source.bucket === 'profile-avatars') {
-              // Try common extensions directly instead of listing all files
+              // Try common extensions directly and request signed URLs instead of listing
+              // This avoids relying on storage.list search behavior which may vary by provider or CORS.
               const extensions = ['jpg', 'jpeg', 'png', 'webp'];
               const foundFiles = [];
-              
+              const signedCandidates = [];
+
               for (const ext of extensions) {
                 const filename = `${id}.${ext}`;
                 try {
-                  // Check if file exists by attempting to get its metadata
-                  const { data: fileData, error: checkErr } = await api.storage
-                    .from(source.bucket)
-                    .list('', { 
-                      limit: 1,
-                      search: filename
-                    });
-                  
-                  if (!checkErr && fileData && fileData.length > 0) {
-                    foundFiles.push(...fileData);
-                    break; // Found the file, stop searching
+                  const { data: signed, error: signedErr } = await api.storage.from(source.bucket).createSignedUrl(filename, 300);
+                  if (!signedErr && signed?.signedUrl) {
+                    // Found a signed URL for this exact id-based filename
+                    signedCandidates.push({ name: filename, signedUrl: signed.signedUrl });
+                    // stop after first found
+                    break;
                   }
                 } catch (e) {
-                  // File doesn't exist with this extension, try next
-                  continue;
+                  if (DEBUG) console.warn('[BiometricsSignIn] createSignedUrl failed for', filename, e);
                 }
               }
-              
-              files = foundFiles;
-              if (DEBUG) console.log(`[BiometricsSignIn] Direct search found ${files.length} file(s) for ID ${id}`);
+
+              if (signedCandidates.length) {
+                // Construct files array to mimic storage.list output (minimal)
+                files = signedCandidates.map((s) => ({ name: s.name }));
+                // Populate urlsData directly with the signed URLs we found
+                urlsData = signedCandidates.map((s) => s.signedUrl);
+                if (DEBUG) console.log(`[BiometricsSignIn] Direct signed URL search found ${files.length} file(s) for ID ${id}`);
+              } else {
+                files = [];
+              }
             } else {
               // Standard list for other buckets or non-filtered queries
               // CRITICAL: Ensure we're listing a specific path, not the entire bucket
-              const listResult = await api.storage
-                .from(source.bucket)
-                .list(listPath, { 
-                  limit: 10,  // Only need a few images per student for face descriptors
-                  sortBy: { column: 'name', order: 'asc' }
-                });
-              
-              files = listResult.data;
-              listErr = listResult.error;
-              
-              if (DEBUG) console.log(`[BiometricsSignIn] Listed ${source.bucket}/${listPath} - found ${files?.length || 0} files`);
+              try {
+                const listResult = await api.storage
+                  .from(source.bucket)
+                  .list(listPath, {
+                    limit: 10, // Only need a few images per student for face descriptors
+                    sortBy: { column: 'name', order: 'asc' },
+                  });
+
+                files = listResult.data;
+                listErr = listResult.error;
+                if (DEBUG) console.log(`[BiometricsSignIn] Listed ${source.bucket}/${listPath} - found ${files?.length || 0} files`);
+              } catch (listException) {
+                // Some storage backends or network conditions may cause list(...) to throw or fail (CORS, network).
+                // Retry with a simplified call (no sort) to increase compatibility.
+                if (DEBUG) console.warn('[BiometricsSignIn] storage.list threw, retrying with simpler call', listException);
+                try {
+                  const listResult = await api.storage.from(source.bucket).list(listPath, { limit: 10 });
+                  files = listResult.data;
+                  listErr = listResult.error;
+                } catch (simpleListErr) {
+                  if (DEBUG) console.warn('[BiometricsSignIn] simplified storage.list also failed', simpleListErr);
+                  files = [];
+                  listErr = simpleListErr;
+                }
+              }
             }
-            
             if (DEBUG && files) console.log(`[BiometricsSignIn] Found ${files.length} total files in ${source.bucket}`, files);
             
             if (listErr) {
@@ -1301,6 +1322,7 @@ useEffect(() => {
           setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime } }));
           const displayName = studentNames[match.label] || `Student ${match.label}`;
           setMessage(`${displayName} authenticated successfully.`);
+          try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'student', entityId: match.label, attendance: res, signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
         }
       }
     } catch (err) {
@@ -1549,6 +1571,10 @@ useEffect(() => {
       if (entityType === 'student') {
         record.student_id = attendanceData.entityId;
         const res = await addRow(record);
+        // notify parent
+        try {
+          if (typeof onSignIn === 'function') onSignIn({ entityType: 'student', entityId: attendanceData.entityId, attendance: res, signInTime: attendanceData.signInTime });
+        } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
         return res;
       }
 
@@ -1578,6 +1604,11 @@ useEffect(() => {
             };
 
             const res = await addWorkerRow(workerPayload);
+            // Notify parent of worker sign-in (server-side row created or queued via offline hook)
+            try {
+              if (typeof onSignIn === 'function') onSignIn({ entityType: 'worker', profileId: attendanceData.entityId, worker_id: profile.worker_id, attendance: res, signInTime: attendanceData.signInTime });
+            } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
+
             // Annotate return so callers know this was a worker attendance insert
             return { __worker: true, worker_id: profile.worker_id, result: res };
           }
@@ -1588,6 +1619,7 @@ useEffect(() => {
         // If not a worker profile, fall back to recording in attendance_records (user_id)
         record.user_id = attendanceData.entityId;
         const res = await addRow(record);
+        try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'user', entityId: attendanceData.entityId, attendance: res, signInTime: attendanceData.signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
         return res;
       }
     } catch (err) {
@@ -1637,12 +1669,14 @@ useEffect(() => {
                 ...prev,
                 [entityId]: { id: pendingId, signInTime, isWorker: true, worker_id: res.worker_id },
               }));
+              try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'worker', profileId: entityId, worker_id: res.worker_id, attendance: workerResult, signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
             } else {
               const pendingId = res?.id || res?.tempId || null;
               setPendingSignIns((prev) => ({
                 ...prev,
                 [entityId]: { id: pendingId, signInTime, isWorker: false },
               }));
+              try { if (typeof onSignIn === 'function') onSignIn({ entityType: entityType === 'user' ? 'user' : 'student', entityId, attendance: res, signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
             }
 
             setMessage(`${displayName} authenticated and attendance recorded.`);
@@ -1677,6 +1711,7 @@ useEffect(() => {
                   const workerRowId = pending.id; // tempId or real id
                   // updateRow handles online/offline update
                   await updateWorkerRow(workerRowId, { sign_out_time: signOutTime, hours: Number(durationHours.toFixed(2)), description: `biometric sign out @ ${signOutTime}` });
+                  try { if (typeof onSignOut === 'function') onSignOut({ entityType: 'worker', profileId: entityId, worker_id: pending.worker_id, attendanceId: workerRowId, signOutTime }); } catch (e) { if (DEBUG) console.warn('onSignOut callback failed', e); }
                 } catch (err) {
                   console.error('Failed to update worker attendance record on sign-out', err);
                 }
@@ -1684,6 +1719,7 @@ useEffect(() => {
                 // Existing behavior: update attendance_records sign_out_time
                 try {
                   await updateRow(pending.id, { sign_out_time: signOutTime });
+                  try { if (typeof onSignOut === 'function') onSignOut({ entityType: 'attendance', entityId, attendanceId: pending.id, signOutTime }); } catch (e) { if (DEBUG) console.warn('onSignOut callback failed', e); }
                 } catch (err) {
                   console.error('updateRow failed, falling back to addRow update for attendance_records', err);
                   try {

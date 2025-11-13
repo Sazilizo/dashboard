@@ -30,6 +30,8 @@ export default function EditProfile({ user,onAvatarUpdated }) {
     user?.profile?.roles?.name?.toLowerCase()
   );
 
+  useEffect(() => {console.log('EditProfile user prop changed:', user);}, [user]);
+
   useEffect(() => {
     async function fetchMeta() {
       const { data: rolesData } = await api.from("roles").select("id,name");

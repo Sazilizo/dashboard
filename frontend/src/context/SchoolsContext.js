@@ -64,7 +64,9 @@ export function SchoolsProvider({ children }) {
   const [schools, setSchools] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const { filters } = useFilters();
+  // useFilters may be undefined if FiltersProvider is not mounted yet. Be defensive.
+  const filtersCtx = useFilters();
+  const filters = (filtersCtx && filtersCtx.filters) || {};
   const { isOnline } = useOnlineStatus();
   const lastFetchTime = React.useRef(0);
   const FETCH_DEBOUNCE_MS = 10000; // 10 seconds debounce

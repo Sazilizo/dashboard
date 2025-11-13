@@ -20,12 +20,15 @@ const navItems = [
 export default function Sidebar() {
   const [open, setOpen] = useState(false);
   const { user } = useAuth();
-  const notPrivileged = ["head tutor", "head coach"].includes(user?.profile?.roles.name);
+
+  // Be defensive: role name may be missing (offline or synthesized), so normalize safely
+  const roleName = user?.profile?.roles?.name ? String(user.profile.roles.name).toLowerCase() : null;
+  const notPrivileged = roleName ? ["head tutor", "head coach"].includes(roleName) : false;
 
   useEffect(()=>{
     console.log("user:", user);
-    console.log("notPrivileged:", notPrivileged);
-  },[user, notPrivileged])
+    console.log("roleName:", roleName, "notPrivileged:", notPrivileged);
+  },[user, roleName, notPrivileged])
 
   return (
     <>

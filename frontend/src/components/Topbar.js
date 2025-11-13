@@ -18,8 +18,18 @@ export default function Topbar() {
   const { isOnline } = useOnlineStatus();
 
   const fetchAvatar = useCallback(async () => {
-    if (!user?.profile?.id) return;
-    if (!isOnline) return; // don't try network requests when offline
+    if (!user?.profile?.id) {
+      // No user yet - ensure we do not stay stuck in loading state
+      setAvatarUrl("");
+      setLoading(false);
+      return;
+    }
+    if (!isOnline) {
+      // don't try network requests when offline; treat as no avatar
+      setAvatarUrl("");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
 
     const userId = user.profile.id;
@@ -55,6 +65,7 @@ export default function Topbar() {
     fetchAvatar();
   }, [fetchAvatar]);
 
+  useEffect(() => {console.log('User changed:', user);}, [user]);
   return (
     <>
       <header className="topbar">

@@ -12,6 +12,9 @@ import {
 import useOnlineStatus from "../hooks/useOnlineStatus";
 import { startAutoCloseMonitoring, stopAutoCloseMonitoring } from "../utils/autoCloseWorkDay";
 import cacheFormSchemasIfOnline from "../utils/proactiveCache";
+import { getTable, cacheTable } from "../utils/tableCache";
+// debug flag
+const DEBUG = false;
 
 const AuthContext = createContext();
 
@@ -87,38 +90,113 @@ export function AuthProvider({ children }) {
 
       console.log('[AuthProvider] User authenticated:', supabaseUser.email);
 
-      // Fetch profile - with fallback to stored data
+      // Fetch profile - with fallbacks: try auth_uid, then email, then stored data, then build a minimal profile
       let profile = null;
       try {
-        const { data: profileData, error: profileError } = await api
+        const selectCols = "id, username, role_id, school_id, avatar_url, email, roles:role_id(name)";
+
+        // Primary lookup by auth_uid
+        let { data: profileData, error: profileError } = await api
           .from("profiles")
-          .select("id, username, role_id, school_id, avatar_url, roles:role_id(name)")
+          .select(selectCols)
           .eq("auth_uid", supabaseUser.id)
           .maybeSingle();
 
+        // If not found by auth_uid, try by email as a secondary lookup (some installs store profile.email)
+        if (!profileData && (!profileError)) {
+          try {
+            const res = await api
+              .from("profiles")
+              .select(selectCols)
+              .eq("email", supabaseUser.email)
+              .maybeSingle();
+            if (res && res.data) profileData = res.data;
+            if (res && res.error) profileError = res.error;
+          } catch (e) {
+            // ignore and continue to other fallbacks
+            if (DEBUG) console.warn('[AuthProvider] secondary profile lookup by email failed', e);
+          }
+        }
+
         if (profileError) {
           console.warn("[AuthProvider] Failed to fetch profile from DB:", profileError);
-          
-          // Fallback to stored profile
-          const { user: storedUser } = await getStoredAuthData();
-          if (storedUser?.profile) {
-            console.log('[AuthProvider] Using stored profile data');
-            profile = storedUser.profile;
-          } else {
-            console.warn("[AuthProvider] No stored profile available");
-          }
-        } else {
+        }
+
+        if (profileData) {
           profile = profileData;
+        } else {
+          // Try stored profile as a fallback
+          try {
+            const { user: storedUser } = await getStoredAuthData();
+            if (storedUser?.profile) {
+              console.log('[AuthProvider] Using stored profile data');
+              profile = storedUser.profile;
+            }
+          } catch (e) {
+            if (DEBUG) console.warn('[AuthProvider] getStoredAuthData failed', e);
+          }
         }
       } catch (profileErr) {
         console.error("[AuthProvider] Profile fetch error:", profileErr);
-        
-        // Fallback to stored profile
-        const { user: storedUser } = await getStoredAuthData();
-        if (storedUser?.profile) {
-          console.log('[AuthProvider] Using stored profile due to fetch error');
-          profile = storedUser.profile;
+        try {
+          const { user: storedUser } = await getStoredAuthData();
+          if (storedUser?.profile) {
+            console.log('[AuthProvider] Using stored profile due to fetch error');
+            profile = storedUser.profile;
+          }
+        } catch (e) {
+          if (DEBUG) console.warn('[AuthProvider] getStoredAuthData failed after profileErr', e);
         }
+      }
+
+      // If still no profile, synthesize a minimal profile object from the auth user so UI has expected shape
+      // Do NOT assume a default role name (like 'user') here: prefer to leave roles.name empty so it can be
+      // resolved from the canonical `roles` table below (or remain unset until the app can map it).
+      if (!profile) {
+        const fallbackUsername = supabaseUser.user_metadata?.username || supabaseUser.user_metadata?.name || supabaseUser.email?.split('@')?.[0] || 'User';
+        profile = {
+          id: null,
+          username: fallbackUsername,
+          role_id: supabaseUser.user_metadata?.role_id || null,
+          school_id: null,
+          avatar_url: null,
+          email: supabaseUser.email,
+          // leave roles.name undefined so the canonical roles lookup can populate it
+          roles: {}
+        };
+        console.warn('[AuthProvider] No profile found in DB - using synthesized fallback profile', profile.username);
+      }
+
+      // Ensure profile.roles.name is populated from cached roles table if available.
+      // Always attempt to resolve a role name when a role_id is present so that any
+      // synthesized or stale placeholder values get replaced with the canonical one.
+      try {
+        if (profile && profile.role_id) {
+          let rolesRows = await getTable('roles');
+          // If cache empty and we are online, fetch from server and cache it
+          if ((!Array.isArray(rolesRows) || rolesRows.length === 0) && isOnline) {
+            try {
+              const { data: fetchedRoles, error: rolesErr } = await api.from('roles').select('*');
+              if (!rolesErr && Array.isArray(fetchedRoles) && fetchedRoles.length) {
+                rolesRows = fetchedRoles;
+                // cache for future runs
+                try { await cacheTable('roles', rolesRows); } catch (cErr) { if (DEBUG) console.warn('cacheTable roles failed', cErr); }
+              }
+            } catch (fetchErr) {
+              if (DEBUG) console.warn('[AuthProvider] Failed to fetch roles from server', fetchErr);
+            }
+          }
+
+          if (Array.isArray(rolesRows) && rolesRows.length) {
+            const match = rolesRows.find(r => String(r.id) === String(profile.role_id) || String(r.role_id) === String(profile.role_id));
+            if (match) {
+              profile.roles = profile.roles || {};
+              profile.roles.name = match.name || profile.roles.name || match.role_name;
+            }
+          }
+        }
+      } catch (roleErr) {
+        console.warn('[AuthProvider] Failed to resolve role name from cache', roleErr);
       }
 
       const fullUser = { ...supabaseUser, profile };

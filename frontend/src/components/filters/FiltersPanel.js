@@ -31,6 +31,7 @@ export default function FiltersPanel({
     console.log('[FiltersPanel] Schools updated:', schools?.length || 0);
   }, [schools]);
 
+  useEffect(() => {console.log("Schools changed:", schools, "user", user);}, [schools, user]);
   // ✅ Wrap setFilters here so children don't cause infinite updates
   const safeSetFilters = useCallback(
     (update) => {

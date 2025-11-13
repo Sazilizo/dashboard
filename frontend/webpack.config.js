@@ -31,6 +31,10 @@ module.exports = {
       "@components": path.resolve(__dirname, "src/components"),
       "@assets": path.resolve(__dirname, "src/assets"),
       "@styles": path.resolve(__dirname, "src/styles"),
+      // Resolve pdf-lib to its distributed ESM/UMD bundle to avoid cjs subpath import issues
+      // Some pdf-lib installs include a minimal `cjs/index.js` that re-exports subpaths which
+      // may not be present in all installs — alias to the built distribution instead.
+      "pdf-lib$": path.resolve(__dirname, "node_modules/pdf-lib/dist/pdf-lib.esm.js"),
     },
     fallback: {
       fs: false,

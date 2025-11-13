@@ -36,16 +36,16 @@ function App() {
   
   return (
     <AuthProvider>
-      <FilterProvider>
-        <SchoolsProvider>
+      <SchoolsProvider>
+        <FilterProvider>
           <DataProvider>
             <SeoHelmet />
             <OfflineIndicator />
             {/* Schools debug panel removed from UI to avoid intrusive popup on small screens */}
             <RouterProvider router={router} />
           </DataProvider>
-        </SchoolsProvider>
-      </FilterProvider>
+        </FilterProvider>
+      </SchoolsProvider>
     </AuthProvider>
  )
 }
