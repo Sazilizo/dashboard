@@ -213,6 +213,45 @@ const BiometricsSignIn = ({
     };
   }, []);
 
+  // Helper: make sure face-api models and the faceapi module are fully ready
+  const ensureModelsReadyForInference = async () => {
+    try {
+      // Quick check using the shared loader flag
+      if (!areFaceApiModelsLoaded() || !faceapiRef.current) {
+        setMessage('Preparing face detection models...');
+        const ok = await preloadFaceApiModels();
+        if (!ok) {
+          setMessage('Failed to load face detection models. Please download models in Offline Settings.');
+          return false;
+        }
+        try {
+          faceapiRef.current = await getFaceApi();
+        } catch (e) {
+          console.warn('ensureModelsReadyForInference: failed to import faceapi after preload', e);
+        }
+      }
+
+      // Final defensive guard: ensure the expected detector network is present
+      const faceapi = faceapiRef.current;
+      if (!faceapi || !faceapi.nets) {
+        setMessage('Face detection runtime not available.');
+        return false;
+      }
+
+      // Accept either tinyFaceDetector or ssdMobilenetv1 depending on build
+      if (!faceapi.nets.tinyFaceDetector && !faceapi.nets.ssdMobilenetv1) {
+        setMessage('Face detection network not loaded.');
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      console.error('ensureModelsReadyForInference error', err);
+      setMessage('Failed to prepare face detection models.');
+      return false;
+    }
+  };
+
   // ✅ Fetch subject names (student or user) for messages (offline fallback)
   useEffect(() => {
     const ids = entityType === 'user'
@@ -1050,18 +1089,15 @@ useEffect(() => {
 
     // Ensure face-api models are loaded before attempting detection
     try {
-      if (!areFaceApiModelsLoaded()) {
-        setMessage('Face models not loaded — preparing now...');
-        await preloadFaceApiModels();
-        try {
-          faceapiRef.current = await getFaceApi();
-        } catch (e) {
-          if (DEBUG) console.warn('Failed to import faceapi after preloading models', e);
-        }
+      const ready = await ensureModelsReadyForInference();
+      if (!ready) {
+        setIsProcessing(false);
+        return;
       }
     } catch (err) {
       console.error('Failed to ensure models loaded before capture', err);
       setMessage('Face detection models are unavailable. Please download models in Offline Settings.');
+      setIsProcessing(false);
       return;
     }
 
@@ -1321,10 +1357,8 @@ useEffect(() => {
     if (!ready) return; // skip this frame if video not ready
     try {
       // Ensure face-api models are loaded before attempting detection
-      if (!areFaceApiModelsLoaded()) {
-        if (DEBUG) console.warn('Skipping frame: models not loaded');
-        return;
-      }
+      const ready = await ensureModelsReadyForInference();
+      if (!ready) return;
       setIsProcessing(true);
       // draw downscaled frame
       const canvas = captureCanvasRef.current || document.createElement("canvas");
