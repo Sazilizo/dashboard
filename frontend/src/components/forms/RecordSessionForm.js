@@ -63,6 +63,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
   const [working, setWorking] = useState(false);
   const [showBiometrics, setShowBiometrics] = useState(false);
   const [recordingActive, setRecordingActive] = useState(false);
+  const [stopRecordingRequest, setStopRecordingRequest] = useState(0);
   // always show all sessions by default in this view
   const [lastActionResult, setLastActionResult] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -598,6 +599,14 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
               <button className="btn inline-flex items-center gap-2" onClick={() => setShowBiometrics(v => !v)} disabled={!selectedSession}>
                 <span className="text-sm">{showBiometrics ? 'Hide Biometrics' : 'Open Biometrics'}</span>
               </button>
+              {recordingActive && (
+                <button
+                  className="btn danger inline-flex items-center gap-2"
+                  onClick={() => setStopRecordingRequest((c) => c + 1)}
+                >
+                  End Session
+                </button>
+              )}
             </div>
           </div>
 
@@ -620,6 +629,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                 closeOnStart={true}
                 onRecordingStart={handleRecordingStart}
                 onRecordingStop={handleRecordingStop}
+                stopRecordingRequest={stopRecordingRequest}
               />
             </div>
           )}

@@ -56,6 +56,8 @@ const BiometricsSignIn = ({
   closeOnStart = true, // whether to close/unmount the biometric UI when recording session starts
   onRecordingStart = null, // optional callback fired when continuous recording starts
   onRecordingStop = null, // optional callback fired when continuous recording stops
+  // parent can request recording stop by incrementing this counter
+  stopRecordingRequest = 0,
   // storage customization (optional) - used when loading student images
   bucketName = null, // e.g. 'student-uploads' or 'worker-uploads'
   // Optional hooks parents can pass to receive structured events
@@ -63,6 +65,9 @@ const BiometricsSignIn = ({
   onSignOut = null, // (info) => {}
   folderName = null,
 }) => {
+  // External control: parent or global events can request sign-in/sign-out operations.
+  const [externalForceOperation, setExternalForceOperation] = useState(null);
+  const effectiveForceOperation = externalForceOperation || forceOperation;
   // basic UI/state refs
   const [message, setMessage] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -116,6 +121,50 @@ const BiometricsSignIn = ({
 
   // Determine effective storage bucket to use when fetching images
   const effectiveBucket = bucketName || (entityType === 'user' ? 'profile-avatars' : 'student-uploads');
+
+  // Listen for global signout/signin requests so overlays mounted anywhere can respond.
+  useEffect(() => {
+    const onRequest = (ev) => {
+      try {
+        const detail = ev?.detail || {};
+        if (detail?.operation === 'signout' || detail?.operation === 'signin') {
+          setExternalForceOperation(detail.operation);
+          // If a profile/entity id was provided, update local ids so the component can load references
+          if (detail.profileId || detail.entityId || detail.userId) {
+            // prefer userId for entityType 'user'
+            if (detail.userId) {
+              // update userId prop is not writable; instead, store requested IDs for immediate use
+              // set temporary ids to trigger reference loading
+              // Use refs to avoid re-rendering parent props
+              // Note: we rely on consumer to pass updated props when available; this is a best-effort notification
+            }
+          }
+          // also surface token input when applicable
+          if (detail && detail.forceShowToken) setShowTokenInput(true);
+        }
+      } catch (e) {
+        if (DEBUG) console.warn('app:request-signout handler failed', e);
+      }
+    };
+
+    window.addEventListener('app:request-signout', onRequest);
+    return () => window.removeEventListener('app:request-signout', onRequest);
+  }, []);
+
+  // Listen for completion events so we can clear external request state
+  useEffect(() => {
+    const onComplete = (ev) => {
+      try {
+        setExternalForceOperation(null);
+        // hide token input if it was shown for this operation
+        setShowTokenInput(false);
+      } catch (e) {
+        if (DEBUG) console.warn('app:request-signout-complete handler failed', e);
+      }
+    };
+    window.addEventListener('app:request-signout-complete', onComplete);
+    return () => window.removeEventListener('app:request-signout-complete', onComplete);
+  }, []);
 
   // Offline table hooks for attendance and worker attendance
   const { addRow, updateRow } = useOfflineTable('attendance_records');
@@ -237,7 +286,7 @@ const BiometricsSignIn = ({
         setAvailableCameras(videoDevices);
         // If no cameras are present and this is a user signin/signout flow,
         // show the token input immediately so the user can paste a code.
-        if ((forceOperation === 'signin' || forceOperation === 'signout') && entityType === 'user' && (!videoDevices || videoDevices.length === 0)) {
+        if ((effectiveForceOperation === 'signin' || effectiveForceOperation === 'signout') && entityType === 'user' && (!videoDevices || videoDevices.length === 0)) {
           setWebcamError(true);
           setShowTokenInput(true);
           setMessage('No camera detected on this device. Use your backup authentication code.');
@@ -299,10 +348,10 @@ const BiometricsSignIn = ({
       setWebcamError(true);
       
       // Show token input for users in both signin and signout flows to support devices without webcams.
-      if (entityType === 'user' && (forceOperation === 'signin' || forceOperation === 'signout')) {
+      if (entityType === 'user' && (effectiveForceOperation === 'signin' || effectiveForceOperation === 'signout')) {
         setMessage("No webcam detected. You can use your backup authentication code to proceed.");
         setShowTokenInput(true);
-      } else if (forceOperation === 'signout') {
+      } else if (effectiveForceOperation === 'signout') {
         // For sign-out on non-user entities, enforce webcam
         setMessage("⚠️ Webcam required for sign-out. Please use a device with a webcam to end your work day.");
       } else {
@@ -1496,6 +1545,23 @@ useEffect(() => {
     setMode("snapshot");
   };
 
+  // Parent-driven stop request: when `stopRecordingRequest` increments, stop continuous recording
+  const lastStopReqRef = useRef(0);
+  useEffect(() => {
+    try {
+      const v = Number(stopRecordingRequest) || 0;
+      if (v && v !== lastStopReqRef.current) {
+        lastStopReqRef.current = v;
+        // only attempt to stop if currently recording
+        if (mode === 'continuous') {
+          stopContinuous().catch((e) => { if (DEBUG) console.warn('stopContinuous failed', e); });
+        }
+      }
+    } catch (e) {
+      if (DEBUG) console.warn('stopRecordingRequest effect failed', e);
+    }
+  }, [stopRecordingRequest]);
+
   const retryWorker = () => {
     setWorkerError(null);
     setWorkerAvailable(false);
@@ -1712,6 +1778,8 @@ useEffect(() => {
                   // updateRow handles online/offline update
                   await updateWorkerRow(workerRowId, { sign_out_time: signOutTime, hours: Number(durationHours.toFixed(2)), description: `biometric sign out @ ${signOutTime}` });
                   try { if (typeof onSignOut === 'function') onSignOut({ entityType: 'worker', profileId: entityId, worker_id: pending.worker_id, attendanceId: workerRowId, signOutTime }); } catch (e) { if (DEBUG) console.warn('onSignOut callback failed', e); }
+                  // Notify any global listeners that a requested sign-out completed
+                  try { window.dispatchEvent(new CustomEvent('app:request-signout-complete', { detail: { profileId: entityId, worker_id: pending.worker_id, attendanceId: workerRowId, signOutTime } })); } catch (e) { if (DEBUG) console.warn('dispatch app:request-signout-complete failed', e); }
                 } catch (err) {
                   console.error('Failed to update worker attendance record on sign-out', err);
                 }
@@ -1720,6 +1788,7 @@ useEffect(() => {
                 try {
                   await updateRow(pending.id, { sign_out_time: signOutTime });
                   try { if (typeof onSignOut === 'function') onSignOut({ entityType: 'attendance', entityId, attendanceId: pending.id, signOutTime }); } catch (e) { if (DEBUG) console.warn('onSignOut callback failed', e); }
+                  try { window.dispatchEvent(new CustomEvent('app:request-signout-complete', { detail: { entityId, attendanceId: pending.id, signOutTime } })); } catch (e) { if (DEBUG) console.warn('dispatch app:request-signout-complete failed', e); }
                 } catch (err) {
                   console.error('updateRow failed, falling back to addRow update for attendance_records', err);
                   try {
@@ -1768,8 +1837,8 @@ useEffect(() => {
   const computedPrimaryLabel = (() => {
     if (isProcessing) return 'Processing...';
     if (primaryActionLabel) return primaryActionLabel;
-    if (forceOperation === 'signin' && typeof onCompleted === 'function') return 'Log In';
-    if (forceOperation === 'signout' && typeof onCompleted === 'function') return 'Log Out';
+  if (effectiveForceOperation === 'signin' && typeof onCompleted === 'function') return 'Log In';
+  if (effectiveForceOperation === 'signout' && typeof onCompleted === 'function') return 'Log Out';
     return Object.keys(pendingSignIns).length === 0 ? 'Sign In' : 'Sign Out';
   })();
 
@@ -1793,7 +1862,7 @@ useEffect(() => {
           )}
 
           {/* Token Input for Sign-In/Sign-Out when webcam unavailable */}
-          {showTokenInput && entityType === 'user' && (forceOperation === 'signin' || forceOperation === 'signout') && (
+          {showTokenInput && entityType === 'user' && (effectiveForceOperation === 'signin' || effectiveForceOperation === 'signout') && (
             <>
               <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1200 }} />
               <div
@@ -1813,7 +1882,7 @@ useEffect(() => {
                   textAlign: 'center'
                 }}
               >
-                <h3 style={{ marginTop: 0 }}>{forceOperation === 'signout' ? 'Sign-out code' : 'Authentication code'}</h3>
+                <h3 style={{ marginTop: 0 }}>{effectiveForceOperation === 'signout' ? 'Sign-out code' : 'Authentication code'}</h3>
                 {message && <div style={{ fontSize: '0.9rem', color: '#374151', marginBottom: 8 }}>{message}</div>}
 
                 <form onSubmit={handleTokenSubmit} style={{ maxWidth: '320px', margin: '0 auto' }}>
@@ -1872,7 +1941,7 @@ useEffect(() => {
           )}
 
           {/* Webcam Warning for Sign-Out */}
-          {webcamError && forceOperation === 'signout' && !showTokenInput && (
+          {webcamError && effectiveForceOperation === 'signout' && !showTokenInput && (
             <>
               <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1200 }} />
               <div
@@ -1903,7 +1972,7 @@ useEffect(() => {
           )}
 
           {/* Only show video and controls when not using token fallback or showing webcam warning */}
-          {!showTokenInput && !(webcamError && forceOperation === 'signout') && (
+          {!showTokenInput && !(webcamError && effectiveForceOperation === 'signout') && (
             <>
               <div className="video-container">
             <video

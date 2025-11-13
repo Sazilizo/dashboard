@@ -40,6 +40,8 @@ const LogoutButton = () => {
           // open centered confirm modal instead of toast
           setUserProfile(profile);
           setShowEndDayConfirm(true);
+          // Notify any mounted biometric overlays to present sign-out flow for this profile
+          try { window.dispatchEvent(new CustomEvent('app:request-signout', { detail: { operation: 'signout', profileId: profile.id, forceShowToken: false } })); } catch (e) { console.warn('Failed to dispatch app:request-signout', e); }
           return;
         }
       }
@@ -81,8 +83,14 @@ const LogoutButton = () => {
             .from('attendance_records')
             .update({ sign_out_time: nowIso, method: 'biometric', hours: hours })
             .eq('id', openSession.id);
-
           showToast('Work day ended successfully.', 'success');
+          // Ensure worker_attendance_records also reflect sign-out for worker_id if available
+          try {
+            // invoke onSignOut handler flow to update worker_attendance_records (uses offline hook)
+            await handleOnSignOut({ profileId: userProfile.id, signInTime: openSession.sign_in_time });
+          } catch (e) {
+            console.warn('Worker attendance sign-out via handleOnSignOut failed', e);
+          }
         } else {
           showToast('No open session found to close.', 'warning');
         }
@@ -91,7 +99,15 @@ const LogoutButton = () => {
         showToast('Sign-out recording failed, but you will be logged out.', 'warning');
       }
     } else if (userProfile?.id && !recordSignOut) {
+      // User chose to keep recording: do NOT record sign-out time. Proceed to logout immediately.
       showToast('Logging out (time not recorded).', 'info');
+      // performLogout will clear local state and navigate to login. We do NOT record sign-out.
+      try {
+        await performLogout();
+        return; // exit so we don't run the rest of the flow (revocation/generation handled in performLogout)
+      } catch (e) {
+        console.warn('performLogout after Keep Recording failed', e);
+      }
     }
 
     setShowBiometrics(false);
@@ -323,6 +339,27 @@ const LogoutButton = () => {
                   }
                   // show biometric modal to verify and then record sign-out
                   setShowBiometrics(true);
+                  try { window.dispatchEvent(new CustomEvent('app:request-signout', { detail: { operation: 'signout', profileId: userProfile.id, forceShowToken: !hasCamera } })); } catch (e) { console.warn('Failed to dispatch app:request-signout', e); }
+
+                  // Wait briefly for any global biometric overlay to complete sign-out and emit completion.
+                  // If completion is seen, performLogout here so the app logs out immediately. Otherwise the local
+                  // biometric modal that's shown above will handle logout when it completes.
+                  try {
+                    const timeoutMs = 10000; // 10s
+                    const completed = await new Promise((resolve) => {
+                      let settled = false;
+                      const onComplete = (ev) => { if (!settled) { settled = true; window.removeEventListener('app:request-signout-complete', onComplete); resolve(ev?.detail || true); } };
+                      window.addEventListener('app:request-signout-complete', onComplete);
+                      setTimeout(() => { if (!settled) { settled = true; window.removeEventListener('app:request-signout-complete', onComplete); resolve(null); } }, timeoutMs);
+                    });
+                    if (completed) {
+                      // An external biometric overlay completed sign-out — proceed to logout now
+                      try { await performLogout(); } catch (e) { console.warn('performLogout after external signout failed', e); }
+                    }
+                  } catch (e) {
+                    console.warn('Waiting for external signout completion failed', e);
+                  }
+
                   showToast('Please complete biometric verification to end your day.', 'info', 5000);
                 })();
               }}

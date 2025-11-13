@@ -154,45 +154,111 @@ export default function LoginForm() {
       }
     }
 
-  const handleBiometricComplete = async () => {
+  const handleBiometricComplete = async (entityId = null) => {
+    // Use explicit entityId if BiometicsSignIn passed it, otherwise fall back to the stored profile
+    const profileId = entityId || userProfile?.id;
+
     // Generate backup authentication token after successful biometric login
-    if (userProfile?.id) {
+    if (profileId) {
       // Create a persistent token and send to backend via storeAuthToken which already upserts
       const token = generateAuthToken();
-      await storeAuthToken(userProfile.id, token, 60); // Valid for 60 minutes; this sends to backend when possible
+      await storeAuthToken(profileId, token, 60); // Valid for 60 minutes; this sends to backend when possible
       setAuthToken(token);
       setShowTokenDisplay(true);
       // Auto-hide token after 30 seconds
       setTimeout(() => setShowTokenDisplay(false), 30000);
     }
-    
+
     // Biometric authentication successful - record attendance if user confirmed
-    if (userProfile?.id && recordAttendance) {
+    if (profileId && recordAttendance) {
       const nowIso = new Date().toISOString();
       const today = nowIso.split('T')[0];
-      const roleName = userProfile?.roles?.name?.toLowerCase?.() || '';
-      
-      const payload = {
-        user_id: userProfile.id,
-        school_id: userProfile.school_id,
-        date: today,
-        status: 'present',
-        method: 'biometric',
-        note: 'biometric sign-in',
-        sign_in_time: nowIso,
-      };
-      
-      if (roleName.includes('tutor') && userProfile.worker_id) payload.tutor_id = userProfile.worker_id;
-      if (roleName.includes('coach') && userProfile.worker_id) payload.coach_id = userProfile.worker_id;
 
+      // Check for an existing open attendance record for today. If one exists (signed in and not signed out),
+      // do NOT insert a new sign-in or overwrite the existing sign_in_time — the user is already signed in.
       try {
-        await api.from('attendance_records').insert(payload);
-        showToast('Sign-in successful! Time recorded.', 'success');
-      } catch (insErr) {
-        console.warn('Work sign-in insert failed', insErr?.message || insErr);
-        showToast('Attendance recording failed, but you are logged in.', 'warning');
+        const { data: existingRows, error: existingErr } = await api
+          .from('attendance_records')
+          .select('id, sign_in_time, sign_out_time')
+          .eq('user_id', profileId)
+          .eq('date', today)
+          .order('id', { ascending: false });
+
+        if (!existingErr && Array.isArray(existingRows) && existingRows.length) {
+          const open = existingRows.find(r => !r.sign_out_time);
+          if (open) {
+            showToast('You are already signed in for today — no new sign-in recorded.', 'info');
+          } else {
+            // No open row found for today: create a new sign-in
+            // Resolve roleName from available profile object if present, otherwise default
+            const roleName = (userProfile?.roles?.name || '').toLowerCase?.() || '';
+            const payload = {
+              user_id: profileId,
+              school_id: userProfile?.school_id,
+              date: today,
+              status: 'present',
+              method: 'biometric',
+              note: 'biometric sign-in',
+              sign_in_time: nowIso,
+            };
+            if (roleName.includes('tutor') && userProfile.worker_id) payload.tutor_id = userProfile.worker_id;
+            if (roleName.includes('coach') && userProfile.worker_id) payload.coach_id = userProfile.worker_id;
+
+            try {
+              await api.from('attendance_records').insert(payload);
+              showToast('Sign-in successful! Time recorded.', 'success');
+            } catch (insErr) {
+              console.warn('Work sign-in insert failed', insErr?.message || insErr);
+              showToast('Attendance recording failed, but you are logged in.', 'warning');
+            }
+          }
+        } else {
+          // No rows for today: normal insert
+          const roleName = (userProfile?.roles?.name || '').toLowerCase?.() || '';
+          const payload = {
+            user_id: profileId,
+            school_id: userProfile?.school_id,
+            date: today,
+            status: 'present',
+            method: 'biometric',
+            note: 'biometric sign-in',
+            sign_in_time: nowIso,
+          };
+          if (roleName.includes('tutor') && userProfile.worker_id) payload.tutor_id = userProfile.worker_id;
+          if (roleName.includes('coach') && userProfile.worker_id) payload.coach_id = userProfile.worker_id;
+
+          try {
+            await api.from('attendance_records').insert(payload);
+            showToast('Sign-in successful! Time recorded.', 'success');
+          } catch (insErr) {
+            console.warn('Work sign-in insert failed', insErr?.message || insErr);
+            showToast('Attendance recording failed, but you are logged in.', 'warning');
+          }
+        }
+      } catch (err) {
+        console.error('Error checking existing attendance rows:', err);
+        // fallback: attempt to insert
+        try {
+          const roleName = userProfile?.roles?.name?.toLowerCase?.() || '';
+          const payload = {
+            user_id: userProfile.id,
+            school_id: userProfile.school_id,
+            date: today,
+            status: 'present',
+            method: 'biometric',
+            note: 'biometric sign-in',
+            sign_in_time: nowIso,
+          };
+          if (roleName.includes('tutor') && userProfile.worker_id) payload.tutor_id = userProfile.worker_id;
+          if (roleName.includes('coach') && userProfile.worker_id) payload.coach_id = userProfile.worker_id;
+          await api.from('attendance_records').insert(payload);
+          showToast('Sign-in successful! Time recorded.', 'success');
+        } catch (insErr) {
+          console.warn('Work sign-in insert failed (fallback)', insErr?.message || insErr);
+          showToast('Attendance recording failed, but you are logged in.', 'warning');
+        }
       }
-    } else if (userProfile?.id && !recordAttendance) {
+    } else if (profileId && !recordAttendance) {
       showToast('Sign-in successful! (Time not recorded)', 'success');
     }
     
@@ -207,10 +273,10 @@ export default function LoginForm() {
         } else {
           if (refreshUser) await refreshUser(true);
         }
-      } else if (authToken && userProfile?.id) {
+      } else if (authToken && profileId) {
         // fallback: if no credentials but token was issued, persist token via storeAuthToken
         try {
-          await storeAuthToken(userProfile.id, authToken, 60);
+          await storeAuthToken(profileId, authToken, 60);
         } catch (e) {
           console.warn('Failed to persist token after biometric:', e);
         }
@@ -219,8 +285,8 @@ export default function LoginForm() {
       console.error('Error finalizing authentication after biometric:', err);
     }
 
-    setPendingCredentials(null);
-    setShowBiometrics(false);
+  setPendingCredentials(null);
+  setShowBiometrics(false);
 
     // Navigate after a short delay so UI shows the confirmation
     setTimeout(() => navigate(from, { replace: true }), 800);
