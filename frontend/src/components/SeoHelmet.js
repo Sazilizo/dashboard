@@ -1,40 +1,71 @@
-import React from 'react';
-import { Helmet } from 'react-helmet-async';
+import React, { useEffect } from 'react';
 
-/**
- * SeoHelmet - Default SEO/head tags for the app. Use props to override per-page values.
- * Favicons paths assume assets are served at /assets/
- */
+// Lightweight SEO component that manipulates head tags directly.
+// This avoids external dependencies and works across React versions.
 export default function SeoHelmet({
   title = 'Dashboard',
   description = 'School dashboard and attendance system',
-  url = window?.location?.href || '/',
+  url = (typeof window !== 'undefined' && window.location && window.location.href) || '/',
   image = '/assets/og-image.png',
   themeColor = '#0ea5e9',
-}) {
-  return (
-    <Helmet>
-      <title>{title}</title>
-      <meta name="description" content={description} />
-      <meta property="og:title" content={title} />
-      <meta property="og:description" content={description} />
-      <meta property="og:type" content="website" />
-      <meta property="og:url" content={url} />
-      <meta property="og:image" content={image} />
-      <meta name="twitter:card" content="summary_large_image" />
-      <meta name="twitter:title" content={title} />
-      <meta name="twitter:description" content={description} />
-      <meta name="theme-color" content={themeColor} />
+} = {}) {
+  useEffect(() => {
+    if (title) document.title = title;
 
-      {/* Favicons (adjust filenames in /assets/ if yours differ) */}
-  <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png" />
-  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png" />
-  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png" />
-      <link rel="manifest" href="/assets/site.webmanifest" />
-      <link rel="shortcut icon" href="/assets/favicon.ico" />
+    const setMeta = (nameOrProp, attr, value) => {
+      let el;
+      if (attr === 'name') el = document.querySelector(`meta[name="${nameOrProp}"]`);
+      else el = document.querySelector(`meta[property="${nameOrProp}"]`);
 
-      {/* Optional: canonical link - keep if you have a canonical URL */}
-      <link rel="canonical" href={url} />
-    </Helmet>
-  );
+      if (!el) {
+        el = document.createElement('meta');
+        if (attr === 'name') el.setAttribute('name', nameOrProp);
+        else el.setAttribute('property', nameOrProp);
+        document.head.appendChild(el);
+      }
+      el.setAttribute('content', value);
+    };
+
+    setMeta('description', 'name', description);
+    setMeta('og:title', 'property', title);
+    setMeta('og:description', 'property', description);
+    setMeta('og:type', 'property', 'website');
+    setMeta('og:url', 'property', url);
+    setMeta('og:image', 'property', image);
+    setMeta('twitter:card', 'name', 'summary_large_image');
+    setMeta('twitter:title', 'name', title);
+    setMeta('twitter:description', 'name', description);
+    setMeta('theme-color', 'name', themeColor);
+
+    const ensureLink = (rel, attrs) => {
+      let el = document.querySelector(`link[rel="${rel}"]`);
+      if (!el) {
+        el = document.createElement('link');
+        el.setAttribute('rel', rel);
+        document.head.appendChild(el);
+      }
+      Object.keys(attrs).forEach((k) => el.setAttribute(k, attrs[k]));
+    };
+
+    ensureLink('apple-touch-icon', { sizes: '180x180', href: '/assets/apple-touch-icon.png' });
+    ensureLink('icon', { type: 'image/png', sizes: '32x32', href: '/assets/favicon-32x32.png' });
+    ensureLink('icon', { type: 'image/png', sizes: '16x16', href: '/assets/favicon-16x16.png' });
+    ensureLink('manifest', { href: '/assets/site.webmanifest' });
+    ensureLink('shortcut icon', { href: '/assets/favicon.ico' });
+
+    // canonical link
+    let canonical = document.querySelector('link[rel="canonical"]');
+    if (!canonical) {
+      canonical = document.createElement('link');
+      canonical.setAttribute('rel', 'canonical');
+      document.head.appendChild(canonical);
+    }
+    canonical.setAttribute('href', url);
+
+    return () => {
+      // do not remove tags on unmount to keep head stable across navigations
+    };
+  }, [title, description, url, image, themeColor]);
+
+  return null;
 }
