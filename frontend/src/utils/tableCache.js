@@ -80,7 +80,11 @@ const MIGRATIONS = {
 /* --------------------------- Utility: open DB ---------------------- */
 export async function getDB() {
   // Try to open DB with fixed DB_VERSION and run migrations in upgrade handler.
-  const db = await openDB(DB_NAME, DB_VERSION, {
+  // If openDB fails (e.g., IndexedDB disabled or unavailable), fall back to a
+  // lightweight in-memory shim so callers don't throw synchronously and the
+  // app can continue to function in a degraded (non-persistent) mode.
+  try {
+    const db = await openDB(DB_NAME, DB_VERSION, {
     upgrade(upgradeDb, oldVersion, newVersion, transaction) {
       // Create core stores if missing
       for (const store of CORE_STORES) {
@@ -137,6 +141,117 @@ export async function getDB() {
       console.warn("[offlineDB] DB connection terminated");
     },
   });
+    return db;
+  } catch (err) {
+    // If IDB/openDB fails, log and return an in-memory shim implementation
+    // that supports the minimal subset of the API used by the app.
+    console.warn('[offlineDB] openDB failed, falling back to in-memory DB:', err?.message || err);
+    return createInMemoryDB();
+  }
+}
+
+function createInMemoryDB() {
+  // Map of storeName -> Map(key -> value)
+  const stores = new Map();
+  const autoIncCounters = new Map();
+
+  // Ensure core stores exist
+  for (const s of CORE_STORES) stores.set(s, new Map());
+  for (const s of Object.keys(INDEX_CONFIG)) stores.set(s, new Map());
+  stores.set('cached_files', new Map());
+
+  function ensureStore(name) {
+    if (!stores.has(name)) stores.set(name, new Map());
+  }
+
+  const db = {
+    objectStoreNames: {
+      contains: (n) => stores.has(n),
+    },
+
+    async get(storeName, key) {
+      ensureStore(storeName);
+      const store = stores.get(storeName);
+      return store.get(key);
+    },
+
+    async put(storeName, value, key) {
+      ensureStore(storeName);
+      const store = stores.get(storeName);
+      let k = key;
+      if (k === undefined || k === null) {
+        // attempt to infer key from common keyPaths
+        k = value?.id ?? value?.name ?? value?.key ?? undefined;
+      }
+      if (k === undefined || k === null) {
+        // fallback to auto-increment
+        const cur = autoIncCounters.get(storeName) || 1;
+        k = cur;
+        autoIncCounters.set(storeName, cur + 1);
+      }
+      store.set(k, value);
+      return k;
+    },
+
+    async add(storeName, value) {
+      ensureStore(storeName);
+      const cur = autoIncCounters.get(storeName) || 1;
+      const k = cur;
+      autoIncCounters.set(storeName, cur + 1);
+      stores.get(storeName).set(k, value);
+      return k;
+    },
+
+    transaction(names, mode = 'readonly') {
+      // names may be a single store or array; normalize to first store
+      const storeName = Array.isArray(names) ? names[0] : names;
+      ensureStore(storeName);
+      const store = stores.get(storeName);
+
+      const tx = {
+        store: {
+          async get(key) {
+            return store.get(key);
+          },
+          async getAll() {
+            return Array.from(store.values());
+          },
+          async getAllKeys() {
+            return Array.from(store.keys());
+          },
+          async put(value, key) {
+            let k = key;
+            if (k === undefined || k === null) {
+              k = value?.id ?? value?.name ?? value?.key ?? undefined;
+            }
+            if (k === undefined || k === null) {
+              const cur = autoIncCounters.get(storeName) || 1;
+              k = cur;
+              autoIncCounters.set(storeName, cur + 1);
+            }
+            store.set(k, value);
+            return k;
+          },
+          async add(value) {
+            const cur = autoIncCounters.get(storeName) || 1;
+            const k = cur;
+            autoIncCounters.set(storeName, cur + 1);
+            store.set(k, value);
+            return k;
+          },
+          async delete(key) {
+            return store.delete(key);
+          },
+          async clear() {
+            store.clear();
+          },
+        },
+        done: Promise.resolve(),
+      };
+
+      return tx;
+    },
+  };
 
   return db;
 }
