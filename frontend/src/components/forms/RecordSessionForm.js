@@ -405,7 +405,9 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
           note: r.note || `biometric ${r.type}`,
           created_at: r.timestamp || new Date().toISOString(),
         };
+        console.log('[RecordSessionForm] handleBiometricsCompleted payload:', payload);
         const res = await addAttendanceRow(payload);
+        console.log('[RecordSessionForm] addAttendanceRow result:', res);
         results.push(res);
       }
       setLastActionResult({ attendanceRecorded: results });
@@ -430,6 +432,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
 
   // Called when biometric component reports recording stopped
   const handleRecordingStop = useCallback(async ({ start, end, participants, academicSessionId, canceled } = {}) => {
+    console.log('[RecordSessionForm] handleRecordingStop called', { start, end, participants, academicSessionId, canceled });
     if (canceled) {
       addToast('Session canceled — recorded attendance was discarded.', 'info');
       // ensure local UI state is consistent
@@ -444,12 +447,29 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
 
     for (const p of participants || []) {
       try {
+        console.log('[RecordSessionForm] processing participant', p);
         // update academic_session_participants sign_out_time for this session/student
         if (selectedSession) {
           try {
+                // ensure participant exists in participantsTable (insert if missing)
+                const mapByStudent = Object.fromEntries((participantsForSelected || []).map(pp => [String(pp.student_id), pp]));
+                if (!mapByStudent[String(p.student_id)]) {
+                  const payload = { session_id: selectedSession, student_id: Number(p.student_id), school_id: studentById[String(p.student_id)]?.school_id || null, added_at: new Date().toISOString() };
+                  console.log('[RecordSessionForm] addParticipant (auto from recordingStop) payload:', payload);
+                  try {
+                    const addRes = await addParticipant(payload);
+                    console.log('[RecordSessionForm] addParticipant result:', addRes);
+                  } catch (addErr) {
+                    console.error('[RecordSessionForm] addParticipant failed', addErr);
+                    results.errors.push({ type: 'participant_insert', student_id: p.student_id, error: addErr?.message || String(addErr) });
+                  }
+                }
+
+                // Update sign_out_time for the participant row in the participants table (best-effort)
+                console.log('[RecordSessionForm] updating participant sign_out_time via API', { session: selectedSession, student: p.student_id, end });
                 await api.from(participantsTable)
-              .update({ sign_out_time: end })
-              .match({ session_id: selectedSession, student_id: Number(p.student_id) });
+                  .update({ sign_out_time: end })
+                  .match({ session_id: selectedSession, student_id: Number(p.student_id) });
             results.updatedParticipants.push(p.student_id);
           } catch (e) {
             results.errors.push({ type: 'participant_update', student_id: p.student_id, error: e?.message || String(e) });
@@ -472,14 +492,17 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
               // compute hours
               try {
                 const hours = start && end ? ((new Date(end) - new Date(start)) / (1000 * 60 * 60)).toFixed(2) : null;
+                console.log('[RecordSessionForm] updating attendance_records sign_out_time for', { attendanceId: open.id, end, hours });
                 await api.from('attendance_records').update({ sign_out_time: end, hours: hours ? Number(hours) : undefined }).eq('id', open.id);
                 results.updatedAttendance.push({ student_id: p.student_id, attendance_id: open.id });
               } catch (uerr) {
+                console.error('[RecordSessionForm] attendance update failed', uerr);
                 results.errors.push({ type: 'attendance_update', student_id: p.student_id, error: uerr?.message || String(uerr) });
               }
             }
           }
         } catch (attErr) {
+          console.error('[RecordSessionForm] attendance query failed', attErr);
           results.errors.push({ type: 'attendance_query', student_id: p.student_id, error: attErr?.message || String(attErr) });
         }
       } catch (err) {
@@ -621,13 +644,13 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                   {showEndSessionConfirm && (
                     <>
                       <div
-                        className="fixed inset-0 bg-black/40"
-                        style={{ zIndex: 1500 }}
+                        className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                        style={{ zIndex: 1600 }}
                         onClick={() => setShowEndSessionConfirm(false)}
                         aria-hidden
                       />
-                      <div className="fixed inset-0 flex items-center justify-center" style={{ zIndex: 1501 }}>
-                        <div className="bg-white rounded-md shadow-lg p-4 max-w-sm w-full">
+                      <div className="fixed left-1/2 transform -translate-x-1/2 bottom-16 w-full max-w-lg px-4" style={{ zIndex: 1601 }}>
+                        <div className="bg-white dark:bg-gray-800 rounded-md shadow-2xl p-4 border-2 border-red-500">
                           <div className="flex justify-between items-start">
                             <h3 className="text-lg font-medium">End Session</h3>
                             <button aria-label="Close" className="text-gray-500" onClick={() => setShowEndSessionConfirm(false)}>✕</button>

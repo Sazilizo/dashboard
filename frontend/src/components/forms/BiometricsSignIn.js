@@ -91,6 +91,41 @@ const BiometricsSignIn = ({
   const [showAttendancePrompt, setShowAttendancePrompt] = useState(false);
   const [pendingAttendanceData, setPendingAttendanceData] = useState(null);
   const [pendingSignIns, setPendingSignIns] = useState({});
+  // Recorded participants for the active session (local UI view)
+  const [recordedParticipants, setRecordedParticipants] = useState([]);
+  const [tick, setTick] = useState(0); // used to refresh elapsed times
+
+  // Helper to add a participant to the recorded list (start)
+  const addRecordedParticipant = (student_id, displayName, signInTime, attendanceId = null, isWorker = false) => {
+    setRecordedParticipants((prev) => {
+      // avoid duplicates for same active student
+      const exists = prev.find(p => String(p.student_id) === String(student_id) && !p.signOutTime);
+      if (exists) return prev;
+      return [...prev, { student_id: String(student_id), displayName, signInTime, attendanceId, signOutTime: null, durationMinutes: null, isWorker }];
+    });
+  };
+
+  // Helper to mark a participant as completed (stop)
+  const completeRecordedParticipant = (student_id, signOutTime) => {
+    setRecordedParticipants((prev) => prev.map(p => {
+      if (String(p.student_id) === String(student_id) && !p.signOutTime) {
+        const start = new Date(p.signInTime).getTime();
+        const end = signOutTime ? new Date(signOutTime).getTime() : Date.now();
+        const minutes = start && end ? ((end - start) / (1000 * 60)) : null;
+        return { ...p, signOutTime, durationMinutes: minutes !== null ? Number(minutes.toFixed(2)) : null };
+      }
+      return p;
+    }));
+  };
+
+  // Live tick to refresh UI durations while recording
+  useEffect(() => {
+    let intv;
+    if (mode === 'continuous') {
+      intv = setInterval(() => setTick(t => t + 1), 2000);
+    }
+    return () => { if (intv) clearInterval(intv); };
+  }, [mode]);
   const [workerAvailable, setWorkerAvailable] = useState(false);
   const [workerError, setWorkerError] = useState(null);
   const [workerReloadKey, setWorkerReloadKey] = useState(0);
@@ -1214,20 +1249,27 @@ useEffect(() => {
           try {
             if (!pendingSignIns[match.label]) {
               // Sign in: record attendance immediately
+              console.log('[BiometricsSignIn] student auto sign-in - recording attendance', { student_id: match.label, signInTime: nowIso });
               const res = await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign in' });
+              console.log('[BiometricsSignIn] recordAttendance result:', res);
               // addRow may return the inserted row (online) or an object with tempId (offline)
               const pendingId = res?.id || res?.tempId || (res?.result && (res.result.id || res.result.tempId)) || null;
               setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime: nowIso } }));
               setMessage(`${displayName} authenticated and attendance recorded.`);
 
-              // Add participant to academic_session_participants if a session id was provided
+              // Add participant to session table if a session id was provided (students only)
               try {
                 if (academicSessionId) {
-                  await api.from(sessionType).insert({
-                    session_id: academicSessionId,
-                    student_id: Number(match.label),
-                    school_id: schoolId
-                  });
+                  const partPayload = { session_id: academicSessionId, student_id: Number(match.label), school_id: schoolId, added_at: new Date().toISOString() };
+                  console.log('[BiometricsSignIn] inserting session participant', { payload: partPayload, sessionType });
+                  // Use offline hook when available for queuing; fallback to direct API insert
+                  try {
+                    await addParticipantRow({ session_id: academicSessionId, student_id: Number(match.label), school_id: schoolId, added_at: new Date().toISOString() });
+                    console.log('[BiometricsSignIn] addParticipantRow queued/returned for', match.label);
+                  } catch (e) {
+                    console.warn('[BiometricsSignIn] addParticipantRow failed, falling back to API insert', e);
+                    try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok'); } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed', e2); }
+                  }
                 }
               } catch (e) {
                 console.warn('Failed to insert academic_session_participant', e);
@@ -1259,6 +1301,7 @@ useEffect(() => {
                 setMessage(`${displayName} signed out. Duration: ${durationHours} hrs`);
                 try {
                   if (academicSessionId) {
+                    console.log('[BiometricsSignIn] updating participant sign_out_time via API', { sessionType, sessionId: academicSessionId, student: match.label });
                     await api.from(sessionType)
                       .update({ sign_out_time: new Date().toISOString() })
                       .match({ session_id: academicSessionId, student_id: Number(match.label) });
@@ -1387,6 +1430,7 @@ useEffect(() => {
         if (match.label === "unknown") continue;
         if (!pendingSignIns[match.label]) {
           const signInTime = new Date().toISOString();
+          console.log('[BiometricsSignIn] continuous auto sign-in attempt', { student_id: match.label, signInTime });
           const res = await addRow({
             student_id: match.label,
             school_id: schoolId,
@@ -1395,6 +1439,7 @@ useEffect(() => {
             date,
             sign_in_time: signInTime,
           });
+          console.log('[BiometricsSignIn] addRow (attendance_records) result:', res);
           const pendingId = res?.id || res?.tempId || null;
           setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime } }));
           const displayName = studentNames[match.label] || `Student ${match.label}`;
@@ -1434,6 +1479,10 @@ useEffect(() => {
     }
     // record start timestamp for duration calculation
     try { recordingStartRef.current = new Date().toISOString(); } catch (e) { recordingStartRef.current = null; }
+    // clear any previous recorded participants when starting a new continuous session
+    setRecordedParticipants([]);
+    // start tick so elapsed times update in UI
+    setTick((t) => t + 1);
   };
 
   const stopContinuous = async () => {
@@ -1538,8 +1587,10 @@ useEffect(() => {
 
               // Finally insert via offline-aware addRow so it queues when offline
               try {
-                await addParticipantRow({ session_id: academicSessionId, student_id: Number(p.student_id), school_id: schoolId });
-                return { student_id: Number(p.student_id), added: true };
+                console.log('[BiometricsSignIn] ensuring participant via addParticipantRow', { session: academicSessionId, student_id: p.student_id });
+                const addRes = await addParticipantRow({ session_id: academicSessionId, student_id: Number(p.student_id), school_id: schoolId });
+                console.log('[BiometricsSignIn] addParticipantRow result:', addRes);
+                return { student_id: Number(p.student_id), added: true, result: addRes };
               } catch (err) {
                 return { student_id: Number(p.student_id), added: false, reason: String(err) };
               }
