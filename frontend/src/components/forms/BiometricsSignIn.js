@@ -1255,6 +1255,7 @@ useEffect(() => {
               // addRow may return the inserted row (online) or an object with tempId (offline)
               const pendingId = res?.id || res?.tempId || (res?.result && (res.result.id || res.result.tempId)) || null;
               setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime: nowIso } }));
+              try { addRecordedParticipant(match.label, displayName, nowIso, pendingId, false); } catch (e) { if (DEBUG) console.warn('addRecordedParticipant failed', e); }
               setMessage(`${displayName} authenticated and attendance recorded.`);
 
               // Add participant to session table if a session id was provided (students only)
@@ -1293,6 +1294,7 @@ useEffect(() => {
                   // Fallback to previous behaviour if updateRow fails
                   await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
                 }
+                try { completeRecordedParticipant(match.label, signOutTime); } catch (e) { if (DEBUG) console.warn('completeRecordedParticipant failed', e); }
                 setPendingSignIns((prev) => {
                   const copy = { ...prev };
                   delete copy[match.label];
@@ -1442,6 +1444,7 @@ useEffect(() => {
           console.log('[BiometricsSignIn] addRow (attendance_records) result:', res);
           const pendingId = res?.id || res?.tempId || null;
           setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime } }));
+          try { addRecordedParticipant(match.label, studentNames[match.label] || `Student ${match.label}`, signInTime, pendingId, false); } catch (e) { if (DEBUG) console.warn('addRecordedParticipant failed', e); }
           const displayName = studentNames[match.label] || `Student ${match.label}`;
           setMessage(`${displayName} authenticated successfully.`);
           try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'student', entityId: match.label, attendance: res, signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
@@ -1548,7 +1551,14 @@ useEffect(() => {
         setMessage('Ended recording. Some sign-outs may have failed.');
       }
 
-      // clear pending sign-ins locally so UI reflects end of recording
+      // mark recorded participants as completed (UI) and clear pending sign-ins locally so UI reflects end of recording
+      try {
+        (participants || []).forEach(p => {
+          try { completeRecordedParticipant(p.student_id, stopTime); } catch (e) { if (DEBUG) console.warn('completeRecordedParticipant failed in stopContinuous', e); }
+        });
+      } catch (e) {
+        if (DEBUG) console.warn('Error completing recorded participants', e);
+      }
       setPendingSignIns({});
     }
 
@@ -1873,6 +1883,7 @@ useEffect(() => {
                 ...prev,
                 [entityId]: { id: pendingId, signInTime, isWorker: true, worker_id: res.worker_id },
               }));
+              try { addRecordedParticipant(entityId, displayName, signInTime, pendingId, true); } catch (e) { if (DEBUG) console.warn('addRecordedParticipant failed', e); }
               try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'worker', profileId: entityId, worker_id: res.worker_id, attendance: workerResult, signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
             } else {
               const pendingId = res?.id || res?.tempId || null;
@@ -1880,6 +1891,7 @@ useEffect(() => {
                 ...prev,
                 [entityId]: { id: pendingId, signInTime, isWorker: false },
               }));
+              try { addRecordedParticipant(entityId, displayName, signInTime, pendingId, false); } catch (e) { if (DEBUG) console.warn('addRecordedParticipant failed', e); }
               try { if (typeof onSignIn === 'function') onSignIn({ entityType: entityType === 'user' ? 'user' : 'student', entityId, attendance: res, signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
             }
 
@@ -1937,6 +1949,7 @@ useEffect(() => {
                   }
                 }
               }
+              try { completeRecordedParticipant(entityId, signOutTime); } catch (e) { if (DEBUG) console.warn('completeRecordedParticipant failed', e); }
               setPendingSignIns((prev) => {
                 const copy = { ...prev };
                 delete copy[entityId];
@@ -2180,6 +2193,34 @@ useEffect(() => {
 
           {/* Don't show the global floating message when token input or webcam fallback UI is active to avoid overlap */}
           {message && !showTokenInput && !webcamError && <pre className="message">{message}</pre>}
+
+          {/* Small session participants panel: shows recorded participants and durations */}
+          {recordedParticipants && recordedParticipants.length > 0 && (
+            <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-900 border rounded">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-medium">Session participants</div>
+                <div className="text-sm text-gray-500">{mode === 'continuous' ? 'Live' : 'Summary'}</div>
+              </div>
+              <div className="space-y-2">
+                {recordedParticipants.map((p) => {
+                  const name = p.displayName || `#${p.student_id}`;
+                  let minutes = p.durationMinutes;
+                  if ((minutes === null || minutes === undefined) && p.signInTime && !p.signOutTime) {
+                    const start = new Date(p.signInTime).getTime();
+                    const now = Date.now();
+                    minutes = start ? ((now - start) / (1000 * 60)) : 0;
+                  }
+                  const minutesStr = minutes !== null && minutes !== undefined ? `${Number(minutes).toFixed(2)} min` : '—';
+                  return (
+                    <div key={`${p.student_id}-${p.signInTime}`} className="flex items-center justify-between">
+                      <div className="text-sm">{name} <span className="text-xs text-gray-400">({p.student_id})</span></div>
+                      <div className="text-sm font-mono text-indigo-600">{minutesStr}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* If models are not loaded, provide a quick link to Offline Settings so users can download models */}
           {!loadingModels && !areFaceApiModelsLoaded() && (
