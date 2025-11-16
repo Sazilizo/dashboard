@@ -937,6 +937,32 @@ html, body {
   scroll-behavior: smooth;
 }
 
+/* ===== Record Session responsive layout fallbacks =====
+   These rules ensure the session + students columns display side-by-side
+   on wider screens and stack on mobile even if Tailwind utilities are
+   not processed. RecordSessionForm adds the .record-session-flex and
+   .record-session-col classes to remain resilient. */
+.record-session-flex {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem; /* matches gap-6 */
+}
+
+/* Each column should take full width by default */
+.record-session-col {
+  width: 100%;
+}
+
+@media (min-width: 769px) {
+  .record-session-flex {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+  .record-session-col {
+    width: 50%;
+  }
+}
+
 /* EntityMultiSelect: scrollable list without visible scrollbar */
 .entity-multiselect-list{
   max-height: 260px; /* limit height and allow scroll */

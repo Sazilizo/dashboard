@@ -64,6 +64,8 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
   const [showBiometrics, setShowBiometrics] = useState(false);
   const [recordingActive, setRecordingActive] = useState(false);
   const [stopRecordingRequest, setStopRecordingRequest] = useState(0);
+  const [stopRecordingCancelRequest, setStopRecordingCancelRequest] = useState(0);
+  const [showEndSessionConfirm, setShowEndSessionConfirm] = useState(false);
   // always show all sessions by default in this view
   const [lastActionResult, setLastActionResult] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -427,7 +429,14 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
   }, [addToast]);
 
   // Called when biometric component reports recording stopped
-  const handleRecordingStop = useCallback(async ({ start, end, participants, academicSessionId }) => {
+  const handleRecordingStop = useCallback(async ({ start, end, participants, academicSessionId, canceled } = {}) => {
+    if (canceled) {
+      addToast('Session canceled — recorded attendance was discarded.', 'info');
+      // ensure local UI state is consistent
+      setRecordingActive(false);
+      setLastActionResult({ canceled: true });
+      return;
+    }
     setRecordingActive(false);
     const startDate = start ? start.split('T')[0] : null;
     const endDate = end ? end.split('T')[0] : null;
@@ -550,8 +559,8 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
+          <div className="flex flex-col md:flex-row gap-6 record-session-flex">
+            <div className="w-full md:w-1/2 record-session-col">
               <label className="block text-sm font-medium text-gray-700">Select session</label>
               <div className="text-xs text-gray-500 mb-2">Showing {displayedSessions.length} of {(sessionRows || []).length} sessions</div>
 
@@ -569,9 +578,9 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
               </select>
             </div>
 
-            <div className="flex flex-col items-center justify-center">
+            <div className="flex flex-col items-center justify-center w-full md:w-1/2 record-session-col">
               <label className="block text-sm font-medium text-gray-700">Select students to add/remove</label>
-              <div className="mt-2 w-full max-w-md">
+              <div className="mt-2 w-full">
                 <SelectableList
                   students={filteredStudents}
                   resource="students"
@@ -600,12 +609,62 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                 <span className="text-sm">{showBiometrics ? 'Hide Biometrics' : 'Open Biometrics'}</span>
               </button>
               {recordingActive && (
-                <button
-                  className="btn danger inline-flex items-center gap-2"
-                  onClick={() => setStopRecordingRequest((c) => c + 1)}
-                >
-                  End Session
-                </button>
+                <>
+                  <button
+                    className="btn danger inline-flex items-center gap-2"
+                    onClick={() => setShowEndSessionConfirm(true)}
+                  >
+                    End Session
+                  </button>
+
+                  {/* End Session confirmation modal */}
+                  {showEndSessionConfirm && (
+                    <>
+                      <div
+                        className="fixed inset-0 bg-black/40 z-40"
+                        onClick={() => setShowEndSessionConfirm(false)}
+                        aria-hidden
+                      />
+                      <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+                        <div className="pointer-events-auto bg-white rounded-md shadow-lg p-4 max-w-sm w-full">
+                          <div className="flex justify-between items-start">
+                            <h3 className="text-lg font-medium">End Session</h3>
+                            <button aria-label="Close" className="text-gray-500" onClick={() => setShowEndSessionConfirm(false)}>✕</button>
+                          </div>
+                          <p className="mt-2 text-sm text-gray-600">Do you want to cancel this session (discard recorded attendance) or complete it (finalize attendance and participants)?</p>
+
+                          <div className="mt-4 flex gap-2 justify-end">
+                            <button
+                              className="btn inline-flex items-center gap-2"
+                              onClick={() => {
+                                // Cancel session: stop recording without committing attendance/participants
+                                setShowEndSessionConfirm(false);
+                                // signal cancel stop to BiometicsSignIn via separate counter
+                                setStopRecordingCancelRequest((c) => c + 1);
+                                // also mark recordingInactive locally
+                                setRecordingActive(false);
+                              }}
+                            >
+                              Cancel Session
+                            </button>
+
+                            <button
+                              className="btn danger inline-flex items-center gap-2"
+                              onClick={() => {
+                                // Complete session: proceed with normal stop which commits attendance
+                                setShowEndSessionConfirm(false);
+                                setStopRecordingRequest((c) => c + 1);
+                                setRecordingActive(false);
+                              }}
+                            >
+                              Complete Session
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -630,6 +689,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                 onRecordingStart={handleRecordingStart}
                 onRecordingStop={handleRecordingStop}
                 stopRecordingRequest={stopRecordingRequest}
+                stopRecordingCancelRequest={stopRecordingCancelRequest}
               />
             </div>
           )}

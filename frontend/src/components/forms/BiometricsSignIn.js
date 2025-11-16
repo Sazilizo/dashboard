@@ -58,6 +58,8 @@ const BiometricsSignIn = ({
   onRecordingStop = null, // optional callback fired when continuous recording stops
   // parent can request recording stop by incrementing this counter
   stopRecordingRequest = 0,
+  // parent can request a cancel-stop (stop recording but do NOT commit attendance/participants)
+  stopRecordingCancelRequest = 0,
   // storage customization (optional) - used when loading student images
   bucketName = null, // e.g. 'student-uploads' or 'worker-uploads'
   // Optional hooks parents can pass to receive structured events
@@ -1595,6 +1597,64 @@ useEffect(() => {
       if (DEBUG) console.warn('stopRecordingRequest effect failed', e);
     }
   }, [stopRecordingRequest]);
+
+  // Parent-driven cancel-stop request: stop recording but do NOT commit attendance or session participants
+  const lastCancelStopReqRef = useRef(0);
+  const stopContinuousCancel = async () => {
+    try {
+      if (processIntervalRef.current) {
+        clearInterval(processIntervalRef.current);
+        processIntervalRef.current = null;
+      }
+      const stopTime = new Date().toISOString();
+
+      // Prepare participants info captured during recording (but we won't commit them)
+      const participants = Object.keys(pendingSignIns || {}).map((k) => {
+        const v = pendingSignIns[k] || {};
+        return {
+          student_id: k,
+          signInTime: v.signInTime || null,
+          attendanceId: v.id || null,
+          isWorker: v.isWorker || false,
+          worker_id: v.worker_id || null,
+        };
+      });
+
+      // Clear pending sign-ins without performing sign-outs or participant inserts
+      setPendingSignIns({});
+
+      setMessage('Recording stopped — session canceled (no attendance recorded).');
+
+      // Notify parent that recording stopped but was canceled so it can avoid committing
+      try {
+        if (typeof onRecordingStop === 'function') {
+          onRecordingStop({ start: recordingStartRef.current, end: stopTime, participants: [], academicSessionId, canceled: true });
+        }
+      } catch (e) {
+        if (DEBUG) console.warn('onRecordingStop (cancel) failed', e);
+      }
+
+      // clear recording timestamp and return to snapshot mode
+      recordingStartRef.current = null;
+      setMode('snapshot');
+    } catch (err) {
+      console.warn('stopContinuousCancel failed', err);
+    }
+  };
+
+  useEffect(() => {
+    try {
+      const v = Number(stopRecordingCancelRequest) || 0;
+      if (v && v !== lastCancelStopReqRef.current) {
+        lastCancelStopReqRef.current = v;
+        if (mode === 'continuous') {
+          stopContinuousCancel().catch((e) => { if (DEBUG) console.warn('stopContinuousCancel failed', e); });
+        }
+      }
+    } catch (e) {
+      if (DEBUG) console.warn('stopRecordingCancelRequest effect failed', e);
+    }
+  }, [stopRecordingCancelRequest]);
 
   const retryWorker = () => {
     setWorkerError(null);
