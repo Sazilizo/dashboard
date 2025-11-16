@@ -397,18 +397,24 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
       const rows = Array.isArray(attendanceData) ? attendanceData : [attendanceData];
       const results = [];
   for (const r of rows) {
-        const payload = {
-          student_id: r.studentId,
-          school_id: studentById[String(r.studentId)]?.school_id || null,
-          date: r.timestamp?.slice(0,10) || new Date().toISOString().slice(0,10),
-          status: r.type === 'signout' ? 'present' : 'present',
-          note: r.note || `biometric ${r.type}`,
-          created_at: r.timestamp || new Date().toISOString(),
-        };
-        console.log('[RecordSessionForm] handleBiometricsCompleted payload:', payload);
-        const res = await addAttendanceRow(payload);
-        console.log('[RecordSessionForm] addAttendanceRow result:', res);
-        results.push(res);
+        // If the biometric component already includes an attendance result, don't write a duplicate row.
+        if (r.attendance) {
+          console.log('[RecordSessionForm] received attendance from biometric payload, skipping addAttendanceRow:', r.attendance);
+          results.push(r.attendance);
+        } else {
+          const payload = {
+            student_id: r.studentId,
+            school_id: studentById[String(r.studentId)]?.school_id || null,
+            date: r.timestamp?.slice(0,10) || new Date().toISOString().slice(0,10),
+            status: r.type === 'signout' ? 'present' : 'present',
+            note: r.note || `biometric ${r.type}`,
+            created_at: r.timestamp || new Date().toISOString(),
+          };
+          console.log('[RecordSessionForm] handleBiometricsCompleted payload:', payload);
+          const res = await addAttendanceRow(payload);
+          console.log('[RecordSessionForm] addAttendanceRow result:', res);
+          results.push(res);
+        }
         // If a session is selected, also assign this student to the session participants table
         try {
           if (selectedSession) {
@@ -442,8 +448,6 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
   const handleRecordingStart = useCallback(() => {
     setRecordingActive(true);
     addToast('Session recording started. You can now close the biometric modal and add more students.', 'info', 5000);
-    // Ensure modal is closed so teacher can continue selecting students
-    setShowBiometrics(false);
   }, [addToast]);
 
   // Called when biometric component reports recording stopped
@@ -665,7 +669,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                         onClick={() => setShowEndSessionConfirm(false)}
                         aria-hidden
                       />
-                      <div className="fixed left-1/2 transform -translate-x-1/2 bottom-16 w-full max-w-lg px-4" style={{ zIndex: 1601 }}>
+                      <div className="fixed left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 w-full max-w-lg px-4" style={{ zIndex: 1601 }}>
                         <div className="bg-white dark:bg-gray-800 rounded-md shadow-2xl p-4 border-2 border-red-500">
                           <div className="flex justify-between items-start">
                             <h3 className="text-lg font-medium">End Session</h3>
@@ -724,8 +728,8 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                 // Customize labels for recording flows
                 primaryRecordStartLabel={recordingActive ? 'Recording…' : 'Record Session'}
                 primaryRecordEndLabel={'End Session'}
-                // Close modal on recording start and notify parent
-                closeOnStart={true}
+                // Keep biometric UI mounted while recording so continuous processing continues
+                closeOnStart={false}
                 onRecordingStart={handleRecordingStart}
                 onRecordingStop={handleRecordingStop}
                 stopRecordingRequest={stopRecordingRequest}

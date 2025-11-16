@@ -1265,15 +1265,37 @@ useEffect(() => {
               // Add participant to session table if a session id was provided (students only)
               try {
                 if (academicSessionId) {
-                  const partPayload = { session_id: academicSessionId, student_id: Number(match.label), school_id: schoolId, added_at: new Date().toISOString() };
-                  console.log('[BiometricsSignIn] inserting session participant', { payload: partPayload, sessionType });
-                  // Use offline hook when available for queuing; fallback to direct API insert
+                  const sid = Number(match.label);
+                  const now = new Date().toISOString();
+                  const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: now, sign_in_time: now };
+                  console.log('[BiometricsSignIn] ensuring participant (snapshot) payload:', partPayload, 'table:', sessionType);
                   try {
-                    await addParticipantRow({ session_id: academicSessionId, student_id: Number(match.label), school_id: schoolId, added_at: new Date().toISOString() });
-                    console.log('[BiometricsSignIn] addParticipantRow queued/returned for', match.label);
-                  } catch (e) {
-                    console.warn('[BiometricsSignIn] addParticipantRow failed, falling back to API insert', e);
-                    try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok'); } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed', e2); }
+                    // Try local cache first to avoid duplicates
+                    const cached = await getTable(sessionType);
+                    const found = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid);
+                    if (found && found.id) {
+                      // update sign_in_time if missing
+                      if (!found.sign_in_time) {
+                        try {
+                          await updateParticipantRow(found.id, { sign_in_time: now });
+                          console.log('[BiometricsSignIn] updated participant sign_in_time via updateParticipantRow for', sid);
+                        } catch (uerr) {
+                          console.warn('[BiometricsSignIn] updateParticipantRow failed, falling back to API update', uerr);
+                          try { await api.from(sessionType).update({ sign_in_time: now }).eq('id', found.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant failed', e2); }
+                        }
+                      }
+                    } else {
+                      // Insert via offline-aware hook so it queues when offline
+                      try {
+                        const addRes = await addParticipantRow(partPayload);
+                        console.log('[BiometricsSignIn] addParticipantRow (snapshot) result:', addRes);
+                      } catch (err) {
+                        console.warn('[BiometricsSignIn] addParticipantRow failed (snapshot), falling back to API insert', err);
+                        try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (snapshot)'); } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (snapshot)', e2); }
+                      }
+                    }
+                  } catch (err) {
+                    console.warn('Failed to ensure academic_session_participant (snapshot)', err);
                   }
                 }
               } catch (e) {
@@ -1470,6 +1492,38 @@ useEffect(() => {
               try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
             } catch (e) {}
           }
+          // Also ensure session participant entry exists and record sign_in_time for continuous mode
+          try {
+            if (academicSessionId) {
+              const sid = Number(match.label);
+              const partNow = signInTime;
+              const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: partNow, sign_in_time: partNow };
+              console.log('[BiometricsSignIn] ensuring participant (continuous) payload:', partPayload, 'table:', sessionType);
+              const cached = await getTable(sessionType);
+              const found = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid);
+              if (found && found.id) {
+                if (!found.sign_in_time) {
+                  try {
+                    await updateParticipantRow(found.id, { sign_in_time: partNow });
+                    console.log('[BiometricsSignIn] updated participant sign_in_time via updateParticipantRow for', sid);
+                  } catch (uerr) {
+                    console.warn('[BiometricsSignIn] updateParticipantRow failed (continuous), falling back to API update', uerr);
+                    try { await api.from(sessionType).update({ sign_in_time: partNow }).eq('id', found.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant failed (continuous)', e2); }
+                  }
+                }
+              } else {
+                try {
+                  const addRes = await addParticipantRow(partPayload);
+                  console.log('[BiometricsSignIn] addParticipantRow (continuous) result:', addRes);
+                } catch (err) {
+                  console.warn('[BiometricsSignIn] addParticipantRow failed (continuous), falling back to API insert', err);
+                  try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (continuous)'); } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (continuous)', e2); }
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('Failed to ensure academic_session_participant (continuous)', err);
+          }
         }
       }
     } catch (err) {
@@ -1589,42 +1643,62 @@ useEffect(() => {
       if (academicSessionId && studentParticipants.length) {
         setMessage((m) => `${m}\nRecording session participants...`);
         try {
+          // Ensure each participant row exists and includes sign_in_time when available
           const ensured = await Promise.all(studentParticipants.map(async (p) => {
             try {
-                const sid = Number(p.student_id);
-              // If online, check remote first to avoid duplicates
+              const sid = Number(p.student_id);
+              const signInTime = p.signInTime || null;
+              // Try to find existing participant (online first)
+              let foundRow = null;
               if (isOnline) {
                 try {
                   const { data: existing, error: existingErr } = await api
                     .from(sessionType)
-                    .select('id')
+                    .select('*')
                     .match({ session_id: academicSessionId, student_id: sid })
                     .limit(1);
                   if (!existingErr && existing && existing.length) {
-                    return { student_id: sid, added: false, reason: 'exists' };
+                    foundRow = existing[0];
                   }
                 } catch (e) {
                   // ignore and fallback to cache
                 }
               }
 
-              // Check local cache to avoid duplicate offline inserts
-              try {
-                const cached = await getTable(sessionType);
-                const found = (cached || []).some(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === Number(p.student_id));
-                if (found) return { student_id: Number(p.student_id), added: false, reason: 'cached' };
-              } catch (e) {
-                // ignore cache errors
+              // Fallback to local cache
+              if (!foundRow) {
+                try {
+                  const cached = await getTable(sessionType);
+                  foundRow = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid) || null;
+                } catch (e) {
+                  // ignore cache errors
+                }
               }
 
-              // Finally insert via offline-aware addRow so it queues when offline
+              if (foundRow && foundRow.id) {
+                // If sign_in_time missing and we have one, update
+                if (signInTime && !foundRow.sign_in_time) {
+                  try {
+                    await updateParticipantRow(foundRow.id, { sign_in_time: signInTime });
+                    console.log('[BiometricsSignIn] updated participant sign_in_time for', sid);
+                  } catch (uerr) {
+                    console.warn('[BiometricsSignIn] updateParticipantRow failed (ensure), falling back to API update', uerr);
+                    try { await api.from(sessionType).update({ sign_in_time: signInTime }).eq('id', foundRow.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant failed (ensure)', e2); }
+                  }
+                }
+                return { student_id: sid, added: false, existing: foundRow };
+              }
+
+              // Insert new participant row with sign_in_time if available
+              const now = signInTime || new Date().toISOString();
+              const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: now, sign_in_time: signInTime || now };
               try {
-                console.log('[BiometricsSignIn] ensuring participant via addParticipantRow', { session: academicSessionId, student_id: p.student_id });
-                const addRes = await addParticipantRow({ session_id: academicSessionId, student_id: Number(p.student_id), school_id: schoolId });
-                console.log('[BiometricsSignIn] addParticipantRow result:', addRes);
-                return { student_id: Number(p.student_id), added: true, result: addRes };
+                const addRes = await addParticipantRow(partPayload);
+                console.log('[BiometricsSignIn] addParticipantRow (ensure) result:', addRes);
+                return { student_id: sid, added: true, result: addRes };
               } catch (err) {
-                return { student_id: Number(p.student_id), added: false, reason: String(err) };
+                console.warn('[BiometricsSignIn] addParticipantRow failed (ensure), falling back to API insert', err);
+                try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (ensure)'); return { student_id: sid, added: true }; } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (ensure)', e2); return { student_id: sid, added: false, reason: String(e2) }; }
               }
             } catch (err) {
               return { student_id: p.student_id, added: false, reason: String(err) };
@@ -1633,6 +1707,38 @@ useEffect(() => {
 
           const addedCount = ensured.filter(r => r.added).length;
           setMessage((m) => `${m}\nParticipants added to session: ${addedCount}/${ensured.length}`);
+
+          // After ensuring participants, update sign_out_time for those participants to stopTime
+          try {
+            await Promise.all(studentParticipants.map(async (p) => {
+              const sid = Number(p.student_id);
+              // find the participant row id (cache or API)
+              let found = null;
+              try {
+                const cached = await getTable(sessionType);
+                found = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid) || null;
+              } catch (e) {
+                // ignore
+              }
+              if (!found && isOnline) {
+                try {
+                  const { data: rows, error } = await api.from(sessionType).select('*').match({ session_id: academicSessionId, student_id: sid }).limit(1);
+                  if (!error && rows && rows.length) found = rows[0];
+                } catch (e) {}
+              }
+              if (found && found.id) {
+                try {
+                  await updateParticipantRow(found.id, { sign_out_time: stopTime });
+                  console.log('[BiometricsSignIn] updated participant sign_out_time for', sid);
+                } catch (uerr) {
+                  console.warn('[BiometricsSignIn] updateParticipantRow failed for sign_out_time, falling back to API update', uerr);
+                  try { await api.from(sessionType).update({ sign_out_time: stopTime }).eq('id', found.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant sign_out failed', e2); }
+                }
+              }
+            }));
+          } catch (e) {
+            console.warn('[BiometricsSignIn] failed to update participant sign_out_time batch', e);
+          }
         } catch (err) {
           console.warn('Failed to ensure session participants', err);
         }
@@ -1932,14 +2038,37 @@ useEffect(() => {
             // Only add participants for students — do not insert profile/worker rows into student participants table
             try {
               if (academicSessionId && entityType === 'student') {
-                await api.from(sessionType).insert({
-                  session_id: academicSessionId,
-                  student_id: Number(entityId),
-                  school_id: schoolId
-                });
+                const sid = Number(entityId);
+                const now = new Date().toISOString();
+                const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: now, sign_in_time: now };
+                try {
+                  const cached = await getTable(sessionType);
+                  const found = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid);
+                  if (found && found.id) {
+                    if (!found.sign_in_time) {
+                      try {
+                        await updateParticipantRow(found.id, { sign_in_time: now });
+                        console.log('[BiometricsSignIn] updated participant sign_in_time (prompt) for', sid);
+                      } catch (uerr) {
+                        console.warn('[BiometricsSignIn] updateParticipantRow failed (prompt), falling back to API update', uerr);
+                        try { await api.from(sessionType).update({ sign_in_time: now }).eq('id', found.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant failed (prompt)', e2); }
+                      }
+                    }
+                  } else {
+                    try {
+                      const addRes = await addParticipantRow(partPayload);
+                      console.log('[BiometricsSignIn] addParticipantRow (prompt) result:', addRes);
+                    } catch (err) {
+                      console.warn('[BiometricsSignIn] addParticipantRow failed (prompt), falling back to API insert', err);
+                      try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (prompt)'); } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (prompt)', e2); }
+                    }
+                  }
+                } catch (err) {
+                  console.warn('Failed to ensure academic_session_participant (prompt)', err);
+                }
               }
             } catch (e) {
-              console.warn('Failed to insert academic_session_participant', e);
+              console.warn('Failed to insert academic_session_participant (outer)', e);
             }
 
             // Hide/unmount biometric UI for caller if they provided onCompleted
