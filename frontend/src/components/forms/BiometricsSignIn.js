@@ -44,6 +44,8 @@ const BiometricsSignIn = ({
   userId = null,
   schoolId = null,
   academicSessionId = null,
+  // sessionType controls which participants table to write to (e.g. 'academic_session_participants' or 'pe_session_participants')
+  sessionType = 'academic_session_participants',
   onCompleted = null,
   onCancel = null,
   forceOperation = null,
@@ -172,7 +174,7 @@ const BiometricsSignIn = ({
   const { addRow, updateRow } = useOfflineTable('attendance_records');
   const { addRow: addWorkerRow, updateRow: updateWorkerRow } = useOfflineTable('worker_attendance_records');
   // offline hook for session participants (academic_session_participants)
-  const { addRow: addParticipantRow, updateRow: updateParticipantRow } = useOfflineTable('academic_session_participants');
+  const { addRow: addParticipantRow, updateRow: updateParticipantRow } = useOfflineTable(sessionType);
 
   // cache for descriptors (module-level in original; keep per-instance here)
   const faceDescriptorCache = {};
@@ -1164,7 +1166,7 @@ useEffect(() => {
         matchFound = true;
         const displayName = studentNames[match.label] || `${entityType === 'user' ? 'User' : 'Student'} ${match.label}`;
 
-        // For user authentication mode (entityType='user')
+            // For user authentication mode (entityType='user')
         if (entityType === 'user') {
           // Check if this is the correct user
           const expectedId = userId || (Array.isArray(userId) ? userId[0] : null);
@@ -1173,18 +1175,8 @@ useEffect(() => {
             
             // Prompt for attendance recording instead of auto-recording
             promptAttendanceRecording(match.label, displayName, false);
-            // Add participant to academic_session_participants if a session id was provided
-            try {
-              if (academicSessionId) {
-                await api.from('academic_session_participants').insert({
-                  session_id: academicSessionId,
-                  student_id: Number(match.label),
-                  school_id: schoolId
-                });
-              }
-            } catch (e) {
-              console.warn('Failed to insert academic_session_participant', e);
-            }
+            // Do NOT add session participants for user/profile entities here.
+            // Session participants should represent students only.
 
             // Hide/unmount the biometric UI so the user can re-open later for sign-out
             if (typeof onCompleted === 'function') {
@@ -1231,7 +1223,7 @@ useEffect(() => {
               // Add participant to academic_session_participants if a session id was provided
               try {
                 if (academicSessionId) {
-                  await api.from('academic_session_participants').insert({
+                  await api.from(sessionType).insert({
                     session_id: academicSessionId,
                     student_id: Number(match.label),
                     school_id: schoolId
@@ -1267,7 +1259,7 @@ useEffect(() => {
                 setMessage(`${displayName} signed out. Duration: ${durationHours} hrs`);
                 try {
                   if (academicSessionId) {
-                    await api.from('academic_session_participants')
+                    await api.from(sessionType)
                       .update({ sign_out_time: new Date().toISOString() })
                       .match({ session_id: academicSessionId, student_id: Number(match.label) });
                   }
@@ -1279,11 +1271,11 @@ useEffect(() => {
                 await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign out' });
                 setMessage(`${displayName} sign-out recorded.`);
                 try {
-                  if (academicSessionId) {
-                    await api.from('academic_session_participants')
-                      .update({ sign_out_time: new Date().toISOString() })
-                      .match({ session_id: academicSessionId, student_id: Number(match.label) });
-                  }
+                    if (academicSessionId) {
+                      await api.from(sessionType)
+                        .update({ sign_out_time: new Date().toISOString() })
+                        .match({ session_id: academicSessionId, student_id: Number(match.label) });
+                    }
                 } catch (e) {
                   console.warn('Failed to update academic_session_participant sign_out_time', e);
                 }
@@ -1511,18 +1503,19 @@ useEffect(() => {
       setPendingSignIns({});
     }
 
-      // Ensure participants are recorded in academic_session_participants
-      if (academicSessionId && participants.length) {
+      // Ensure participants are recorded in academic_session_participants (students only)
+      const studentParticipants = (participants || []).filter(p => !p.isWorker);
+      if (academicSessionId && studentParticipants.length) {
         setMessage((m) => `${m}\nRecording session participants...`);
         try {
-          const ensured = await Promise.all(participants.map(async (p) => {
+          const ensured = await Promise.all(studentParticipants.map(async (p) => {
             try {
-              const sid = Number(p.student_id);
+                const sid = Number(p.student_id);
               // If online, check remote first to avoid duplicates
               if (isOnline) {
                 try {
                   const { data: existing, error: existingErr } = await api
-                    .from('academic_session_participants')
+                    .from(sessionType)
                     .select('id')
                     .match({ session_id: academicSessionId, student_id: sid })
                     .limit(1);
@@ -1536,7 +1529,7 @@ useEffect(() => {
 
               // Check local cache to avoid duplicate offline inserts
               try {
-                const cached = await getTable('academic_session_participants');
+                const cached = await getTable(sessionType);
                 const found = (cached || []).some(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === Number(p.student_id));
                 if (found) return { student_id: Number(p.student_id), added: false, reason: 'cached' };
               } catch (e) {
@@ -1841,9 +1834,10 @@ useEffect(() => {
 
             setMessage(`${displayName} authenticated and attendance recorded.`);
             // Add academic session participant (for prompt-based sign-ins) if session id provided
+            // Only add participants for students — do not insert profile/worker rows into student participants table
             try {
-              if (academicSessionId) {
-                await api.from('academic_session_participants').insert({
+              if (academicSessionId && entityType === 'student') {
+                await api.from(sessionType).insert({
                   session_id: academicSessionId,
                   student_id: Number(entityId),
                   school_id: schoolId
@@ -1901,7 +1895,7 @@ useEffect(() => {
               // update academic_session_participants record sign_out_time when available
               try {
                 if (academicSessionId) {
-                  await api.from('academic_session_participants')
+                  await api.from(sessionType)
                     .update({ sign_out_time: new Date().toISOString() })
                     .match({ session_id: academicSessionId, student_id: Number(entityId) });
                 }

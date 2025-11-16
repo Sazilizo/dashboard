@@ -447,7 +447,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
         // update academic_session_participants sign_out_time for this session/student
         if (selectedSession) {
           try {
-            await api.from('academic_session_participants')
+                await api.from(participantsTable)
               .update({ sign_out_time: end })
               .match({ session_id: selectedSession, student_id: Number(p.student_id) });
             results.updatedParticipants.push(p.student_id);
@@ -621,12 +621,13 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                   {showEndSessionConfirm && (
                     <>
                       <div
-                        className="fixed inset-0 bg-black/40 z-40"
+                        className="fixed inset-0 bg-black/40"
+                        style={{ zIndex: 1500 }}
                         onClick={() => setShowEndSessionConfirm(false)}
                         aria-hidden
                       />
-                      <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
-                        <div className="pointer-events-auto bg-white rounded-md shadow-lg p-4 max-w-sm w-full">
+                      <div className="fixed inset-0 flex items-center justify-center" style={{ zIndex: 1501 }}>
+                        <div className="bg-white rounded-md shadow-lg p-4 max-w-sm w-full">
                           <div className="flex justify-between items-start">
                             <h3 className="text-lg font-medium">End Session</h3>
                             <button aria-label="Close" className="text-gray-500" onClick={() => setShowEndSessionConfirm(false)}>✕</button>
