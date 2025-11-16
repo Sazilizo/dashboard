@@ -409,6 +409,22 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
         const res = await addAttendanceRow(payload);
         console.log('[RecordSessionForm] addAttendanceRow result:', res);
         results.push(res);
+        // If a session is selected, also assign this student to the session participants table
+        try {
+          if (selectedSession) {
+            const partPayload = {
+              session_id: selectedSession,
+              student_id: Number(r.studentId),
+              school_id: studentById[String(r.studentId)]?.school_id || null,
+              added_at: r.timestamp || new Date().toISOString(),
+            };
+            console.log('[RecordSessionForm] adding participant to table:', participantsTable, 'payload:', partPayload);
+            const partRes = await addParticipant(partPayload);
+            console.log('[RecordSessionForm] addParticipant result:', partRes);
+          }
+        } catch (err) {
+          console.warn('[RecordSessionForm] failed to add participant for biometrics completion', err);
+        }
       }
       setLastActionResult({ attendanceRecorded: results });
       addToast(`Recorded ${results.length} attendance entries`, "success");

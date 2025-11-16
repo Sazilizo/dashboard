@@ -1215,7 +1215,11 @@ useEffect(() => {
 
             // Hide/unmount the biometric UI so the user can re-open later for sign-out
             if (typeof onCompleted === 'function') {
-              try { onCompleted(match.label); } catch (e) { }
+              try {
+                const payload = { entityId: match.label, type: 'auth', timestamp: new Date().toISOString() };
+                console.log('[BiometricsSignIn] onCompleted payload (user auth):', payload);
+                try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
+              } catch (e) {}
             }
             
             // Draw captured frame to canvas
@@ -1278,7 +1282,17 @@ useEffect(() => {
 
               // Hide/unmount the biometric UI so teacher can re-open for sign-out
               if (typeof onCompleted === 'function') {
-                try { onCompleted(match.label); } catch (e) { }
+                try {
+                  const payload = {
+                    studentId: match.label,
+                    type: 'signin',
+                    timestamp: nowIso,
+                    attendance: res,
+                    participant: academicSessionId ? { session_id: academicSessionId, table: sessionType } : null
+                  };
+                  console.log('[BiometricsSignIn] onCompleted payload (student snapshot):', payload);
+                  try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
+                } catch (e) {}
               }
             } else {
               // Sign out: update existing pending sign-in record if available
@@ -1448,6 +1462,14 @@ useEffect(() => {
           const displayName = studentNames[match.label] || `Student ${match.label}`;
           setMessage(`${displayName} authenticated successfully.`);
           try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'student', entityId: match.label, attendance: res, signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
+          // Notify parent with structured payload for this sign-in so parent can record attendance/participants if desired
+          if (typeof onCompleted === 'function') {
+            try {
+              const payload = { studentId: match.label, type: 'signin', timestamp: signInTime, attendance: res };
+              console.log('[BiometricsSignIn] onCompleted payload (continuous sign-in):', payload);
+              try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
+            } catch (e) {}
+          }
         }
       }
     } catch (err) {
@@ -1752,7 +1774,11 @@ useEffect(() => {
         
         // Call onCompleted callback to proceed with sign-in
         if (onCompleted) {
-          onCompleted(userId);
+          try {
+            const payload = { entityId: userId, type: 'auth', timestamp: new Date().toISOString() };
+            console.log('[BiometricsSignIn] onCompleted payload (token auth):', payload);
+            try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
+          } catch (e) {}
         }
       } else {
         setTokenError("Invalid or expired authentication code");
@@ -1784,7 +1810,9 @@ useEffect(() => {
       // Add either student_id or user/profile mapping
       if (entityType === 'student') {
         record.student_id = attendanceData.entityId;
+        console.log('[BiometricsSignIn] recording attendance -> table: attendance_records, payload:', record);
         const res = await addRow(record);
+        console.log('[BiometricsSignIn] attendance_records addRow result:', res);
         // notify parent
         try {
           if (typeof onSignIn === 'function') onSignIn({ entityType: 'student', entityId: attendanceData.entityId, attendance: res, signInTime: attendanceData.signInTime });
@@ -1817,7 +1845,9 @@ useEffect(() => {
               recorded_by: attendanceData.entityId,
             };
 
+            console.log('[BiometricsSignIn] recording attendance -> table: worker_attendance_records, payload:', workerPayload);
             const res = await addWorkerRow(workerPayload);
+            console.log('[BiometricsSignIn] worker_attendance_records addWorkerRow result:', res);
             // Notify parent of worker sign-in (server-side row created or queued via offline hook)
             try {
               if (typeof onSignIn === 'function') onSignIn({ entityType: 'worker', profileId: attendanceData.entityId, worker_id: profile.worker_id, attendance: res, signInTime: attendanceData.signInTime });
@@ -1831,10 +1861,12 @@ useEffect(() => {
         }
 
         // If not a worker profile, fall back to recording in attendance_records (user_id)
-        record.user_id = attendanceData.entityId;
-        const res = await addRow(record);
-        try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'user', entityId: attendanceData.entityId, attendance: res, signInTime: attendanceData.signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
-        return res;
+  record.user_id = attendanceData.entityId;
+  console.log('[BiometricsSignIn] recording attendance -> table: attendance_records (user fallback), payload:', record);
+  const res = await addRow(record);
+  console.log('[BiometricsSignIn] attendance_records addRow (user) result:', res);
+  try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'user', entityId: attendanceData.entityId, attendance: res, signInTime: attendanceData.signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
+  return res;
       }
     } catch (err) {
       console.error("Failed to record attendance:", err);
@@ -1912,7 +1944,11 @@ useEffect(() => {
 
             // Hide/unmount biometric UI for caller if they provided onCompleted
             if (typeof onCompleted === 'function') {
-              try { onCompleted(entityId); } catch (e) { }
+              try {
+                const payload = { entityId, type: 'signin', timestamp: signInTime, attendance: res };
+                console.log('[BiometricsSignIn] onCompleted payload (prompt sign-in):', payload);
+                try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
+              } catch (e) {}
             }
         } else {
           // Sign out
@@ -1976,9 +2012,13 @@ useEffect(() => {
       const action = isSignOut ? "logged out" : "logged in";
       setMessage(`${displayName} ${action} (attendance not recorded).`);
       
-      // For authentication-only mode, call onCompleted
+      // For authentication-only mode, call onCompleted with structured payload
       if (onCompleted && !isSignOut) {
-        onCompleted(entityId);
+        try {
+          const payload = { entityId, type: 'auth', timestamp: new Date().toISOString() };
+          console.log('[BiometricsSignIn] onCompleted payload (auth-only):', payload);
+          try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
+        } catch (e) {}
       }
     }
     
