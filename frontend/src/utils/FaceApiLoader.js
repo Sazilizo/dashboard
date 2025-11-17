@@ -27,32 +27,48 @@ function isOnWifiLike() {
 }
 
 async function probeModelUrl(baseUrl, testFile) {
+  const url = baseUrl + testFile;
+  const details = { url, ok: false, status: null, contentType: null, contentLength: null, error: null };
   try {
-    const url = baseUrl + testFile;
     const resp = await fetch(url, { mode: 'cors' });
-    if (!resp || !resp.ok) return false;
+    if (!resp) {
+      details.error = 'no_response';
+      return details;
+    }
+    details.status = resp.status;
     const ct = resp.headers && resp.headers.get ? resp.headers.get('content-type') : null;
+    details.contentType = ct;
+    const cl = resp.headers && resp.headers.get ? resp.headers.get('content-length') : null;
+    details.contentLength = cl;
+
+    if (!resp.ok) {
+      details.error = `http_${resp.status}`;
+      return details;
+    }
+
     // Prefer JSON manifests; if we get HTML (e.g., 403/404 page), reject
     if (ct && !/application\/json/i.test(ct)) {
-      // Try to parse JSON anyway in case server omitted content-type
       try {
         await resp.clone().json();
-        return true;
+        details.ok = true;
+        return details;
       } catch (e) {
-        console.warn('[FaceApiLoader] probeModelUrl: non-JSON response for', url);
-        return false;
+        details.error = 'non_json_response';
+        return details;
       }
     }
-    // If content-type suggests JSON or is absent, attempt to parse
+
     try {
       await resp.clone().json();
-      return true;
+      details.ok = true;
+      return details;
     } catch (e) {
-      console.warn('[FaceApiLoader] probeModelUrl: failed to parse JSON for', url, e);
-      return false;
+      details.error = 'json_parse_error';
+      return details;
     }
   } catch (e) {
-    return false;
+    details.error = String(e);
+    return details;
   }
 }
 
@@ -98,17 +114,19 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
   // probe the provided base url first, then try a small set of fallbacks
   const candidatePaths = [BASE_URL, '/models/', '/public/models/', 'models/', './models/'];
   let workingPath = null;
+  const probeResults = [];
   for (const p of candidatePaths) {
     const candidate = ensureSlash(p);
-    const ok = await probeModelUrl(candidate, MODEL_FILES[0]);
-    if (ok) {
+    const res = await probeModelUrl(candidate, MODEL_FILES[0]);
+    probeResults.push(res);
+    if (res && res.ok) {
       workingPath = candidate;
       break;
     }
   }
 
   if (!workingPath) {
-    return { success: false, reason: 'models_unavailable' };
+    return { success: false, reason: 'models_unavailable', details: { probes: probeResults } };
   }
 
   // Try to prefetch into Cache Storage (best-effort)
@@ -175,9 +193,24 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
             if (hex !== expected) {
               throw new Error(`Checksum mismatch for ${f}: expected ${expected} got ${hex}`);
             }
-            // put verified response into cache
+            // prepare headers for cached response
             const headers = {};
-            resp.headers.forEach((v, k) => { headers[k] = v; });
+            try { resp.headers.forEach((v, k) => { headers[k] = v; }); } catch (e) {}
+            // If the server served gzipped bytes but omitted the content-encoding header
+            // detect gzip via magic bytes and set the header so future fetches (or the
+            // service worker cache) will allow the browser to transparently decompress.
+            try {
+              if ((!headers['content-encoding'] || headers['content-encoding'] === '') && ab && ab.byteLength >= 2) {
+                const view = new Uint8Array(ab, 0, 2);
+                if (view[0] === 0x1F && view[1] === 0x8B) {
+                  headers['content-encoding'] = 'gzip';
+                }
+              }
+            } catch (e) {}
+            // Ensure content-type present (manifest may declare it)
+            if (!headers['content-type'] && manifest.files[f] && manifest.files[f].contentType) {
+              headers['content-type'] = manifest.files[f].contentType;
+            }
             await cache.put(url, new Response(ab, { headers }));
           } else {
             // no manifest entry — store as-is

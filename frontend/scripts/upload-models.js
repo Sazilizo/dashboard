@@ -13,7 +13,13 @@ const SUPABASE_URL = process.env.SUPABASE_URL || process.env.REACT_APP_SUPABASE_
 // Accept multiple possible env var names for the service key to be forgiving in different setups
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_KEY;
 const BUCKET = process.env.SUPABASE_BUCKET || 'public';
-const PREFIX = process.env.PREFIX || 'models/v1/';
+let PREFIX = process.env.PREFIX || 'models/v1/';
+// Normalize prefix: remove any leading slashes and ensure a trailing slash
+try {
+  PREFIX = String(PREFIX).replace(/^\/+/, '').replace(/\/?$/, '/');
+} catch (e) {
+  PREFIX = 'models/v1/';
+}
 const MODELS_DIR = path.join(__dirname, '..', 'public', 'models');
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
@@ -112,7 +118,7 @@ async function uploadFile(remotePath, buffer, contentType) {
     }
 
     console.log('\nAll done. Public model base URL (example):');
-    console.log(`${SUPABASE_URL.replace(/\/+$/, '')}/storage/v1/object/public/${BUCKET}/${PREFIX}`);
+  console.log(`${SUPABASE_URL.replace(/\/+$/, '')}/storage/v1/object/public/${BUCKET}/${PREFIX}`);
   } catch (err) {
     console.error('Unexpected error', err);
     process.exit(1);
