@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import '../../styles/profile-avatars.css';
 import api from "../../api/client"; // supabase client
 import { openDB } from 'idb';
 
@@ -187,47 +188,31 @@ function Photos({ id, bucketName, folderName, photoCount = 1, restrictToProfileF
     return <div className="text-red-500 text-sm">Error loading images</div>;
   }
   
-  if (loading && !files.length) {
+  // If no image is available (or still loading), render nothing so the
+  // parent can decide the layout instead of showing a grey placeholder.
+  if (loading && !files.length) return null;
+  if (!files.length) return null;
+
+  // Return the first available image element only. Parent components
+  // should provide an outer wrapper/placeholder to control sizing.
+  for (const file of files) {
+    const url = signedUrls[file.name];
+    if (!url) continue;
     return (
-      <div className="w-full h-full flex items-center justify-center bg-gray-100 rounded overflow-hidden">
-        <span className="text-gray-400 text-xs">Loading...</span>
-      </div>
-    );
-  }
-  
-  if (!files.length) {
-    return (
-      <div className="w-full h-full flex items-center justify-center bg-gray-100 rounded overflow-hidden">
-        <span className="text-gray-500 text-sm">No image</span>
-      </div>
+      <img
+        src={url}
+        alt={file.name}
+        loading="lazy"
+        className="avatar-img"
+        onError={(e) => {
+          console.warn('[Photos] Image load error for', file.name);
+          e.currentTarget.style.display = 'none';
+        }}
+      />
     );
   }
 
-  return (
-    <div className="">
-      {files.map((file) => {
-        const url = signedUrls[file.name];
-        if (!url) return null;
-        return (
-          <div
-            key={file.name}
-            className=""
-          >
-            <img
-              src={url}
-              alt={file.name}
-              loading="lazy"
-              className=""
-              onError={(e) => {
-                console.warn('[Photos] Image load error for', file.name);
-                e.target.style.display = 'none';
-              }}
-            />
-          </div>
-        );
-      })}
-    </div>
-  );
+  return null;
 }
 
 export default Photos;

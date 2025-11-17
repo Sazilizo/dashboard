@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import Photos from "../profiles/Photos";
 import FilesPopup from "../profiles/FilesPopup"; // <-- our popup component
 import "../../styles/Profile.css";
+import "../../styles/profile-avatars.css";
 
 const ProfileInfoCard = ({ data, bucketName, folderName }) => {
   const [showFilesPopup, setShowFilesPopup] = useState(false);
@@ -9,13 +10,24 @@ const ProfileInfoCard = ({ data, bucketName, folderName }) => {
   return (
     <div className="profile-details-card">
       <div className="profile-image">
-        <Photos
-          bucketName={bucketName}
-          folderName={folderName}
-          id={data.id}
-          photoCount={1}
-          restrictToProfileFolder={true}
-        />
+        <div className="avatar-wrapper">
+          <div className="avatar-placeholder">
+            {(() => {
+              const full = data.full_name || `${data.name || ''} ${data.last_name || ''}`;
+              const parts = String(full || '').trim().split(/\s+/).filter(Boolean);
+              if (!parts.length) return '?';
+              if (parts.length === 1) return parts[0][0]?.toUpperCase() || '?';
+              return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+            })()}
+          </div>
+          <Photos
+            bucketName={bucketName}
+            folderName={folderName}
+            id={data.id}
+            photoCount={1}
+            restrictToProfileFolder={true}
+          />
+        </div>
       </div>
 
       <div className="profile-details">

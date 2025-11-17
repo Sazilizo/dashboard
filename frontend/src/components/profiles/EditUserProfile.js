@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import '../../styles/profile-avatars.css';
 import api from "../../api/client";
 import UploadFileHelper from "./UploadHelper";
 import useToast from "../../hooks/useToast";
@@ -153,12 +154,13 @@ export default function EditProfile({ user,onAvatarUpdated }) {
         <div className="avatar-preview">
           {form.avatar_url ? (
             <img
+              className="avatar-img avatar-edit"
               src={form.avatar_url}
               alt="avatar"
               onError={(e) => (e.currentTarget.style.display = "none")}
             />
           ) : (
-            <span>{user?.profile?.username?.[0]?.toUpperCase() || "?"}</span>
+            <span className="avatar-placeholder">{user?.profile?.username?.[0]?.toUpperCase() || "?"}</span>
           )}
         </div>
 
@@ -204,15 +206,15 @@ export default function EditProfile({ user,onAvatarUpdated }) {
               <div className="avatar-box">
                 <p>Current</p>
                 {oldAvatarUrl ? (
-                  <img src={oldAvatarUrl} alt="current avatar" />
+                  <img className="avatar-img avatar-edit" src={oldAvatarUrl} alt="current avatar" />
                 ) : (
-                  <div className="placeholder" />
+                  <div className="avatar-placeholder" />
                 )}
               </div>
               <div className="avatar-box">
                 <p>New</p>
                 {newAvatarPreview && (
-                  <img src={newAvatarPreview} alt="new avatar" />
+                  <img className="avatar-img avatar-edit" src={newAvatarPreview} alt="new avatar" />
                 )}
               </div>
             </div>

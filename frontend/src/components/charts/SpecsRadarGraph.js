@@ -20,37 +20,59 @@ const formatDateParts = (dateStr) => {
   };
 };
 
+// Try a variety of locations to find specs and date on participant/session entries
+const extractSpecsAndDate = (entry) => {
+  if (!entry || typeof entry !== 'object') return { specs: null, date: null };
+
+  // specs candidates in order of likelihood
+  const specsCandidates = [
+    entry.specs,
+    entry.participant?.specs,
+    entry.session_participant?.specs,
+    entry.academic_session?.specs,
+    entry.session?.specs,
+    entry.pe_session?.specs,
+  ];
+
+  const dateCandidates = [
+    entry.date,
+    entry.participant?.date,
+    entry.academic_session?.date,
+    entry.session?.date,
+    entry.pe_session?.date,
+  ];
+
+  const specs = specsCandidates.find((s) => s && typeof s === 'object') || null;
+  const date = dateCandidates.find((d) => d) || null;
+
+  return { specs, date };
+};
+
 const SpecsRadarChart = ({ student, user, className }) => {
   const role = user?.profile?.roles?.name?.toLowerCase();
   // normalize student object and extract specs/date robustly from participant records
   const allSessions = useMemo(() => {
     if (!student) return [];
 
-    // helper to extract specs and date from various possible shapes
-    const normalize = (entry) => {
-      // try common locations for specs on participant records
-      const specs = entry?.specs || entry?.participant?.specs || entry?.session_participant?.specs || entry?.academic_session?.specs || entry?.pe_session?.specs || null;
+    // Build canonical academic source array by preferring participant arrays
+    const academicRaw = student.academic_session_participants || student.academic_sessions || student.completed_academic_sessions || [];
+    const peRaw = student.pe_session_participants || student.pe_sessions || student.pe_participants || [];
 
-      // date may live on the participant entry or on a nested session object
-      const date = entry?.date || entry?.participant?.date || entry?.academic_session?.date || entry?.session?.date || entry?.pe_session?.date || null;
-
-      // bring other useful props through (term, etc.)
+    // Normalize entries so each has .specs and .date where possible
+    const normalizeArray = (arr, session_type) => (arr || []).map((entry) => {
+      const { specs, date } = extractSpecsAndDate(entry);
       const term = entry?.term || entry?.academic_session?.term || entry?.session?.term || entry?.pe_session?.term || null;
-
       return {
         ...entry,
         specs: specs || null,
         date,
         term,
+        session_type,
       };
-    };
+    });
 
-    // Prefer the dedicated participant arrays. Fall back to older property names if needed.
-    const academicSource = student.academic_session_participants || student.academic_sessions || student.completed_academic_sessions || [];
-    const peSource = student.pe_session_participants || student.pe_sessions || student.pe_participants || [];
-
-    const academic = (academicSource || []).map((s) => ({ ...normalize(s), session_type: "academic" }));
-    const pe = (peSource || []).map((s) => ({ ...normalize(s), session_type: "pe" }));
+    const academic = normalizeArray(academicRaw, 'academic');
+    const pe = normalizeArray(peRaw, 'pe');
 
     if (role === "admin" || role === "superuser") return [...academic, ...pe];
     if (role === "head tutor") return academic;
@@ -132,24 +154,23 @@ const SpecsRadarChart = ({ student, user, className }) => {
     const counts = {};
 
     filtered.forEach((session) => {
-      if (!session.specs) return;
+      if (!session || !session.specs) return;
       Object.entries(session.specs).forEach(([key, value]) => {
         if (!key || key === "undefined") return;
-        if (value !== undefined && value !== null) {
-          totals[key] = (totals[key] || 0) + value;
-          counts[key] = (counts[key] || 0) + 1;
-        }
+        const numeric = typeof value === 'number' && !Number.isNaN(value) ? value : (parseFloat(value) || 0);
+        totals[key] = (totals[key] || 0) + numeric;
+        counts[key] = (counts[key] || 0) + 1;
       });
     });
 
     return Object.keys(totals).map((key) => ({
       subject: key,
-      A: Math.round(totals[key] / counts[key]),
+      A: Math.round((totals[key] / (counts[key] || 1)) * 100) / 100,
     }));
   }, [sessions, selectedYear, selectedMonths, selectedTerms]);
-  
-  // compute max for radius to avoid overly small/large scale
-  const maxVal = aggregatedData.length > 0 ? Math.max(100, ...aggregatedData.map((d) => d.A || 0)) : 100;
+
+  // compute max for radius from the aggregated values (use data-driven max with a sensible minimum)
+  const maxVal = aggregatedData.length > 0 ? Math.max(10, ...aggregatedData.map((d) => (typeof d.A === 'number' ? d.A : 0))) : 10;
 
   return (
     <div className={`${className} p-4 bg-white rounded-2xl shadow-md`}>
@@ -210,6 +231,26 @@ const SpecsRadarChart = ({ student, user, className }) => {
         </div>
       ) : (
         <p className="text-gray-500">No specs data available</p>
+      )}
+
+      {/* Development diagnostics: show why the chart may be empty */}
+      {process.env.NODE_ENV !== 'production' && (
+        <div style={{ marginTop: 8, fontSize: 12, color: '#666' }}>
+          <strong>Debug:</strong>
+          <div>Sessions loaded: {sessions.length}</div>
+          <div>Filtered subjects: {aggregatedData.length}</div>
+          <div>Selected Year: {selectedYear || 'all'}</div>
+          <div>Available Years: {filterOptions.years.join(', ') || 'none'}</div>
+          {aggregatedData.length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              <em>Subjects & values:</em>
+              <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto' }}>{JSON.stringify(aggregatedData, null, 2)}</pre>
+            </div>
+          )}
+          {aggregatedData.length > 0 && !aggregatedData.some(d => typeof d.A === 'number' && d.A > 0) && (
+            <div style={{ marginTop: 6, color: '#a00' }}>Note: specs entries exist but all values are zero or non-numeric.</div>
+          )}
+        </div>
       )}
 
     </div>

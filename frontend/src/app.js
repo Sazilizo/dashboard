@@ -12,7 +12,7 @@ import "./styles/main.css";
 import "./styles/graphs.css";
 import "./styles/DashboardHome.css"
 import { preloadFaceApiModels, areFaceApiModelsLoaded } from "./utils/FaceApiLoader";
-
+import "./styles/Buttons.css";
 function App() {
   // Show debug panel in development or if debug flag is set
   const showDebug = process.env.NODE_ENV === 'development' || localStorage.getItem('showSchoolsDebug') === 'true';

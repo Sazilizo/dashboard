@@ -18,6 +18,7 @@ import WorkerImpactSummary from "../charts/WorkerImpactSummary";
 import WorkerAttendanceTrend from "../charts/WorkerAttendanceTrend";
 import { getUserContext } from "../../utils/rlsCache";
 import "../../styles/Profile.css";
+import '../../styles/profile-avatars.css';
 import SeoHelmet from '../../components/SeoHelmet';
 
 /**

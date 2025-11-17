@@ -45,14 +45,15 @@ function mimeTypeForFile(file) {
   return 'application/octet-stream';
 }
 
-async function uploadFile(remotePath, buffer, contentType) {
+async function uploadFile(remotePath, buffer, contentType, contentEncoding) {
   const url = `${SUPABASE_URL.replace(/\/+$/, '')}/storage/v1/object/${BUCKET}/${remotePath}`;
   const headers = {
     Authorization: `Bearer ${SUPABASE_KEY}`,
     'Content-Type': contentType,
-    'Content-Encoding': 'gzip',
     'Cache-Control': 'public, max-age=31536000, immutable'
   };
+
+  if (contentEncoding) headers['Content-Encoding'] = contentEncoding;
 
   const res = await fetch(url, { method: 'PUT', headers, body: buffer });
   if (!res.ok) {
@@ -82,11 +83,17 @@ async function uploadFile(remotePath, buffer, contentType) {
 
       // compute sha256 of original (hex)
       const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
-      const gz = zlib.gzipSync(buf, { level: zlib.constants.Z_BEST_COMPRESSION });
       const contentType = mimeTypeForFile(f);
+
+      // For JSON manifests, upload raw (don't gzip) so they are served as valid JSON
+      // and avoid issues where Content-Encoding may not be preserved by proxies.
+      const shouldGzip = contentType !== 'application/json';
+      const dataToUpload = shouldGzip ? zlib.gzipSync(buf, { level: zlib.constants.Z_BEST_COMPRESSION }) : buf;
+      const contentEncoding = shouldGzip ? 'gzip' : undefined;
+
       try {
-        await uploadFile(remotePath, gz, contentType);
-        console.log('Uploaded', remotePath, `(gzipped ${(gz.length/1024).toFixed(1)}KB)`);
+        await uploadFile(remotePath, dataToUpload, contentType, contentEncoding);
+        console.log('Uploaded', remotePath, shouldGzip ? `(gzipped ${(dataToUpload.length/1024).toFixed(1)}KB)` : `(raw ${(dataToUpload.length/1024).toFixed(1)}KB)`);
 
         manifest.files[rel] = {
           path: remotePath,

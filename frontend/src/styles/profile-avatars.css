@@ -1,0 +1,112 @@
+.avatar-img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+}
+
+/* Smaller variant for lists / compact views */
+.avatar-small {
+  width: 64px;
+  height: 64px;
+}
+
+/* Larger / edit variant used in EditUserProfile */
+.avatar-edit {
+  width: 128px;
+  height: 128px;
+}
+
+.avatar-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #eee;
+  color: #666;
+}
+
+.avatar-wrapper {
+  width: 96px;
+  height: 96px;
+  overflow: hidden;
+  display: inline-block;
+  border-radius: 8px;
+  background: #f6f6f6;
+  position: relative;
+}
+
+/* Make the avatar in the profile details card large - at least 25rem */
+.profile-details-card .avatar-wrapper {
+  width: 10rem;
+  height: 10rem;
+  min-width: 10rem;
+  min-height: 10rem;
+}
+
+/* Edit profile preview should use its own edit size and not be affected by profile card rules */
+.edit-profile-container .avatar-img.avatar-edit,
+.avatar-preview .avatar-img.avatar-edit {
+  width: 128px;
+  height: 128px;
+}
+
+/* Ensure placeholders in edit/profile preview match edit size */
+.edit-profile-container .avatar-placeholder,
+.avatar-preview .avatar-placeholder {
+  width: 128px;
+  height: 128px;
+}
+
+.text-muted {
+  color: #8b8b8b;
+  font-size: 0.9rem;
+}
+
+/* Ensure images inside report and profile cards are constrained */
+.report-avatar img,
+.profile-details-card-wrapper img,
+.profile-wrapper img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.avatar-wrapper img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+}
+
+/* Modal avatar boxes */
+.avatar-box img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+/* Ensure avatar images fill their wrapper when nested */
+.avatar-wrapper .avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
+  position: relative;
+  z-index: 2;
+}
+
+.avatar-wrapper .avatar-placeholder {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+}

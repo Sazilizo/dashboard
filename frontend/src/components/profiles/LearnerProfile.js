@@ -18,7 +18,9 @@ import "../../styles/Profile.css"
 // import InfoCount from "../widgets/infoCount";
 import SeoHelmet from '../../components/SeoHelmet';
 
-const LearnerProfile = () => {
+  import '../../styles/profile-avatars.css';
+
+  const LearnerProfile = () => {
   const { id } = useParams();
   const { user } = useAuth();
   // const { isOnline } = useOnlineStatus();
@@ -560,10 +562,10 @@ const LearnerProfile = () => {
       )}
 
       <div className="profile-learner-print" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button className="btn btn-primary" onClick={() => window.history.back()}>
+        <button className="btn btn-primary primary-btn" onClick={() => window.history.back()}>
           Back to Students
         </button>
-        <button className="btn btn-secondary" onClick={() => window.print()}>
+        <button className="btn btn-secondary secondary-btn" onClick={() => window.print()}>
           Print Profile
         </button>
 
@@ -603,9 +605,9 @@ const LearnerProfile = () => {
                 <div className="tutor-info">
                   <div className="tutor-avatar">
                     {tutor.photo ? (
-                      <img src={tutor.photo} alt={`${tutor.name} ${tutor.last_name}`} />
+                    <img className="avatar-img avatar-small" src={tutor.photo} alt={`${tutor.name} ${tutor.last_name}`} />
                     ) : (
-                      <div className="tutor-avatar-placeholder">
+                      <div className="tutor-avatar-placeholder avatar-placeholder">
                         {tutor.name?.[0]}{tutor.last_name?.[0]}
                       </div>
                     )}
