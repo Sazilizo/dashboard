@@ -8,7 +8,7 @@ import { useAuth } from "../../context/AuthProvider";
 import { useSchools } from "../../context/SchoolsContext";
 import useOfflineTable from "../../hooks/useOfflineTable";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
-import { getTableFiltered, getTable } from "../../utils/tableCache";
+import { getTableFiltered, getTable, getMutations, syncMutations, attemptBackgroundSync } from "../../utils/tableCache";
 import BiometricsSignIn from "../forms/BiometricsSignIn";
 import LearnerAttendance from "../profiles/LearnerAttendance";
 import ToastContainer from "../ToastContainer";
@@ -64,9 +64,13 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
   const [showBiometrics, setShowBiometrics] = useState(false);
   const [recordingActive, setRecordingActive] = useState(false);
   const [stopRecordingRequest, setStopRecordingRequest] = useState(0);
+  const [stopRecordingCancelRequest, setStopRecordingCancelRequest] = useState(0);
+  const [showEndSessionConfirm, setShowEndSessionConfirm] = useState(false);
   // always show all sessions by default in this view
   const [lastActionResult, setLastActionResult] = useState(null);
   const [toasts, setToasts] = useState([]);
+  const [queuedMutations, setQueuedMutations] = useState([]);
+  const [syncing, setSyncing] = useState(false);
 
   const addToast = (message, type = "success", duration = 3500) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
@@ -310,22 +314,54 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
     const added = [];
     const errors = [];
 
+    // Measure per-student add duration and create an attendance record + participant entry
     for (const sId of selectedStudentIds) {
       try {
-        const payload = {
+        const nowIso = new Date().toISOString();
+
+        // 1) create attendance record (offline-aware)
+        const attendancePayload = {
+          student_id: Number(sId),
+          school_id: studentById[String(sId)]?.school_id || null,
+          date: nowIso.slice(0,10),
+          status: 'present',
+          note: 'manual session add',
+          created_at: nowIso,
+        };
+        console.log('[RecordSessionForm] addAttendanceRow payload', attendancePayload);
+        let attendanceRes = null;
+        try {
+          attendanceRes = await addAttendanceRow(attendancePayload);
+          console.log('[RecordSessionForm] addAttendanceRow result', attendanceRes);
+        } catch (aerr) {
+          console.warn('[RecordSessionForm] addAttendanceRow failed', aerr);
+          attendanceRes = { __error: aerr };
+        }
+
+        // 2) add participant row to session (offline-aware)
+        const participantPayload = {
           session_id: selectedSession,
           student_id: Number(sId),
           school_id: studentById[String(sId)]?.school_id || null,
-          added_at: now,
         };
-        console.log('[RecordSessionForm] addParticipant payload', payload);
-        const res = await addParticipant(payload);
-        console.log('[RecordSessionForm] addParticipant result', res);
-        // detect errors returned by useOfflineTable
-        if (res && res.__error) {
-          errors.push({ studentId: sId, error: res.error || res });
-        } else {
-          added.push({ studentId: sId, res });
+        console.log('[RecordSessionForm] addParticipant payload', participantPayload);
+        const startMs = Date.now();
+        let partRes = null;
+        try {
+          partRes = await addParticipant(participantPayload);
+        } catch (perr) {
+          console.warn('[RecordSessionForm] addParticipant failed', perr);
+          partRes = { __error: perr };
+        }
+        const elapsedMs = Date.now() - startMs;
+        console.log('[RecordSessionForm] addParticipant result', partRes, 'elapsedMs', elapsedMs);
+
+        // record timing and both results for reporting
+        added.push({ studentId: sId, attendanceRes, participantRes: partRes, elapsedMs });
+
+        // collect errors if any
+        if ((attendanceRes && attendanceRes.__error) || (partRes && partRes.__error)) {
+          errors.push({ studentId: sId, attendanceError: attendanceRes && attendanceRes.__error, participantError: partRes && partRes.__error });
         }
       } catch (err) {
         errors.push({ studentId: sId, error: err });
@@ -333,11 +369,14 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
     }
 
     setWorking(false);
-    setLastActionResult({ added, errors });
+    // compute timing summary (elapsedMs) if available
+    const timings = (added || []).map(a => a && a.elapsedMs).filter(n => typeof n === 'number');
+    const avgElapsedMs = timings.length ? Math.round(timings.reduce((s, n) => s + n, 0) / timings.length) : null;
+    setLastActionResult({ added, errors, avgElapsedMs });
     if (errors.length) {
-      addToast(`Added ${added.length} but ${errors.length} failed`, "warning");
+      addToast(`Added ${added.length} but ${errors.length} failed${avgElapsedMs ? ` (avg ${avgElapsedMs} ms)` : ''}`, "warning");
     } else {
-      addToast(`Added ${added.length} students to session`, "success");
+      addToast(`Added ${added.length} students to session${avgElapsedMs ? ` (avg ${avgElapsedMs} ms)` : ''}`, "success");
     }
     onCompleted({ sessionId: selectedSession, added, removed: [] });
   }, [selectedStudentIds, selectedSession, addParticipant, onCompleted, studentById]);
@@ -393,18 +432,58 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
         return;
       }
       const rows = Array.isArray(attendanceData) ? attendanceData : [attendanceData];
+      // Build a quick lookup of selected student ids (if any). If there are selected
+      // students, we will only record attendance for recognized faces that match
+      // one of the selected students. This prevents accidental recording when the
+      // operator selected a student but the biometric capture identified someone else.
+      const selectedSet = new Set((selectedStudentIds || []).map(String));
       const results = [];
-  for (const r of rows) {
-        const payload = {
-          student_id: r.studentId,
-          school_id: studentById[String(r.studentId)]?.school_id || null,
-          date: r.timestamp?.slice(0,10) || new Date().toISOString().slice(0,10),
-          status: r.type === 'signout' ? 'present' : 'present',
-          note: r.note || `biometric ${r.type}`,
-          created_at: r.timestamp || new Date().toISOString(),
-        };
-        const res = await addAttendanceRow(payload);
-        results.push(res);
+      for (const r of rows) {
+        // If the operator had selected specific student(s) to record, ensure the
+        // recognized student matches one of those selections. If it does not,
+        // skip recording and surface a warning.
+        if (selectedSet.size > 0) {
+          const detectedId = r.studentId ? String(r.studentId) : null;
+          if (!detectedId || !selectedSet.has(detectedId)) {
+            console.warn('[RecordSessionForm] biometric-recognition mismatch: detected', detectedId, 'but selected', Array.from(selectedSet));
+            addToast(`Recognition mismatch: detected ${detectedId || 'unknown'} does not match selected student(s). Skipping.`, 'warning', 6000);
+            results.push({ skipped: true, reason: 'mismatch', detected: detectedId, expected: Array.from(selectedSet) });
+            continue; // skip this row
+          }
+        }
+        // If the biometric component already includes an attendance result, don't write a duplicate row.
+        if (r.attendance) {
+          console.log('[RecordSessionForm] received attendance from biometric payload, skipping addAttendanceRow:', r.attendance);
+          results.push(r.attendance);
+        } else {
+          const payload = {
+            student_id: r.studentId,
+            school_id: studentById[String(r.studentId)]?.school_id || null,
+            date: r.timestamp?.slice(0,10) || new Date().toISOString().slice(0,10),
+            status: r.type === 'signout' ? 'present' : 'present',
+            note: r.note || `biometric ${r.type}`,
+            created_at: r.timestamp || new Date().toISOString(),
+          };
+          console.log('[RecordSessionForm] handleBiometricsCompleted payload:', payload);
+          const res = await addAttendanceRow(payload);
+          console.log('[RecordSessionForm] addAttendanceRow result:', res);
+          results.push(res);
+        }
+        // If a session is selected, also assign this student to the session participants table
+        try {
+          if (selectedSession) {
+            const partPayload = {
+              session_id: selectedSession,
+              student_id: Number(r.studentId),
+              school_id: studentById[String(r.studentId)]?.school_id || null,
+            };
+            console.log('[RecordSessionForm] adding participant to table:', participantsTable, 'payload:', partPayload);
+            const partRes = await addParticipant(partPayload);
+            console.log('[RecordSessionForm] addParticipant result:', partRes);
+          }
+        } catch (err) {
+          console.warn('[RecordSessionForm] failed to add participant for biometrics completion', err);
+        }
       }
       setLastActionResult({ attendanceRecorded: results });
       addToast(`Recorded ${results.length} attendance entries`, "success");
@@ -416,18 +495,24 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
       setLastActionResult({ error: err });
       return null;
     }
-  }, [addAttendanceRow, studentById]);
+  }, [addAttendanceRow, studentById, selectedStudentIds, addToast, addParticipant, participantsTable, selectedSession]);
 
   // Called when the biometric component begins continuous recording
   const handleRecordingStart = useCallback(() => {
     setRecordingActive(true);
     addToast('Session recording started. You can now close the biometric modal and add more students.', 'info', 5000);
-    // Ensure modal is closed so teacher can continue selecting students
-    setShowBiometrics(false);
   }, [addToast]);
 
   // Called when biometric component reports recording stopped
-  const handleRecordingStop = useCallback(async ({ start, end, participants, academicSessionId }) => {
+  const handleRecordingStop = useCallback(async ({ start, end, participants, academicSessionId, canceled } = {}) => {
+    console.log('[RecordSessionForm] handleRecordingStop called', { start, end, participants, academicSessionId, canceled });
+    if (canceled) {
+      addToast('Session canceled — recorded attendance was discarded.', 'info');
+      // ensure local UI state is consistent
+      setRecordingActive(false);
+      setLastActionResult({ canceled: true });
+      return;
+    }
     setRecordingActive(false);
     const startDate = start ? start.split('T')[0] : null;
     const endDate = end ? end.split('T')[0] : null;
@@ -435,12 +520,29 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
 
     for (const p of participants || []) {
       try {
+        console.log('[RecordSessionForm] processing participant', p);
         // update academic_session_participants sign_out_time for this session/student
         if (selectedSession) {
           try {
-            await api.from('academic_session_participants')
-              .update({ sign_out_time: end })
-              .match({ session_id: selectedSession, student_id: Number(p.student_id) });
+                // ensure participant exists in participantsTable (insert if missing)
+                const mapByStudent = Object.fromEntries((participantsForSelected || []).map(pp => [String(pp.student_id), pp]));
+                if (!mapByStudent[String(p.student_id)]) {
+                  const payload = { session_id: selectedSession, student_id: Number(p.student_id), school_id: studentById[String(p.student_id)]?.school_id || null };
+                  console.log('[RecordSessionForm] addParticipant (auto from recordingStop) payload:', payload);
+                  try {
+                    const addRes = await addParticipant(payload);
+                    console.log('[RecordSessionForm] addParticipant result:', addRes);
+                  } catch (addErr) {
+                    console.error('[RecordSessionForm] addParticipant failed', addErr);
+                    results.errors.push({ type: 'participant_insert', student_id: p.student_id, error: addErr?.message || String(addErr) });
+                  }
+                }
+
+                // Update sign_out_time for the participant row in the participants table (best-effort)
+                console.log('[RecordSessionForm] updating participant sign_out_time via API', { session: selectedSession, student: p.student_id, end });
+                await api.from(participantsTable)
+                  .update({ sign_out_time: end })
+                  .match({ session_id: selectedSession, student_id: Number(p.student_id) });
             results.updatedParticipants.push(p.student_id);
           } catch (e) {
             results.errors.push({ type: 'participant_update', student_id: p.student_id, error: e?.message || String(e) });
@@ -463,14 +565,17 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
               // compute hours
               try {
                 const hours = start && end ? ((new Date(end) - new Date(start)) / (1000 * 60 * 60)).toFixed(2) : null;
+                console.log('[RecordSessionForm] updating attendance_records sign_out_time for', { attendanceId: open.id, end, hours });
                 await api.from('attendance_records').update({ sign_out_time: end, hours: hours ? Number(hours) : undefined }).eq('id', open.id);
                 results.updatedAttendance.push({ student_id: p.student_id, attendance_id: open.id });
               } catch (uerr) {
+                console.error('[RecordSessionForm] attendance update failed', uerr);
                 results.errors.push({ type: 'attendance_update', student_id: p.student_id, error: uerr?.message || String(uerr) });
               }
             }
           }
         } catch (attErr) {
+          console.error('[RecordSessionForm] attendance query failed', attErr);
           results.errors.push({ type: 'attendance_query', student_id: p.student_id, error: attErr?.message || String(attErr) });
         }
       } catch (err) {
@@ -500,7 +605,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
       <div className="bg-white dark:bg-gray-800 shadow-md rounded-lg overflow-hidden">
         <div className="px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <button onClick={() => window.history.back()} className="btn secondary-btn">
+            <button onClick={() => window.history.back()} className="btn secondary-btn btn-secondary">
               <span className="text-sm">Back</span>
             </button>
             <div>
@@ -550,8 +655,8 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
+          <div className="flex flex-col md:flex-row gap-6 record-session-flex">
+            <div className="w-full md:w-1/2 record-session-col">
               <label className="block text-sm font-medium text-gray-700">Select session</label>
               <div className="text-xs text-gray-500 mb-2">Showing {displayedSessions.length} of {(sessionRows || []).length} sessions</div>
 
@@ -569,9 +674,9 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
               </select>
             </div>
 
-            <div className="flex flex-col items-center justify-center">
+            <div className="flex flex-col items-center justify-center w-full md:w-1/2 record-session-col">
               <label className="block text-sm font-medium text-gray-700">Select students to add/remove</label>
-              <div className="mt-2 w-full max-w-md">
+              <div className="mt-2 w-full">
                 <SelectableList
                   students={filteredStudents}
                   resource="students"
@@ -596,16 +701,101 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
             </div>
 
             <div className="flex items-center gap-3">
-              <button className="btn inline-flex items-center gap-2" onClick={() => setShowBiometrics(v => !v)} disabled={!selectedSession}>
-                <span className="text-sm">{showBiometrics ? 'Hide Biometrics' : 'Open Biometrics'}</span>
+              <button className="btn inline-flex items-center gap-2" disabled={true} title="Biometrics suspended for now">
+                <span className="text-sm">Biometrics (suspended)</span>
               </button>
-              {recordingActive && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <button
-                  className="btn danger inline-flex items-center gap-2"
-                  onClick={() => setStopRecordingRequest((c) => c + 1)}
+                  className="btn inline-flex items-center gap-2"
+                  onClick={async () => {
+                    try {
+                      const muts = await getMutations();
+                      setQueuedMutations(muts || []);
+                      addToast(`Loaded ${muts?.length || 0} queued mutations`, 'info');
+                    } catch (e) {
+                      addToast('Failed to read queued mutations: ' + (e?.message || e), 'error');
+                    }
+                  }}
                 >
-                  End Session
+                  Show Queued Mutations
                 </button>
+
+                <button
+                  className="btn inline-flex items-center gap-2"
+                  onClick={async () => {
+                    setSyncing(true);
+                    try {
+                      await attemptBackgroundSync({ force: true });
+                      addToast('Background sync triggered', 'success');
+                    } catch (e) {
+                      addToast('Background sync failed: ' + (e?.message || e), 'error');
+                    } finally {
+                      setSyncing(false);
+                    }
+                  }}
+                  disabled={syncing}
+                >
+                  {syncing ? 'Syncing…' : 'Force Sync'}
+                </button>
+              </div>
+              {recordingActive && (
+                <>
+                  <button
+                    className="btn danger inline-flex items-center gap-2"
+                    onClick={() => setShowEndSessionConfirm(true)}
+                  >
+                    End Session
+                  </button>
+
+                  {/* End Session confirmation modal */}
+                  {showEndSessionConfirm && (
+                    <>
+                      <div
+                        className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                        style={{ zIndex: 1600 }}
+                        onClick={() => setShowEndSessionConfirm(false)}
+                        aria-hidden
+                      />
+                      <div className="fixed left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 w-full max-w-lg px-4" style={{ zIndex: 1601 }}>
+                        <div className="bg-white dark:bg-gray-800 rounded-md shadow-2xl p-4 border-2 border-red-500">
+                          <div className="flex justify-between items-start">
+                            <h3 className="text-lg font-medium">End Session</h3>
+                            <button aria-label="Close" className="text-gray-500" onClick={() => setShowEndSessionConfirm(false)}>✕</button>
+                          </div>
+                          <p className="mt-2 text-sm text-gray-600">Do you want to cancel this session (discard recorded attendance) or complete it (finalize attendance and participants)?</p>
+
+                          <div className="mt-4 flex gap-2 justify-end">
+                            <button
+                              className="btn inline-flex items-center gap-2"
+                              onClick={() => {
+                                // Cancel session: stop recording without committing attendance/participants
+                                setShowEndSessionConfirm(false);
+                                // signal cancel stop to BiometicsSignIn via separate counter
+                                setStopRecordingCancelRequest((c) => c + 1);
+                                // also mark recordingInactive locally
+                                setRecordingActive(false);
+                              }}
+                            >
+                              Cancel Session
+                            </button>
+
+                            <button
+                              className="btn danger inline-flex items-center gap-2"
+                              onClick={() => {
+                                // Complete session: proceed with normal stop which commits attendance
+                                setShowEndSessionConfirm(false);
+                                setStopRecordingRequest((c) => c + 1);
+                                setRecordingActive(false);
+                              }}
+                            >
+                              Complete Session
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -625,11 +815,12 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                 // Customize labels for recording flows
                 primaryRecordStartLabel={recordingActive ? 'Recording…' : 'Record Session'}
                 primaryRecordEndLabel={'End Session'}
-                // Close modal on recording start and notify parent
-                closeOnStart={true}
+                // Keep biometric UI mounted while recording so continuous processing continues
+                closeOnStart={false}
                 onRecordingStart={handleRecordingStart}
                 onRecordingStop={handleRecordingStop}
                 stopRecordingRequest={stopRecordingRequest}
+                stopRecordingCancelRequest={stopRecordingCancelRequest}
               />
             </div>
           )}
@@ -643,7 +834,10 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                     <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 font-semibold">{(studentById[String(p.student_id)]?.full_name || '#').split(' ').map(n=>n[0]).slice(0,2).join('')}</div>
                     <div>
                       <div className="font-medium">{studentById[String(p.student_id)]?.full_name || `#${p.student_id}`}</div>
-                      <div className="text-sm text-gray-500">Added: {p.added_at ? p.added_at.slice(0,19).replace('T',' ') : '—'}</div>
+                      <div className="text-sm text-gray-500">Added: {(() => {
+                        const addedAt = p.added_at || p.created_at || p.createdAt || p.inserted_at || p.addedAt;
+                        return addedAt ? String(addedAt).slice(0,19).replace('T',' ') : '—';
+                      })()}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -659,9 +853,20 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
             </div>
           </div>
 
-          {lastActionResult && (
-            <pre className="mt-4 text-sm bg-gray-100 p-2 rounded">{JSON.stringify(lastActionResult, null, 2)}</pre>
-          )}
+            {queuedMutations && queuedMutations.length > 0 && (
+              <div className="mt-4 p-2 bg-yellow-50 border rounded">
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>Queued mutations ({queuedMutations.length})</div>
+                <div style={{ maxHeight: 240, overflow: 'auto' }}>
+                  {queuedMutations.map(q => (
+                    <pre key={q.id} style={{ background: '#fff', padding: 8, border: '1px solid #eee', marginBottom: 6 }}>{JSON.stringify(q, null, 2)}</pre>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {lastActionResult && (
+              <pre className="mt-4 text-sm bg-gray-100 p-2 rounded">{JSON.stringify(lastActionResult, null, 2)}</pre>
+            )}
         </div>
       </div>
     </div>

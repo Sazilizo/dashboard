@@ -147,6 +147,16 @@ const router = createBrowserRouter([
       { path: "*", element: <Navigate to="/dashboard" /> },
     ],
   },
+  // also allow accessing settings at the top-level path /settings
+  {
+    path: "/settings",
+    element: (
+      <ProtectedRoute>
+        <OfflineSettings />
+      </ProtectedRoute>
+    ),
+    errorElement: <ErrorBoundary />,
+  },
 ]);
 
 export default router;

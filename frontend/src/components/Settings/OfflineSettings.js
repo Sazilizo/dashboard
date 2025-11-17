@@ -14,6 +14,7 @@ export default function OfflineSettings() {
   const [consent, setConsent] = useState(biometricConsent.hasBiometricConsent());
   const [wifiOnly, setWifiOnly] = useState(() => { try { return localStorage.getItem('models_wifi_only_v1') === '1'; } catch { return true; } });
   const [modelsStatus, setModelsStatus] = useState(areFaceApiModelsLoaded() ? 'loaded' : 'not_loaded');
+  const [modelsErrorDetails, setModelsErrorDetails] = useState(null);
 
   async function refresh() {
     const muts = await getMutations();
@@ -64,16 +65,40 @@ export default function OfflineSettings() {
       return;
     }
     setModelsStatus('downloading');
+    setModelsErrorDetails(null);
     const res = await loadFaceApiModels({ variant: 'tiny', requireWifi: wifiOnly, requireConsent: true });
     if (res.success) {
       setModelsStatus('loaded');
       alert('Face models downloaded and cached. Biometric features are ready.');
     } else {
       setModelsStatus('error');
+      if (res.details) setModelsErrorDetails(res.details);
       if (res.reason === 'wifi_required') alert('Model download requires Wi‑Fi. Please connect to Wi‑Fi or disable the Wi‑Fi-only setting.');
       else if (res.reason === 'consent_required') alert('Biometric consent required to download models.');
       else if (res.reason === 'models_unavailable') alert('Models are not available from the configured server.');
       else alert('Failed to download models: ' + (res.error || res.reason || 'unknown'));
+    }
+  };
+
+  const handleClearModelsAndDownload = async () => {
+    if (!confirm('Clear downloaded face models from this device cache and re-download? This will force the app to re-fetch model files.')) return;
+    try {
+      setModelsStatus('clearing');
+      setModelsErrorDetails(null);
+      if (typeof caches !== 'undefined') {
+        try {
+          await caches.delete('faceapi-models');
+        } catch (e) {
+          console.warn('[OfflineSettings] failed to delete faceapi-models cache', e);
+        }
+      }
+      // Attempt a fresh download after clearing cache
+      await handleDownloadModelsNow();
+    } catch (err) {
+      console.error('[OfflineSettings] clear+download failed', err);
+      setModelsStatus('error');
+      setModelsErrorDetails({ clearError: String(err) });
+      alert('Failed to clear and re-download models: ' + (err?.message || err));
     }
   };
 
@@ -99,8 +124,19 @@ export default function OfflineSettings() {
             Download models only on Wi‑Fi
           </label>
           <button onClick={handleDownloadModelsNow} style={{ padding: '8px 12px' }}>{modelsStatus === 'downloading' ? 'Downloading...' : 'Download Models Now'}</button>
+          <button onClick={handleClearModelsAndDownload} style={{ padding: '8px 12px' }}>{modelsStatus === 'clearing' ? 'Clearing...' : 'Clear models & re-download'}</button>
         </div>
-        <p style={{ marginTop: 8 }}><small>If you enable biometric features, the app will need to download a small set of ML model files (only once). They will be cached for offline use. You can pre-download them here while on Wi‑Fi.</small></p>
+          <p style={{ marginTop: 8 }}><small>If you enable biometric features, the app will need to download a small set of ML model files (only once). They will be cached for offline use. You can pre-download them here while on Wi‑Fi.</small></p>
+          {modelsErrorDetails && (
+            <div style={{ marginTop: 8, padding: 8, background: '#fff3cd', border: '1px solid #ffeeba', borderRadius: 4 }}>
+              <strong>Download diagnostics</strong>
+              <div style={{ fontSize: 12, marginTop: 6 }}>
+                <div>Probe results for candidate URLs:</div>
+                <pre style={{ whiteSpace: 'pre-wrap', marginTop: 6 }}>{JSON.stringify(modelsErrorDetails, null, 2)}</pre>
+                <div style={{ marginTop: 6 }}><small>Look for HTTP status, content-type, and content-length fields for the failing URL(s).</small></div>
+              </div>
+            </div>
+          )}
       </section>
 
       <section style={{ marginTop: 16, padding: 12, border: '1px solid #eee', borderRadius: 6 }}>

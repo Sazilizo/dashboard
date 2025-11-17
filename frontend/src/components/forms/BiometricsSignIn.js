@@ -44,6 +44,8 @@ const BiometricsSignIn = ({
   userId = null,
   schoolId = null,
   academicSessionId = null,
+  // sessionType controls which participants table to write to (e.g. 'academic_session_participants' or 'pe_session_participants')
+  sessionType = 'academic_session_participants',
   onCompleted = null,
   onCancel = null,
   forceOperation = null,
@@ -58,6 +60,8 @@ const BiometricsSignIn = ({
   onRecordingStop = null, // optional callback fired when continuous recording stops
   // parent can request recording stop by incrementing this counter
   stopRecordingRequest = 0,
+  // parent can request a cancel-stop (stop recording but do NOT commit attendance/participants)
+  stopRecordingCancelRequest = 0,
   // storage customization (optional) - used when loading student images
   bucketName = null, // e.g. 'student-uploads' or 'worker-uploads'
   // Optional hooks parents can pass to receive structured events
@@ -87,6 +91,41 @@ const BiometricsSignIn = ({
   const [showAttendancePrompt, setShowAttendancePrompt] = useState(false);
   const [pendingAttendanceData, setPendingAttendanceData] = useState(null);
   const [pendingSignIns, setPendingSignIns] = useState({});
+  // Recorded participants for the active session (local UI view)
+  const [recordedParticipants, setRecordedParticipants] = useState([]);
+  const [tick, setTick] = useState(0); // used to refresh elapsed times
+
+  // Helper to add a participant to the recorded list (start)
+  const addRecordedParticipant = (student_id, displayName, signInTime, attendanceId = null, isWorker = false) => {
+    setRecordedParticipants((prev) => {
+      // avoid duplicates for same active student
+      const exists = prev.find(p => String(p.student_id) === String(student_id) && !p.signOutTime);
+      if (exists) return prev;
+      return [...prev, { student_id: String(student_id), displayName, signInTime, attendanceId, signOutTime: null, durationMinutes: null, isWorker }];
+    });
+  };
+
+  // Helper to mark a participant as completed (stop)
+  const completeRecordedParticipant = (student_id, signOutTime) => {
+    setRecordedParticipants((prev) => prev.map(p => {
+      if (String(p.student_id) === String(student_id) && !p.signOutTime) {
+        const start = new Date(p.signInTime).getTime();
+        const end = signOutTime ? new Date(signOutTime).getTime() : Date.now();
+        const minutes = start && end ? ((end - start) / (1000 * 60)) : null;
+        return { ...p, signOutTime, durationMinutes: minutes !== null ? Number(minutes.toFixed(2)) : null };
+      }
+      return p;
+    }));
+  };
+
+  // Live tick to refresh UI durations while recording
+  useEffect(() => {
+    let intv;
+    if (mode === 'continuous') {
+      intv = setInterval(() => setTick(t => t + 1), 2000);
+    }
+    return () => { if (intv) clearInterval(intv); };
+  }, [mode]);
   const [workerAvailable, setWorkerAvailable] = useState(false);
   const [workerError, setWorkerError] = useState(null);
   const [workerReloadKey, setWorkerReloadKey] = useState(0);
@@ -170,7 +209,7 @@ const BiometricsSignIn = ({
   const { addRow, updateRow } = useOfflineTable('attendance_records');
   const { addRow: addWorkerRow, updateRow: updateWorkerRow } = useOfflineTable('worker_attendance_records');
   // offline hook for session participants (academic_session_participants)
-  const { addRow: addParticipantRow, updateRow: updateParticipantRow } = useOfflineTable('academic_session_participants');
+  const { addRow: addParticipantRow, updateRow: updateParticipantRow } = useOfflineTable(sessionType);
 
   // cache for descriptors (module-level in original; keep per-instance here)
   const faceDescriptorCache = {};
@@ -1162,7 +1201,7 @@ useEffect(() => {
         matchFound = true;
         const displayName = studentNames[match.label] || `${entityType === 'user' ? 'User' : 'Student'} ${match.label}`;
 
-        // For user authentication mode (entityType='user')
+            // For user authentication mode (entityType='user')
         if (entityType === 'user') {
           // Check if this is the correct user
           const expectedId = userId || (Array.isArray(userId) ? userId[0] : null);
@@ -1171,22 +1210,16 @@ useEffect(() => {
             
             // Prompt for attendance recording instead of auto-recording
             promptAttendanceRecording(match.label, displayName, false);
-            // Add participant to academic_session_participants if a session id was provided
-            try {
-              if (academicSessionId) {
-                await api.from('academic_session_participants').insert({
-                  session_id: academicSessionId,
-                  student_id: Number(match.label),
-                  school_id: schoolId
-                });
-              }
-            } catch (e) {
-              console.warn('Failed to insert academic_session_participant', e);
-            }
+            // Do NOT add session participants for user/profile entities here.
+            // Session participants should represent students only.
 
             // Hide/unmount the biometric UI so the user can re-open later for sign-out
             if (typeof onCompleted === 'function') {
-              try { onCompleted(match.label); } catch (e) { }
+              try {
+                const payload = { entityId: match.label, type: 'auth', timestamp: new Date().toISOString() };
+                console.log('[BiometricsSignIn] onCompleted payload (user auth):', payload);
+                try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
+              } catch (e) {}
             }
             
             // Draw captured frame to canvas
@@ -1220,20 +1253,50 @@ useEffect(() => {
           try {
             if (!pendingSignIns[match.label]) {
               // Sign in: record attendance immediately
+              console.log('[BiometricsSignIn] student auto sign-in - recording attendance', { student_id: match.label, signInTime: nowIso });
               const res = await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign in' });
+              console.log('[BiometricsSignIn] recordAttendance result:', res);
               // addRow may return the inserted row (online) or an object with tempId (offline)
               const pendingId = res?.id || res?.tempId || (res?.result && (res.result.id || res.result.tempId)) || null;
               setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime: nowIso } }));
+              try { addRecordedParticipant(match.label, displayName, nowIso, pendingId, false); } catch (e) { if (DEBUG) console.warn('addRecordedParticipant failed', e); }
               setMessage(`${displayName} authenticated and attendance recorded.`);
 
-              // Add participant to academic_session_participants if a session id was provided
+              // Add participant to session table if a session id was provided (students only)
               try {
                 if (academicSessionId) {
-                  await api.from('academic_session_participants').insert({
-                    session_id: academicSessionId,
-                    student_id: Number(match.label),
-                    school_id: schoolId
-                  });
+                  const sid = Number(match.label);
+                  const now = new Date().toISOString();
+                  const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: now, sign_in_time: now };
+                  console.log('[BiometricsSignIn] ensuring participant (snapshot) payload:', partPayload, 'table:', sessionType);
+                  try {
+                    // Try local cache first to avoid duplicates
+                    const cached = await getTable(sessionType);
+                    const found = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid);
+                    if (found && found.id) {
+                      // update sign_in_time if missing
+                      if (!found.sign_in_time) {
+                        try {
+                          await updateParticipantRow(found.id, { sign_in_time: now });
+                          console.log('[BiometricsSignIn] updated participant sign_in_time via updateParticipantRow for', sid);
+                        } catch (uerr) {
+                          console.warn('[BiometricsSignIn] updateParticipantRow failed, falling back to API update', uerr);
+                          try { await api.from(sessionType).update({ sign_in_time: now }).eq('id', found.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant failed', e2); }
+                        }
+                      }
+                    } else {
+                      // Insert via offline-aware hook so it queues when offline
+                      try {
+                        const addRes = await addParticipantRow(partPayload);
+                        console.log('[BiometricsSignIn] addParticipantRow (snapshot) result:', addRes);
+                      } catch (err) {
+                        console.warn('[BiometricsSignIn] addParticipantRow failed (snapshot), falling back to API insert', err);
+                        try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (snapshot)'); } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (snapshot)', e2); }
+                      }
+                    }
+                  } catch (err) {
+                    console.warn('Failed to ensure academic_session_participant (snapshot)', err);
+                  }
                 }
               } catch (e) {
                 console.warn('Failed to insert academic_session_participant', e);
@@ -1241,7 +1304,17 @@ useEffect(() => {
 
               // Hide/unmount the biometric UI so teacher can re-open for sign-out
               if (typeof onCompleted === 'function') {
-                try { onCompleted(match.label); } catch (e) { }
+                try {
+                  const payload = {
+                    studentId: match.label,
+                    type: 'signin',
+                    timestamp: nowIso,
+                    attendance: res,
+                    participant: academicSessionId ? { session_id: academicSessionId, table: sessionType } : null
+                  };
+                  console.log('[BiometricsSignIn] onCompleted payload (student snapshot):', payload);
+                  try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
+                } catch (e) {}
               }
             } else {
               // Sign out: update existing pending sign-in record if available
@@ -1257,6 +1330,7 @@ useEffect(() => {
                   // Fallback to previous behaviour if updateRow fails
                   await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
                 }
+                try { completeRecordedParticipant(match.label, signOutTime); } catch (e) { if (DEBUG) console.warn('completeRecordedParticipant failed', e); }
                 setPendingSignIns((prev) => {
                   const copy = { ...prev };
                   delete copy[match.label];
@@ -1265,7 +1339,8 @@ useEffect(() => {
                 setMessage(`${displayName} signed out. Duration: ${durationHours} hrs`);
                 try {
                   if (academicSessionId) {
-                    await api.from('academic_session_participants')
+                    console.log('[BiometricsSignIn] updating participant sign_out_time via API', { sessionType, sessionId: academicSessionId, student: match.label });
+                    await api.from(sessionType)
                       .update({ sign_out_time: new Date().toISOString() })
                       .match({ session_id: academicSessionId, student_id: Number(match.label) });
                   }
@@ -1277,11 +1352,11 @@ useEffect(() => {
                 await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign out' });
                 setMessage(`${displayName} sign-out recorded.`);
                 try {
-                  if (academicSessionId) {
-                    await api.from('academic_session_participants')
-                      .update({ sign_out_time: new Date().toISOString() })
-                      .match({ session_id: academicSessionId, student_id: Number(match.label) });
-                  }
+                    if (academicSessionId) {
+                      await api.from(sessionType)
+                        .update({ sign_out_time: new Date().toISOString() })
+                        .match({ session_id: academicSessionId, student_id: Number(match.label) });
+                    }
                 } catch (e) {
                   console.warn('Failed to update academic_session_participant sign_out_time', e);
                 }
@@ -1393,6 +1468,7 @@ useEffect(() => {
         if (match.label === "unknown") continue;
         if (!pendingSignIns[match.label]) {
           const signInTime = new Date().toISOString();
+          console.log('[BiometricsSignIn] continuous auto sign-in attempt', { student_id: match.label, signInTime });
           const res = await addRow({
             student_id: match.label,
             school_id: schoolId,
@@ -1401,11 +1477,53 @@ useEffect(() => {
             date,
             sign_in_time: signInTime,
           });
+          console.log('[BiometricsSignIn] addRow (attendance_records) result:', res);
           const pendingId = res?.id || res?.tempId || null;
           setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime } }));
+          try { addRecordedParticipant(match.label, studentNames[match.label] || `Student ${match.label}`, signInTime, pendingId, false); } catch (e) { if (DEBUG) console.warn('addRecordedParticipant failed', e); }
           const displayName = studentNames[match.label] || `Student ${match.label}`;
           setMessage(`${displayName} authenticated successfully.`);
           try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'student', entityId: match.label, attendance: res, signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
+          // Notify parent with structured payload for this sign-in so parent can record attendance/participants if desired
+          if (typeof onCompleted === 'function') {
+            try {
+              const payload = { studentId: match.label, type: 'signin', timestamp: signInTime, attendance: res };
+              console.log('[BiometricsSignIn] onCompleted payload (continuous sign-in):', payload);
+              try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
+            } catch (e) {}
+          }
+          // Also ensure session participant entry exists and record sign_in_time for continuous mode
+          try {
+            if (academicSessionId) {
+              const sid = Number(match.label);
+              const partNow = signInTime;
+              const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: partNow, sign_in_time: partNow };
+              console.log('[BiometricsSignIn] ensuring participant (continuous) payload:', partPayload, 'table:', sessionType);
+              const cached = await getTable(sessionType);
+              const found = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid);
+              if (found && found.id) {
+                if (!found.sign_in_time) {
+                  try {
+                    await updateParticipantRow(found.id, { sign_in_time: partNow });
+                    console.log('[BiometricsSignIn] updated participant sign_in_time via updateParticipantRow for', sid);
+                  } catch (uerr) {
+                    console.warn('[BiometricsSignIn] updateParticipantRow failed (continuous), falling back to API update', uerr);
+                    try { await api.from(sessionType).update({ sign_in_time: partNow }).eq('id', found.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant failed (continuous)', e2); }
+                  }
+                }
+              } else {
+                try {
+                  const addRes = await addParticipantRow(partPayload);
+                  console.log('[BiometricsSignIn] addParticipantRow (continuous) result:', addRes);
+                } catch (err) {
+                  console.warn('[BiometricsSignIn] addParticipantRow failed (continuous), falling back to API insert', err);
+                  try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (continuous)'); } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (continuous)', e2); }
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('Failed to ensure academic_session_participant (continuous)', err);
+          }
         }
       }
     } catch (err) {
@@ -1440,6 +1558,10 @@ useEffect(() => {
     }
     // record start timestamp for duration calculation
     try { recordingStartRef.current = new Date().toISOString(); } catch (e) { recordingStartRef.current = null; }
+    // clear any previous recorded participants when starting a new continuous session
+    setRecordedParticipants([]);
+    // start tick so elapsed times update in UI
+    setTick((t) => t + 1);
   };
 
   const stopContinuous = async () => {
@@ -1505,48 +1627,78 @@ useEffect(() => {
         setMessage('Ended recording. Some sign-outs may have failed.');
       }
 
-      // clear pending sign-ins locally so UI reflects end of recording
+      // mark recorded participants as completed (UI) and clear pending sign-ins locally so UI reflects end of recording
+      try {
+        (participants || []).forEach(p => {
+          try { completeRecordedParticipant(p.student_id, stopTime); } catch (e) { if (DEBUG) console.warn('completeRecordedParticipant failed in stopContinuous', e); }
+        });
+      } catch (e) {
+        if (DEBUG) console.warn('Error completing recorded participants', e);
+      }
       setPendingSignIns({});
     }
 
-      // Ensure participants are recorded in academic_session_participants
-      if (academicSessionId && participants.length) {
+      // Ensure participants are recorded in academic_session_participants (students only)
+      const studentParticipants = (participants || []).filter(p => !p.isWorker);
+      if (academicSessionId && studentParticipants.length) {
         setMessage((m) => `${m}\nRecording session participants...`);
         try {
-          const ensured = await Promise.all(participants.map(async (p) => {
+          // Ensure each participant row exists and includes sign_in_time when available
+          const ensured = await Promise.all(studentParticipants.map(async (p) => {
             try {
               const sid = Number(p.student_id);
-              // If online, check remote first to avoid duplicates
+              const signInTime = p.signInTime || null;
+              // Try to find existing participant (online first)
+              let foundRow = null;
               if (isOnline) {
                 try {
                   const { data: existing, error: existingErr } = await api
-                    .from('academic_session_participants')
-                    .select('id')
+                    .from(sessionType)
+                    .select('*')
                     .match({ session_id: academicSessionId, student_id: sid })
                     .limit(1);
                   if (!existingErr && existing && existing.length) {
-                    return { student_id: sid, added: false, reason: 'exists' };
+                    foundRow = existing[0];
                   }
                 } catch (e) {
                   // ignore and fallback to cache
                 }
               }
 
-              // Check local cache to avoid duplicate offline inserts
-              try {
-                const cached = await getTable('academic_session_participants');
-                const found = (cached || []).some(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === Number(p.student_id));
-                if (found) return { student_id: Number(p.student_id), added: false, reason: 'cached' };
-              } catch (e) {
-                // ignore cache errors
+              // Fallback to local cache
+              if (!foundRow) {
+                try {
+                  const cached = await getTable(sessionType);
+                  foundRow = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid) || null;
+                } catch (e) {
+                  // ignore cache errors
+                }
               }
 
-              // Finally insert via offline-aware addRow so it queues when offline
+              if (foundRow && foundRow.id) {
+                // If sign_in_time missing and we have one, update
+                if (signInTime && !foundRow.sign_in_time) {
+                  try {
+                    await updateParticipantRow(foundRow.id, { sign_in_time: signInTime });
+                    console.log('[BiometricsSignIn] updated participant sign_in_time for', sid);
+                  } catch (uerr) {
+                    console.warn('[BiometricsSignIn] updateParticipantRow failed (ensure), falling back to API update', uerr);
+                    try { await api.from(sessionType).update({ sign_in_time: signInTime }).eq('id', foundRow.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant failed (ensure)', e2); }
+                  }
+                }
+                return { student_id: sid, added: false, existing: foundRow };
+              }
+
+              // Insert new participant row with sign_in_time if available
+              const now = signInTime || new Date().toISOString();
+              const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: now, sign_in_time: signInTime || now };
               try {
-                await addParticipantRow({ session_id: academicSessionId, student_id: Number(p.student_id), school_id: schoolId });
-                return { student_id: Number(p.student_id), added: true };
+                const addRes = await addParticipantRow(partPayload);
+                console.log('[BiometricsSignIn] addParticipantRow (ensure) result:', addRes);
+                return { student_id: sid, added: true, result: addRes };
               } catch (err) {
-                return { student_id: Number(p.student_id), added: false, reason: String(err) };
+                console.warn('[BiometricsSignIn] addParticipantRow failed (ensure), falling back to API insert', err);
+                try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (ensure)'); return { student_id: sid, added: true }; } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (ensure)', e2); return { student_id: sid, added: false, reason: String(e2) }; }
               }
             } catch (err) {
               return { student_id: p.student_id, added: false, reason: String(err) };
@@ -1555,6 +1707,38 @@ useEffect(() => {
 
           const addedCount = ensured.filter(r => r.added).length;
           setMessage((m) => `${m}\nParticipants added to session: ${addedCount}/${ensured.length}`);
+
+          // After ensuring participants, update sign_out_time for those participants to stopTime
+          try {
+            await Promise.all(studentParticipants.map(async (p) => {
+              const sid = Number(p.student_id);
+              // find the participant row id (cache or API)
+              let found = null;
+              try {
+                const cached = await getTable(sessionType);
+                found = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid) || null;
+              } catch (e) {
+                // ignore
+              }
+              if (!found && isOnline) {
+                try {
+                  const { data: rows, error } = await api.from(sessionType).select('*').match({ session_id: academicSessionId, student_id: sid }).limit(1);
+                  if (!error && rows && rows.length) found = rows[0];
+                } catch (e) {}
+              }
+              if (found && found.id) {
+                try {
+                  await updateParticipantRow(found.id, { sign_out_time: stopTime });
+                  console.log('[BiometricsSignIn] updated participant sign_out_time for', sid);
+                } catch (uerr) {
+                  console.warn('[BiometricsSignIn] updateParticipantRow failed for sign_out_time, falling back to API update', uerr);
+                  try { await api.from(sessionType).update({ sign_out_time: stopTime }).eq('id', found.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant sign_out failed', e2); }
+                }
+              }
+            }));
+          } catch (e) {
+            console.warn('[BiometricsSignIn] failed to update participant sign_out_time batch', e);
+          }
         } catch (err) {
           console.warn('Failed to ensure session participants', err);
         }
@@ -1595,6 +1779,64 @@ useEffect(() => {
       if (DEBUG) console.warn('stopRecordingRequest effect failed', e);
     }
   }, [stopRecordingRequest]);
+
+  // Parent-driven cancel-stop request: stop recording but do NOT commit attendance or session participants
+  const lastCancelStopReqRef = useRef(0);
+  const stopContinuousCancel = async () => {
+    try {
+      if (processIntervalRef.current) {
+        clearInterval(processIntervalRef.current);
+        processIntervalRef.current = null;
+      }
+      const stopTime = new Date().toISOString();
+
+      // Prepare participants info captured during recording (but we won't commit them)
+      const participants = Object.keys(pendingSignIns || {}).map((k) => {
+        const v = pendingSignIns[k] || {};
+        return {
+          student_id: k,
+          signInTime: v.signInTime || null,
+          attendanceId: v.id || null,
+          isWorker: v.isWorker || false,
+          worker_id: v.worker_id || null,
+        };
+      });
+
+      // Clear pending sign-ins without performing sign-outs or participant inserts
+      setPendingSignIns({});
+
+      setMessage('Recording stopped — session canceled (no attendance recorded).');
+
+      // Notify parent that recording stopped but was canceled so it can avoid committing
+      try {
+        if (typeof onRecordingStop === 'function') {
+          onRecordingStop({ start: recordingStartRef.current, end: stopTime, participants: [], academicSessionId, canceled: true });
+        }
+      } catch (e) {
+        if (DEBUG) console.warn('onRecordingStop (cancel) failed', e);
+      }
+
+      // clear recording timestamp and return to snapshot mode
+      recordingStartRef.current = null;
+      setMode('snapshot');
+    } catch (err) {
+      console.warn('stopContinuousCancel failed', err);
+    }
+  };
+
+  useEffect(() => {
+    try {
+      const v = Number(stopRecordingCancelRequest) || 0;
+      if (v && v !== lastCancelStopReqRef.current) {
+        lastCancelStopReqRef.current = v;
+        if (mode === 'continuous') {
+          stopContinuousCancel().catch((e) => { if (DEBUG) console.warn('stopContinuousCancel failed', e); });
+        }
+      }
+    } catch (e) {
+      if (DEBUG) console.warn('stopRecordingCancelRequest effect failed', e);
+    }
+  }, [stopRecordingCancelRequest]);
 
   const retryWorker = () => {
     setWorkerError(null);
@@ -1638,7 +1880,11 @@ useEffect(() => {
         
         // Call onCompleted callback to proceed with sign-in
         if (onCompleted) {
-          onCompleted(userId);
+          try {
+            const payload = { entityId: userId, type: 'auth', timestamp: new Date().toISOString() };
+            console.log('[BiometricsSignIn] onCompleted payload (token auth):', payload);
+            try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
+          } catch (e) {}
         }
       } else {
         setTokenError("Invalid or expired authentication code");
@@ -1670,7 +1916,9 @@ useEffect(() => {
       // Add either student_id or user/profile mapping
       if (entityType === 'student') {
         record.student_id = attendanceData.entityId;
+        console.log('[BiometricsSignIn] recording attendance -> table: attendance_records, payload:', record);
         const res = await addRow(record);
+        console.log('[BiometricsSignIn] attendance_records addRow result:', res);
         // notify parent
         try {
           if (typeof onSignIn === 'function') onSignIn({ entityType: 'student', entityId: attendanceData.entityId, attendance: res, signInTime: attendanceData.signInTime });
@@ -1703,7 +1951,9 @@ useEffect(() => {
               recorded_by: attendanceData.entityId,
             };
 
+            console.log('[BiometricsSignIn] recording attendance -> table: worker_attendance_records, payload:', workerPayload);
             const res = await addWorkerRow(workerPayload);
+            console.log('[BiometricsSignIn] worker_attendance_records addWorkerRow result:', res);
             // Notify parent of worker sign-in (server-side row created or queued via offline hook)
             try {
               if (typeof onSignIn === 'function') onSignIn({ entityType: 'worker', profileId: attendanceData.entityId, worker_id: profile.worker_id, attendance: res, signInTime: attendanceData.signInTime });
@@ -1717,10 +1967,12 @@ useEffect(() => {
         }
 
         // If not a worker profile, fall back to recording in attendance_records (user_id)
-        record.user_id = attendanceData.entityId;
-        const res = await addRow(record);
-        try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'user', entityId: attendanceData.entityId, attendance: res, signInTime: attendanceData.signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
-        return res;
+  record.user_id = attendanceData.entityId;
+  console.log('[BiometricsSignIn] recording attendance -> table: attendance_records (user fallback), payload:', record);
+  const res = await addRow(record);
+  console.log('[BiometricsSignIn] attendance_records addRow (user) result:', res);
+  try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'user', entityId: attendanceData.entityId, attendance: res, signInTime: attendanceData.signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
+  return res;
       }
     } catch (err) {
       console.error("Failed to record attendance:", err);
@@ -1769,6 +2021,7 @@ useEffect(() => {
                 ...prev,
                 [entityId]: { id: pendingId, signInTime, isWorker: true, worker_id: res.worker_id },
               }));
+              try { addRecordedParticipant(entityId, displayName, signInTime, pendingId, true); } catch (e) { if (DEBUG) console.warn('addRecordedParticipant failed', e); }
               try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'worker', profileId: entityId, worker_id: res.worker_id, attendance: workerResult, signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
             } else {
               const pendingId = res?.id || res?.tempId || null;
@@ -1776,26 +2029,55 @@ useEffect(() => {
                 ...prev,
                 [entityId]: { id: pendingId, signInTime, isWorker: false },
               }));
+              try { addRecordedParticipant(entityId, displayName, signInTime, pendingId, false); } catch (e) { if (DEBUG) console.warn('addRecordedParticipant failed', e); }
               try { if (typeof onSignIn === 'function') onSignIn({ entityType: entityType === 'user' ? 'user' : 'student', entityId, attendance: res, signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
             }
 
             setMessage(`${displayName} authenticated and attendance recorded.`);
             // Add academic session participant (for prompt-based sign-ins) if session id provided
+            // Only add participants for students — do not insert profile/worker rows into student participants table
             try {
-              if (academicSessionId) {
-                await api.from('academic_session_participants').insert({
-                  session_id: academicSessionId,
-                  student_id: Number(entityId),
-                  school_id: schoolId
-                });
+              if (academicSessionId && entityType === 'student') {
+                const sid = Number(entityId);
+                const now = new Date().toISOString();
+                const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: now, sign_in_time: now };
+                try {
+                  const cached = await getTable(sessionType);
+                  const found = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid);
+                  if (found && found.id) {
+                    if (!found.sign_in_time) {
+                      try {
+                        await updateParticipantRow(found.id, { sign_in_time: now });
+                        console.log('[BiometricsSignIn] updated participant sign_in_time (prompt) for', sid);
+                      } catch (uerr) {
+                        console.warn('[BiometricsSignIn] updateParticipantRow failed (prompt), falling back to API update', uerr);
+                        try { await api.from(sessionType).update({ sign_in_time: now }).eq('id', found.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant failed (prompt)', e2); }
+                      }
+                    }
+                  } else {
+                    try {
+                      const addRes = await addParticipantRow(partPayload);
+                      console.log('[BiometricsSignIn] addParticipantRow (prompt) result:', addRes);
+                    } catch (err) {
+                      console.warn('[BiometricsSignIn] addParticipantRow failed (prompt), falling back to API insert', err);
+                      try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (prompt)'); } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (prompt)', e2); }
+                    }
+                  }
+                } catch (err) {
+                  console.warn('Failed to ensure academic_session_participant (prompt)', err);
+                }
               }
             } catch (e) {
-              console.warn('Failed to insert academic_session_participant', e);
+              console.warn('Failed to insert academic_session_participant (outer)', e);
             }
 
             // Hide/unmount biometric UI for caller if they provided onCompleted
             if (typeof onCompleted === 'function') {
-              try { onCompleted(entityId); } catch (e) { }
+              try {
+                const payload = { entityId, type: 'signin', timestamp: signInTime, attendance: res };
+                console.log('[BiometricsSignIn] onCompleted payload (prompt sign-in):', payload);
+                try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
+              } catch (e) {}
             }
         } else {
           // Sign out
@@ -1832,6 +2114,7 @@ useEffect(() => {
                   }
                 }
               }
+              try { completeRecordedParticipant(entityId, signOutTime); } catch (e) { if (DEBUG) console.warn('completeRecordedParticipant failed', e); }
               setPendingSignIns((prev) => {
                 const copy = { ...prev };
                 delete copy[entityId];
@@ -1841,7 +2124,7 @@ useEffect(() => {
               // update academic_session_participants record sign_out_time when available
               try {
                 if (academicSessionId) {
-                  await api.from('academic_session_participants')
+                  await api.from(sessionType)
                     .update({ sign_out_time: new Date().toISOString() })
                     .match({ session_id: academicSessionId, student_id: Number(entityId) });
                 }
@@ -1858,9 +2141,13 @@ useEffect(() => {
       const action = isSignOut ? "logged out" : "logged in";
       setMessage(`${displayName} ${action} (attendance not recorded).`);
       
-      // For authentication-only mode, call onCompleted
+      // For authentication-only mode, call onCompleted with structured payload
       if (onCompleted && !isSignOut) {
-        onCompleted(entityId);
+        try {
+          const payload = { entityId, type: 'auth', timestamp: new Date().toISOString() };
+          console.log('[BiometricsSignIn] onCompleted payload (auth-only):', payload);
+          try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
+        } catch (e) {}
       }
     }
     
@@ -2075,6 +2362,34 @@ useEffect(() => {
 
           {/* Don't show the global floating message when token input or webcam fallback UI is active to avoid overlap */}
           {message && !showTokenInput && !webcamError && <pre className="message">{message}</pre>}
+
+          {/* Small session participants panel: shows recorded participants and durations */}
+          {recordedParticipants && recordedParticipants.length > 0 && (
+            <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-900 border rounded">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-medium">Session participants</div>
+                <div className="text-sm text-gray-500">{mode === 'continuous' ? 'Live' : 'Summary'}</div>
+              </div>
+              <div className="space-y-2">
+                {recordedParticipants.map((p) => {
+                  const name = p.displayName || `#${p.student_id}`;
+                  let minutes = p.durationMinutes;
+                  if ((minutes === null || minutes === undefined) && p.signInTime && !p.signOutTime) {
+                    const start = new Date(p.signInTime).getTime();
+                    const now = Date.now();
+                    minutes = start ? ((now - start) / (1000 * 60)) : 0;
+                  }
+                  const minutesStr = minutes !== null && minutes !== undefined ? `${Number(minutes).toFixed(2)} min` : '—';
+                  return (
+                    <div key={`${p.student_id}-${p.signInTime}`} className="flex items-center justify-between">
+                      <div className="text-sm">{name} <span className="text-xs text-gray-400">({p.student_id})</span></div>
+                      <div className="text-sm font-mono text-indigo-600">{minutesStr}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* If models are not loaded, provide a quick link to Offline Settings so users can download models */}
           {!loadingModels && !areFaceApiModelsLoaded() && (
