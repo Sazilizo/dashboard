@@ -312,22 +312,24 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
     const added = [];
     const errors = [];
 
+    // Measure per-student add duration so we can show a fallback "time to sign-in" metric
     for (const sId of selectedStudentIds) {
       try {
         const payload = {
           session_id: selectedSession,
           student_id: Number(sId),
           school_id: studentById[String(sId)]?.school_id || null,
-          added_at: now,
         };
         console.log('[RecordSessionForm] addParticipant payload', payload);
+        const startMs = Date.now();
         const res = await addParticipant(payload);
-        console.log('[RecordSessionForm] addParticipant result', res);
+        const elapsedMs = Date.now() - startMs;
+        console.log('[RecordSessionForm] addParticipant result', res, 'elapsedMs', elapsedMs);
+        // record timing and result for reporting
+        added.push({ studentId: sId, res, elapsedMs });
         // detect errors returned by useOfflineTable
         if (res && res.__error) {
           errors.push({ studentId: sId, error: res.error || res });
-        } else {
-          added.push({ studentId: sId, res });
         }
       } catch (err) {
         errors.push({ studentId: sId, error: err });
@@ -335,11 +337,14 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
     }
 
     setWorking(false);
-    setLastActionResult({ added, errors });
+    // compute timing summary (elapsedMs) if available
+    const timings = (added || []).map(a => a && a.elapsedMs).filter(n => typeof n === 'number');
+    const avgElapsedMs = timings.length ? Math.round(timings.reduce((s, n) => s + n, 0) / timings.length) : null;
+    setLastActionResult({ added, errors, avgElapsedMs });
     if (errors.length) {
-      addToast(`Added ${added.length} but ${errors.length} failed`, "warning");
+      addToast(`Added ${added.length} but ${errors.length} failed${avgElapsedMs ? ` (avg ${avgElapsedMs} ms)` : ''}`, "warning");
     } else {
-      addToast(`Added ${added.length} students to session`, "success");
+      addToast(`Added ${added.length} students to session${avgElapsedMs ? ` (avg ${avgElapsedMs} ms)` : ''}`, "success");
     }
     onCompleted({ sessionId: selectedSession, added, removed: [] });
   }, [selectedStudentIds, selectedSession, addParticipant, onCompleted, studentById]);
@@ -439,7 +444,6 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
               session_id: selectedSession,
               student_id: Number(r.studentId),
               school_id: studentById[String(r.studentId)]?.school_id || null,
-              added_at: r.timestamp || new Date().toISOString(),
             };
             console.log('[RecordSessionForm] adding participant to table:', participantsTable, 'payload:', partPayload);
             const partRes = await addParticipant(partPayload);
@@ -491,7 +495,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                 // ensure participant exists in participantsTable (insert if missing)
                 const mapByStudent = Object.fromEntries((participantsForSelected || []).map(pp => [String(pp.student_id), pp]));
                 if (!mapByStudent[String(p.student_id)]) {
-                  const payload = { session_id: selectedSession, student_id: Number(p.student_id), school_id: studentById[String(p.student_id)]?.school_id || null, added_at: new Date().toISOString() };
+                  const payload = { session_id: selectedSession, student_id: Number(p.student_id), school_id: studentById[String(p.student_id)]?.school_id || null };
                   console.log('[RecordSessionForm] addParticipant (auto from recordingStop) payload:', payload);
                   try {
                     const addRes = await addParticipant(payload);
@@ -665,8 +669,8 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
             </div>
 
             <div className="flex items-center gap-3">
-              <button className="btn inline-flex items-center gap-2" onClick={() => setShowBiometrics(v => !v)} disabled={!selectedSession}>
-                <span className="text-sm">{showBiometrics ? 'Hide Biometrics' : 'Open Biometrics'}</span>
+              <button className="btn inline-flex items-center gap-2" disabled={true} title="Biometrics suspended for now">
+                <span className="text-sm">Biometrics (suspended)</span>
               </button>
               {recordingActive && (
                 <>
@@ -764,7 +768,10 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                     <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 font-semibold">{(studentById[String(p.student_id)]?.full_name || '#').split(' ').map(n=>n[0]).slice(0,2).join('')}</div>
                     <div>
                       <div className="font-medium">{studentById[String(p.student_id)]?.full_name || `#${p.student_id}`}</div>
-                      <div className="text-sm text-gray-500">Added: {p.added_at ? p.added_at.slice(0,19).replace('T',' ') : '—'}</div>
+                      <div className="text-sm text-gray-500">Added: {(() => {
+                        const addedAt = p.added_at || p.created_at || p.createdAt || p.inserted_at || p.addedAt;
+                        return addedAt ? String(addedAt).slice(0,19).replace('T',' ') : '—';
+                      })()}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
