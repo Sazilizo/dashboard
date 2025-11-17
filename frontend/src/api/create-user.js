@@ -13,7 +13,7 @@ export default async function handler(req, res) {
 
     // Fetch current user role to verify privilege
     const { data: currentUser, error: userError } = await supabaseAdmin
-      .from("users")
+      .from("profiles")
       .select("role_id")
       .eq("auth_uid", current_user_id)
       .single();
@@ -40,7 +40,7 @@ export default async function handler(req, res) {
 
     // Insert user profile
     const { error: profileError } = await supabaseAdmin
-      .from("users")
+      .from("profiles")
       .insert({
         auth_uid: authUser.id,
         email,

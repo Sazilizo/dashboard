@@ -675,5 +675,16 @@
 @media (max-width: 480px) {
   .info-count-card {
     width: 100%;
+    /* Remove any forced height on small screens so grade boxes can size to content */
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 0.5rem 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .info-count-card .info-count-details {
+    align-items: flex-start;
   }
 } 

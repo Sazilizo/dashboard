@@ -59,7 +59,8 @@ export default function StudentFilters({
     <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: 'flex-start' }}>
       <div className="mb-4" style={{ display: 'inline-block', position: 'relative' }}>
         {/* Grade multi-select wrapper: on small screens constrain overlay by sizing this container */}
-        <div style={isSmallScreen ? { width: '80vw', height: '60vh', maxWidth: '100%', overflow: 'auto' } : {}}>
+        {/* Use maxHeight instead of fixed height so the dropdown can size to content without creating large empty space */}
+        <div style={isSmallScreen ? { width: '80vw', maxHeight: '60vh', maxWidth: '100%', overflow: 'auto' } : {}}>
           <GradeMultiSelect filters={filters} setFilters={setFilters} gradeOptions={gradeOptions} />
         </div>
       </div>

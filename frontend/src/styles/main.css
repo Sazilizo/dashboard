@@ -80,6 +80,77 @@ html, body {
   }
 }
 
+/* Ensure charts stack vertically on small screens to avoid cramped side-by-side layout */
+@media (max-width: 768px) {
+  /* Stats dashboard grid: single column on tablet/phone */
+  .stats-grid {
+    grid-template-columns: 1fr !important;
+    align-items: stretch;
+  }
+
+  /* Page-level stats that use a wider grid should collapse to a single column */
+  .page-stats {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: auto;
+  }
+
+  /* Make chart cards full width and allow natural height */
+  .chart-card, .chart-card-inner, .specs-radar, .rounded-chart {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+  }
+
+  /* Reduce radar height so it isn't excessively tall on small screens */
+  .specs-radar { height: 36vh; }
+
+  /* Ensure container columns collapse so each chart occupies its own row */
+  .stats-container, .profile-wrapper, .list-items, .page-stats, .profile-details-card-wrapper, .profile-details-count-card {
+    grid-column: 1 / -1 !important;
+    grid-row: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Make each direct child of stats-grid span the full width */
+  .stats-grid > * {
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+  }
+
+  /* Add breathing room between stacked charts */
+  .chart-card, .rounded-chart, .specs-radar { margin-bottom: 1rem !important; }
+
+  /* Responsive grid behavior for profile pages (LearnerProfile, WorkerProfile)
+     Use auto rows and auto-fitting columns so cards reflow sensibly on narrow screens.
+     This makes each grid row height depend on content (auto) and allows columns
+     to wrap using auto-fit when there is limited horizontal space. */
+  .grid-layout {
+    /* reduced min column width so more columns fit on narrower viewports */
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
+    grid-template-rows: auto !important;
+    grid-auto-rows: auto !important;
+    gap: 0.5rem !important;
+  }
+
+  /* Stats grid should also use autofit so small charts stack neatly */
+  .stats-grid {
+    /* reduced min column width to allow more columns before collapsing to one */
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
+    grid-template-rows: auto !important;
+    grid-auto-rows: auto !important;
+    gap: 0.75rem !important;
+  }
+
+  /* Optional debug outline: add `class="debug-grid-outline"` to `<body>` to visualize grid cells */
+  body.debug-grid-outline .grid-item,
+  body.debug-grid-outline .page-stats-grid-items,
+  body.debug-grid-outline .chart-card {
+    outline: 1px dashed rgba(0,0,0,0.08);
+    box-shadow: none !important;
+  }
+}
+
 .topbar .logo{
   width: 2.4rem;
   height: 2.4rem;

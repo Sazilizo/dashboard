@@ -8,9 +8,13 @@ const StatsDashboard = ({ charts = [], loading }) => {
         <div className="stats-header">
           <h3 className="text-xl font-semibold mb-4">Statistics</h3>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Use the same `.stats-grid` + `.chart-card` structure when loading so
+            the responsive CSS applies consistently (stacking on small screens). */}
+        <div className="stats-grid">
           {charts.map((_, i) => (
-            <div key={i} className="skeleton-chart h-[300px] rounded-lg"></div>
+            <div key={i} className="chart-card">
+              <div className="chart-card-inner skeleton-chart" style={{ minHeight: 220 }} />
+            </div>
           ))}
         </div>
       </div>
