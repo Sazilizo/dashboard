@@ -395,8 +395,25 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
         return;
       }
       const rows = Array.isArray(attendanceData) ? attendanceData : [attendanceData];
+      // Build a quick lookup of selected student ids (if any). If there are selected
+      // students, we will only record attendance for recognized faces that match
+      // one of the selected students. This prevents accidental recording when the
+      // operator selected a student but the biometric capture identified someone else.
+      const selectedSet = new Set((selectedStudentIds || []).map(String));
       const results = [];
-  for (const r of rows) {
+      for (const r of rows) {
+        // If the operator had selected specific student(s) to record, ensure the
+        // recognized student matches one of those selections. If it does not,
+        // skip recording and surface a warning.
+        if (selectedSet.size > 0) {
+          const detectedId = r.studentId ? String(r.studentId) : null;
+          if (!detectedId || !selectedSet.has(detectedId)) {
+            console.warn('[RecordSessionForm] biometric-recognition mismatch: detected', detectedId, 'but selected', Array.from(selectedSet));
+            addToast(`Recognition mismatch: detected ${detectedId || 'unknown'} does not match selected student(s). Skipping.`, 'warning', 6000);
+            results.push({ skipped: true, reason: 'mismatch', detected: detectedId, expected: Array.from(selectedSet) });
+            continue; // skip this row
+          }
+        }
         // If the biometric component already includes an attendance result, don't write a duplicate row.
         if (r.attendance) {
           console.log('[RecordSessionForm] received attendance from biometric payload, skipping addAttendanceRow:', r.attendance);
@@ -442,7 +459,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
       setLastActionResult({ error: err });
       return null;
     }
-  }, [addAttendanceRow, studentById]);
+  }, [addAttendanceRow, studentById, selectedStudentIds, addToast, addParticipant, participantsTable, selectedSession]);
 
   // Called when the biometric component begins continuous recording
   const handleRecordingStart = useCallback(() => {
