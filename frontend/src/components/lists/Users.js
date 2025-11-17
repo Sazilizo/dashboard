@@ -196,7 +196,7 @@ export default function Users() {
   return (
     <div className="users-container">
       <div className="register-user">
-        <Link className="btn btn-primary" to="/register">
+        <Link className="btn btn-primary" to="/dashboard/register">
           Create new user
         </Link>
       </div>

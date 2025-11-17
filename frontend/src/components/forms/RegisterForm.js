@@ -53,10 +53,26 @@ export default function RegisterForm({ onSuccess, onCancel }) {
 
     try {
       // 1️⃣ Sign up user (auth.users)
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: form.email,
-        password: form.password,
-      });
+      // Determine the redirect URL to include in the confirmation email.
+      // Prefer an explicit env var (`REACT_APP_SITE_URL`) so production builds can force the correct domain.
+      // Fallback to `window.location.origin` when the env var is not set (useful for local dev).
+      const siteOrigin =
+        (process && process.env && process.env.REACT_APP_SITE_URL) ||
+        (process && process.env && process.env.REACT_APP_VERCEL_URL) ||
+        (typeof window !== 'undefined' && window.location && window.location.origin) ||
+        null;
+
+      // Pass email redirect option to Supabase so the confirmation link points to the right app URL.
+      // For supabase-js v2 the option key is `emailRedirectTo`.
+      const signUpOptions = siteOrigin ? { emailRedirectTo: siteOrigin } : {};
+
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp(
+        {
+          email: form.email,
+          password: form.password,
+        },
+        signUpOptions
+      );
       if (signUpError) throw signUpError;
 
       // 2️⃣ Update metadata so trigger can populate public.profiles
