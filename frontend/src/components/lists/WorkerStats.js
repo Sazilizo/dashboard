@@ -3,6 +3,7 @@ import PieChartStats from "../charts/PieChart";
 import GradeDistributionBarChart from "../charts/DashboardSummary"; // rename this later for workers?
 import StackedCategoryGradeChart from "../charts/StackedChart"; // rename this later for workers?
 import "../../styles/main.css";
+import { useData } from "../../context/DataContext";
 
 const WorkerStats = ({ workers, loading, singleWorker }) => {
   /**
@@ -12,21 +13,23 @@ const WorkerStats = ({ workers, loading, singleWorker }) => {
    */
 
   // Pie Chart Data: roles breakdown
+  const { roles: allRoles = [] } = useData();
+
   const rolePieData = useMemo(() => {
     if (!workers?.length) return [];
     const counts = workers.reduce((acc, worker) => {
-      const role = worker.roles?.name || "Unassigned";
+      const role = worker.roles?.name || allRoles.find(r => String(r.id) === String(worker.role_id))?.name || "Unassigned";
       acc[role] = (acc[role] || 0) + 1;
       return acc;
     }, {});
     return Object.entries(counts).map(([label, value]) => ({ label, value }));
-  }, [workers]);
+  }, [workers, allRoles]);
 
   // Bar Chart Data: attendance per role
   const roleAttendanceData = useMemo(() => {
     if (!workers?.length) return [];
     const counts = workers.reduce((acc, worker) => {
-      const role = worker.roles?.name || "Unassigned";
+      const role = worker.roles?.name || allRoles.find(r => String(r.id) === String(worker.role_id))?.name || "Unassigned";
       const attendance = worker.attendanceStatus || "Unknown"; 
       // e.g. "Present", "Absent", "Late"
       acc[role] = acc[role] || {};
@@ -37,7 +40,7 @@ const WorkerStats = ({ workers, loading, singleWorker }) => {
       role,
       ...statuses,
     }));
-  }, [workers]);
+  }, [workers, allRoles]);
 
   // Single worker attendance breakdown
   const singleWorkerAttendanceData = useMemo(() => {

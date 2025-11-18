@@ -59,27 +59,25 @@ if (typeof window !== 'undefined') {
   }
 }
 
-// Register service worker
-if ('serviceWorker' in navigator) {
+// Register service worker (only in production to avoid dev reload loops)
+if (process.env.NODE_ENV === 'production' && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('/serviceWorker.js')
-      .then(registration => {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('ServiceWorker registration successful');
-        }
-        
+      .then((registration) => {
+        console.log('ServiceWorker registration successful');
+
         // Sync offline changes and refresh cache when coming back online
         window.addEventListener('online', () => {
           console.log('[index] Device back online - syncing and refreshing cache...');
-          
+
           try {
             // Sync any pending offline changes first
             syncOfflineChanges(onlineApi);
           } catch (err) {
             console.warn('Failed to sync offline changes automatically', err);
           }
-          
+
           // Then refresh the cache with latest data from Supabase
           setTimeout(() => {
             cacheFormSchemasIfOnline().catch((err) => {
@@ -88,10 +86,8 @@ if ('serviceWorker' in navigator) {
           }, 2000); // Wait 2 seconds for sync to complete first
         });
       })
-      .catch(err => {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('ServiceWorker registration failed: ', err);
-        }
+      .catch((err) => {
+        console.log('ServiceWorker registration failed: ', err);
       });
   });
 }

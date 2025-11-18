@@ -5,6 +5,9 @@ import EditProfile from "./profiles/EditUserProfile";
 import logo from "../assets/education-bg.png";
 import api from "../api/client";
 import useOnlineStatus from "../hooks/useOnlineStatus";
+import imageCache from "../utils/imageCache";
+
+import { getSignedUrl } from "../utils/signedUrlCache";
 
 export default function Topbar() {
   const { user } = useAuth();
@@ -38,19 +41,40 @@ export default function Topbar() {
     try {
       for (const ext of extensions) {
         const fileName = `${userId}.${ext}`;
-        const { data, error } = await api.storage
-          .from("profile-avatars")
-          .createSignedUrl(fileName, 60);
 
-        if (error) continue;
-
-        if (data?.signedUrl) {
-          const res = await fetch(data.signedUrl, { method: "HEAD" });
-          if (res.ok) {
-            setAvatarUrl(`${data.signedUrl}&t=${Date.now()}`);
+        // Check persistent image cache first
+        try {
+          const cached = await imageCache.getCachedImage('profile-avatars', fileName);
+          if (cached) {
+            const obj = URL.createObjectURL(cached);
+            setAvatarUrl(obj);
             setLoading(false);
             return;
           }
+        } catch (e) {
+          if (DEBUG) console.warn('[Topbar] imageCache.getCachedImage failed', e);
+        }
+
+        // Not cached - request a signed URL and download the blob, then cache it
+        const signedUrl = await getSignedUrl('profile-avatars', fileName, 60);
+        if (!signedUrl) continue;
+        try {
+          const res = await fetch(signedUrl);
+          if (res.ok) {
+            const blob = await res.blob();
+            try {
+              await imageCache.cacheImage('profile-avatars', fileName, blob, userId, { source: 'avatar' });
+            } catch (e) {
+              if (DEBUG) console.warn('[Topbar] Failed to cache avatar blob', e);
+            }
+            const obj = URL.createObjectURL(blob);
+            setAvatarUrl(obj);
+            setLoading(false);
+            return;
+          }
+        } catch (headErr) {
+          if (DEBUG) console.warn('[Topbar] avatar fetch failed for', signedUrl, headErr);
+          continue;
         }
       }
     } catch (err) {

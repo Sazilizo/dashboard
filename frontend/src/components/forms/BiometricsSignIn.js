@@ -22,10 +22,12 @@ const STORAGE_PATHS = {
   'worker-uploads': (id) => `workers/${id}/profile-picture`,
   'profile-avatars': (id) => ''  // For users, files are directly in the bucket root
 };
+
 import {
   preloadFaceApiModels,
   areFaceApiModelsLoaded,
 } from "../../utils/FaceApiLoader";
+import { getSignedUrl } from "../../utils/signedUrlCache";
 import { getTable, cacheTable } from "../../utils/tableCache";
 import useOfflineTable from "../../hooks/useOfflineTable";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
@@ -122,10 +124,14 @@ const BiometricsSignIn = ({
   useEffect(() => {
     let intv;
     if (mode === 'continuous') {
-      intv = setInterval(() => setTick(t => t + 1), 2000);
+      intv = setInterval(() => setTick(t => t + 1), 5000);
     }
     return () => { if (intv) clearInterval(intv); };
   }, [mode]);
+  
+  // Prevent repeated participant add attempts per student (rate-limit heavy network ops)
+  const lastParticipantAttemptRef = useRef({});
+  const MIN_PARTICIPANT_ATTEMPT_MS = 10 * 1000; // 10s
   const [workerAvailable, setWorkerAvailable] = useState(false);
   const [workerError, setWorkerError] = useState(null);
   const [workerReloadKey, setWorkerReloadKey] = useState(0);
@@ -749,15 +755,15 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
               for (const ext of extensions) {
                 const filename = `${id}.${ext}`;
                 try {
-                  const { data: signed, error: signedErr } = await api.storage.from(source.bucket).createSignedUrl(filename, 300);
-                  if (!signedErr && signed?.signedUrl) {
+                  const url = await getSignedUrl(source.bucket, filename, 240);
+                  if (url) {
                     // Found a signed URL for this exact id-based filename
-                    signedCandidates.push({ name: filename, signedUrl: signed.signedUrl });
+                    signedCandidates.push({ name: filename, signedUrl: url });
                     // stop after first found
                     break;
                   }
                 } catch (e) {
-                  if (DEBUG) console.warn('[BiometricsSignIn] createSignedUrl failed for', filename, e);
+                  if (DEBUG) console.warn('[BiometricsSignIn] getSignedUrl failed for', filename, e);
                 }
               }
 
@@ -855,18 +861,18 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
                 return source.path ? `${source.path}/${f.name}` : f.name;
               });
 
-              // batch create signed URLs
+              // batch create signed URLs (use cached helper to reduce repeated network calls)
               const signedResults = await Promise.all(
-                paths.map((p) => api.storage.from(source.bucket).createSignedUrl(p, 300))
+                paths.map((p) => getSignedUrl(source.bucket, p, 240))
               );
-              
+
               let urlErr = null;
               for (const r of signedResults) {
-                if (r.error) {
-                  urlErr = r.error;
+                if (!r) {
+                  urlErr = true;
                   urlsData.push(null);
                 } else {
-                  urlsData.push(r.data?.signedUrl || null);
+                  urlsData.push(r);
                 }
               }
               
@@ -1287,8 +1293,14 @@ useEffect(() => {
                     } else {
                       // Insert via offline-aware hook so it queues when offline
                       try {
-                        const addRes = await addParticipantRow(partPayload);
-                        console.log('[BiometricsSignIn] addParticipantRow (snapshot) result:', addRes);
+                        const last = lastParticipantAttemptRef.current[sid] || 0;
+                        if (Date.now() - last < MIN_PARTICIPANT_ATTEMPT_MS) {
+                          if (DEBUG) console.log('[BiometricsSignIn] skipping participant add (recent attempt)', sid);
+                        } else {
+                          lastParticipantAttemptRef.current[sid] = Date.now();
+                          const addRes = await addParticipantRow(partPayload);
+                          console.log('[BiometricsSignIn] addParticipantRow (snapshot) result:', addRes);
+                        }
                       } catch (err) {
                         console.warn('[BiometricsSignIn] addParticipantRow failed (snapshot), falling back to API insert', err);
                         try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (snapshot)'); } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (snapshot)', e2); }
@@ -1539,7 +1551,7 @@ useEffect(() => {
     if (processIntervalRef.current) return;
     processIntervalRef.current = setInterval(() => {
       processFrame();
-    }, 800); // ~1.25 FPS - tuneable for performance vs responsiveness
+    }, 1500); // ~0.66 FPS - reduced frequency to lower CPU/network load
     setMode("continuous");
 
     // notify parent that recording started
@@ -1693,6 +1705,12 @@ useEffect(() => {
               const now = signInTime || new Date().toISOString();
               const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: now, sign_in_time: signInTime || now };
               try {
+                const last = lastParticipantAttemptRef.current[sid] || 0;
+                if (Date.now() - last < MIN_PARTICIPANT_ATTEMPT_MS) {
+                  if (DEBUG) console.log('[BiometricsSignIn] ensure: skipping addParticipantRow due to rate-limit for', sid);
+                  return { student_id: sid, added: false, reason: 'rate-limited' };
+                }
+                lastParticipantAttemptRef.current[sid] = Date.now();
                 const addRes = await addParticipantRow(partPayload);
                 console.log('[BiometricsSignIn] addParticipantRow (ensure) result:', addRes);
                 return { student_id: sid, added: true, result: addRes };
@@ -2054,10 +2072,16 @@ useEffect(() => {
                         try { await api.from(sessionType).update({ sign_in_time: now }).eq('id', found.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant failed (prompt)', e2); }
                       }
                     }
-                  } else {
+                    } else {
                     try {
-                      const addRes = await addParticipantRow(partPayload);
-                      console.log('[BiometricsSignIn] addParticipantRow (prompt) result:', addRes);
+                      const last = lastParticipantAttemptRef.current[sid] || 0;
+                      if (Date.now() - last < MIN_PARTICIPANT_ATTEMPT_MS) {
+                        if (DEBUG) console.log('[BiometricsSignIn] prompt: skipping addParticipantRow due to rate-limit for', sid);
+                      } else {
+                        lastParticipantAttemptRef.current[sid] = Date.now();
+                        const addRes = await addParticipantRow(partPayload);
+                        console.log('[BiometricsSignIn] addParticipantRow (prompt) result:', addRes);
+                      }
                     } catch (err) {
                       console.warn('[BiometricsSignIn] addParticipantRow failed (prompt), falling back to API insert', err);
                       try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (prompt)'); } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (prompt)', e2); }

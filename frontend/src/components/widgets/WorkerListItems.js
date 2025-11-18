@@ -2,9 +2,12 @@ import React from "react";
 import { Link } from "react-router-dom";
 import Photos from "../profiles/Photos";
 import { isBirthdayFromId } from "../../utils/birthdayUtils";
+import { useData } from "../../context/DataContext";
 
 export default function WorkerListItems({ workers, bucketName = "worker-uploads", folderName = "workers" }) {
   if (!workers || workers.length === 0) return <p className="no-data-message">No workers found.</p>;
+
+  const { roles = [] } = useData();
 
   return (
     <ul className="app-list wave-list">
@@ -29,7 +32,12 @@ export default function WorkerListItems({ workers, bucketName = "worker-uploads"
                   )}
                 </p>
                 <p className="item-details">
-                  Role: {w?.roles?.name || '—'}
+                  Role: {(
+                    w?.roles?.name ||
+                    // fallback to global cached roles by role_id if present
+                    (roles && roles.find(r => String(r.id) === String(w.role_id))?.name) ||
+                    '—'
+                  )}
                   {w.__queued && (
                     <span className="queued-badge">
                       (Queued)

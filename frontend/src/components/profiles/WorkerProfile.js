@@ -20,6 +20,7 @@ import { getUserContext } from "../../utils/rlsCache";
 import "../../styles/Profile.css";
 import '../../styles/profile-avatars.css';
 import SeoHelmet from '../../components/SeoHelmet';
+import { useData } from "../../context/DataContext";
 
 /**
  * Check if current user has permission to view this worker's profile
@@ -309,8 +310,20 @@ const WorkerProfile = () => {
   const pageTitle = worker?.profile?.name || worker?.full_name || 'Worker Profile';
   const pageDesc = worker?.profile?.name ? `${worker.profile.name}'s profile and activity` : 'Worker profile details';
 
-  const roleName = worker?.profile?.role?.name?.toLowerCase() || worker?.roles?.name?.toLowerCase();
-  const currentUserRole = user?.profile?.roles?.name?.toLowerCase?.();
+  const { roles = [] } = useData();
+
+  const getRoleName = (w) => {
+    if (!w) return '';
+    return (
+      w?.profile?.role?.name ||
+      w?.roles?.name ||
+      (roles && roles.find(r => String(r.id) === String(w.role_id))?.name) ||
+      ''
+    );
+  };
+
+  const roleName = (getRoleName(worker) || '').toLowerCase();
+  const currentUserRole = (user?.profile?.roles?.name?.toLowerCase?.() || (roles.find(r => String(r.id) === String(user?.profile?.role_id))?.name || '')).toLowerCase();
   const canDiscipline = ["superuser", "hr"].includes(currentUserRole || "");
 
   // Stats charts for learner workers (same as LearnerProfile)

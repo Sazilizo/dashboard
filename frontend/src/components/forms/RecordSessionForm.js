@@ -8,7 +8,7 @@ import { useAuth } from "../../context/AuthProvider";
 import { useSchools } from "../../context/SchoolsContext";
 import useOfflineTable from "../../hooks/useOfflineTable";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
-import { getTableFiltered, getTable, getMutations, syncMutations, attemptBackgroundSync } from "../../utils/tableCache";
+import { getTableFiltered, getTable } from "../../utils/tableCache";
 import BiometricsSignIn from "../forms/BiometricsSignIn";
 import LearnerAttendance from "../profiles/LearnerAttendance";
 import ToastContainer from "../ToastContainer";
@@ -69,8 +69,6 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
   // always show all sessions by default in this view
   const [lastActionResult, setLastActionResult] = useState(null);
   const [toasts, setToasts] = useState([]);
-  const [queuedMutations, setQueuedMutations] = useState([]);
-  const [syncing, setSyncing] = useState(false);
 
   const addToast = (message, type = "success", duration = 3500) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
@@ -704,40 +702,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
               <button className="btn inline-flex items-center gap-2" disabled={true} title="Biometrics suspended for now">
                 <span className="text-sm">Biometrics (suspended)</span>
               </button>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button
-                  className="btn inline-flex items-center gap-2"
-                  onClick={async () => {
-                    try {
-                      const muts = await getMutations();
-                      setQueuedMutations(muts || []);
-                      addToast(`Loaded ${muts?.length || 0} queued mutations`, 'info');
-                    } catch (e) {
-                      addToast('Failed to read queued mutations: ' + (e?.message || e), 'error');
-                    }
-                  }}
-                >
-                  Show Queued Mutations
-                </button>
-
-                <button
-                  className="btn inline-flex items-center gap-2"
-                  onClick={async () => {
-                    setSyncing(true);
-                    try {
-                      await attemptBackgroundSync({ force: true });
-                      addToast('Background sync triggered', 'success');
-                    } catch (e) {
-                      addToast('Background sync failed: ' + (e?.message || e), 'error');
-                    } finally {
-                      setSyncing(false);
-                    }
-                  }}
-                  disabled={syncing}
-                >
-                  {syncing ? 'Syncing…' : 'Force Sync'}
-                </button>
-              </div>
+              {/* debug buttons removed */}
               {recordingActive && (
                 <>
                   <button
@@ -853,16 +818,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
             </div>
           </div>
 
-            {queuedMutations && queuedMutations.length > 0 && (
-              <div className="mt-4 p-2 bg-yellow-50 border rounded">
-                <div style={{ fontWeight: 600, marginBottom: 8 }}>Queued mutations ({queuedMutations.length})</div>
-                <div style={{ maxHeight: 240, overflow: 'auto' }}>
-                  {queuedMutations.map(q => (
-                    <pre key={q.id} style={{ background: '#fff', padding: 8, border: '1px solid #eee', marginBottom: 6 }}>{JSON.stringify(q, null, 2)}</pre>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* queued mutations panel removed */}
 
             {lastActionResult && (
               <pre className="mt-4 text-sm bg-gray-100 p-2 rounded">{JSON.stringify(lastActionResult, null, 2)}</pre>
