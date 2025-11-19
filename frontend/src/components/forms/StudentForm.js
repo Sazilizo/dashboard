@@ -112,7 +112,7 @@ export default function StudentForm() {
   }, [schoolIds, isOnline]);
 
   const presetFields = {
-    studentId,
+    id: studentId,
     ...(user?.profile?.school_id && !["superuser","admin","hr","viewer"].includes(user?.profile?.roles?.name)
       ? { school_id: user.profile.school_id }
       : {}),

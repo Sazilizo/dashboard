@@ -9,108 +9,133 @@ import { getTable } from "./tableCache";
  * Fetch and cache profile images for all users
  * @returns {Promise<object>} Results summary
  */
+// Coalesce & debounce globals for image caching
+let _imageCacheInFlight = null;
+let _imageCacheLastRun = 0;
+const IMAGE_CACHE_MIN_INTERVAL_MS = 30 * 1000; // 30s
+
+async function runWithConcurrency(tasks, concurrency = 4) {
+  const results = [];
+  const executing = new Set();
+
+  for (const task of tasks) {
+    const p = Promise.resolve().then(() => task()).finally(() => executing.delete(p));
+    results.push(p);
+    executing.add(p);
+
+    if (executing.size >= concurrency) {
+      // Wait for one to finish
+      await Promise.race(Array.from(executing)).catch(() => {});
+    }
+  }
+
+  return Promise.all(results);
+}
+
 export async function cacheAllUserImages() {
-  console.log("[proactiveImageCache] Starting user profile image cache...");
-  
-  try {
-    // Get all user profiles
-    const profiles = await getTable("profiles");
-    if (!profiles?.length) {
-      console.log("[proactiveImageCache] No profiles found to cache");
-      return { cached: 0, failed: 0, skipped: 0 };
-    }
+  const now = Date.now();
+  if (_imageCacheInFlight) {
+    console.info('[proactiveImageCache] A user-image cache run is already in-flight - coalescing call');
+    return _imageCacheInFlight;
+  }
 
-    let cached = 0;
-    let failed = 0;
-    let skipped = 0;
+  if (now - _imageCacheLastRun < IMAGE_CACHE_MIN_INTERVAL_MS) {
+    console.info('[proactiveImageCache] Skipping user image cache - ran recently');
+    return { cached: 0, failed: 0, skipped: 0 };
+  }
 
-    // Cache images from profile-avatars bucket (flat structure)
-    const { data: files, error: listErr } = await api.storage
-      .from("profile-avatars")
-      .list("", { limit: 1000 });
+  _imageCacheLastRun = now;
+  _imageCacheInFlight = (async () => {
+    console.log("[proactiveImageCache] Starting user profile image cache...");
+    try {
+      const profiles = await getTable("profiles");
+      if (!profiles?.length) {
+        console.log("[proactiveImageCache] No profiles found to cache");
+        return { cached: 0, failed: 0, skipped: 0 };
+      }
 
-    if (listErr) {
-      console.warn("[proactiveImageCache] Failed to list profile-avatars:", listErr);
-      return { cached: 0, failed: profiles.length, skipped: 0 };
-    }
+      // List profile-avatars once
+      const { data: files, error: listErr } = await api.storage
+        .from("profile-avatars")
+        .list("", { limit: 1000 });
 
-    if (!files?.length) {
-      console.log("[proactiveImageCache] No files in profile-avatars bucket");
-      return { cached: 0, failed: 0, skipped: profiles.length };
-    }
+      if (listErr) {
+        console.warn("[proactiveImageCache] Failed to list profile-avatars:", listErr);
+        return { cached: 0, failed: profiles.length, skipped: 0 };
+      }
 
-    // Filter for image files
-    const imageFiles = files.filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
+      const imageFiles = (files || []).filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
 
-    for (const profile of profiles) {
-      try {
-        // Find images matching this user ID (e.g., "39.jpg", "42.png")
-        const userImages = imageFiles.filter((f) => {
-          const nameWithoutExt = f.name.replace(/\.(jpg|jpeg|png)$/i, "");
-          return nameWithoutExt === String(profile.id);
-        });
+      let cached = 0;
+      let failed = 0;
+      let skipped = 0;
 
-        if (!userImages.length) {
-          // Try worker-uploads bucket if user is a worker
-          if (profile.worker_id) {
-            const workerId = profile.worker_id;
-            const workerPath = `workers/${workerId}/profile-picture`;
-            
-            const { data: workerFiles } = await api.storage
-              .from("worker-uploads")
-              .list(workerPath);
+      const tasks = profiles.map((profile) => async () => {
+        try {
+          const userImages = imageFiles.filter((f) => {
+            const nameWithoutExt = f.name.replace(/\.(jpg|jpeg|png)$/i, "");
+            return nameWithoutExt === String(profile.id);
+          });
 
-            if (workerFiles?.length) {
-              const workerImages = workerFiles.filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
-              
-              for (const file of workerImages) {
-                const fullPath = `${workerPath}/${file.name}`;
-                const blob = await downloadImageBlob("worker-uploads", fullPath);
-                
-                if (blob) {
-                  await imageCache.cacheImage("worker-uploads", fullPath, blob, profile.id, {
-                    source: "worker-uploads",
-                    workerId
-                  });
-                  cached++;
-                } else {
-                  failed++;
+          if (!userImages.length) {
+            if (profile.worker_id) {
+              const workerId = profile.worker_id;
+              const workerPath = `workers/${workerId}/profile-picture`;
+              const { data: workerFiles } = await api.storage.from("worker-uploads").list(workerPath);
+              if (workerFiles?.length) {
+                const workerImages = workerFiles.filter((f) => /\.(jpg|jpeg|png)$/i.test(f.name));
+                for (const file of workerImages) {
+                  const fullPath = `${workerPath}/${file.name}`;
+                  const already = await imageCache.isImageCached('worker-uploads', fullPath);
+                  if (already) continue;
+                  const blob = await downloadImageBlob("worker-uploads", fullPath);
+                  if (blob) {
+                    await imageCache.cacheImage("worker-uploads", fullPath, blob, profile.id, { source: "worker-uploads", workerId });
+                    cached++;
+                  } else {
+                    failed++;
+                  }
                 }
+              } else {
+                skipped++;
               }
             } else {
               skipped++;
             }
-          } else {
-            skipped++;
+            return;
           }
-          continue;
-        }
 
-        // Cache images from profile-avatars
-        for (const file of userImages) {
-          const blob = await downloadImageBlob("profile-avatars", file.name);
-          
-          if (blob) {
-            await imageCache.cacheImage("profile-avatars", file.name, blob, profile.id, {
-              source: "profile-avatars"
-            });
-            cached++;
-          } else {
-            failed++;
+          for (const file of userImages) {
+            const already = await imageCache.isImageCached('profile-avatars', file.name);
+            if (already) continue;
+            const blob = await downloadImageBlob("profile-avatars", file.name);
+            if (blob) {
+              await imageCache.cacheImage("profile-avatars", file.name, blob, profile.id, { source: "profile-avatars" });
+              cached++;
+            } else {
+              failed++;
+            }
           }
+        } catch (err) {
+          console.warn(`[proactiveImageCache] Failed to cache images for user ${profile.id}:`, err);
+          failed++;
         }
-      } catch (err) {
-        console.warn(`[proactiveImageCache] Failed to cache images for user ${profile.id}:`, err);
-        failed++;
-      }
+      });
+
+      // Run with concurrency limit
+      await runWithConcurrency(tasks, 4);
+
+      console.log(`[proactiveImageCache] User images cached: ${cached} success, ${failed} failed, ${skipped} skipped`);
+      return { cached, failed, skipped };
+    } catch (err) {
+      console.error("[proactiveImageCache] cacheAllUserImages error:", err);
+      return { cached: 0, failed: 0, skipped: 0, error: err?.message || String(err) };
     }
+  })();
 
-    console.log(`[proactiveImageCache] User images cached: ${cached} success, ${failed} failed, ${skipped} skipped`);
-    return { cached, failed, skipped };
-  } catch (err) {
-    console.error("[proactiveImageCache] cacheAllUserImages error:", err);
-    return { cached: 0, failed: 0, skipped: 0, error: err.message };
-  }
+  // clear in-flight when done
+  _imageCacheInFlight.finally(() => { _imageCacheInFlight = null; });
+  return _imageCacheInFlight;
 }
 
 /**

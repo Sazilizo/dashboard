@@ -82,7 +82,9 @@ export async function queueMutation(method, path, data) {
   });
 
   const timestamp = Date.now();
-  const key = await mutationsStore.add({ method, path, payload: cleaned, timestamp });
+  // Normalize to canonical shape used by tableCache: { table, type, payload, timestamp }
+  const record = { table: path, type: method, payload: cleaned, timestamp };
+  const key = await mutationsStore.add(record);
   for (const f of fileFields) await filesStore.add({ mutationId: key, fieldName: f.fieldName, file: f.file });
   await tx.done;
 
@@ -314,7 +316,42 @@ export async function syncOfflineChanges(supabaseClient) {
       }
 
       try {
-        const { data, error } = await supabaseClient.from(mutation.path)[mutation.method](payload);
+        // Support two mutation shapes: { method, path, payload } (legacy offlineClient)
+        // and { type, table, payload } (tableCache.queueMutation). Normalize both.
+        const method = (mutation.method || mutation.type || '').toLowerCase();
+        const path = mutation.path || mutation.table;
+
+        let res;
+        if (method === 'update') {
+          // For updates, remove id from payload and apply .eq('id', id)
+          const id = payload.id ?? payload?.id;
+          const dataToUpdate = { ...payload };
+          if (dataToUpdate && dataToUpdate.id) delete dataToUpdate.id;
+          if (id == null) {
+            console.warn('[offlineClient] skipping update mutation without id', mutation);
+            continue;
+          }
+          res = await supabaseClient.from(path).update(dataToUpdate).eq('id', id);
+        } else if (method === 'delete') {
+          const id = payload.id ?? payload?.id;
+          if (id == null) {
+            console.warn('[offlineClient] skipping delete mutation without id', mutation);
+            continue;
+          }
+          res = await supabaseClient.from(path).delete().eq('id', id);
+        } else if (method === 'insert' || method === 'upsert') {
+          // insert/upsert accept the payload directly
+          res = await supabaseClient.from(path)[method](payload);
+        } else {
+          // Fallback: try to call the method if present, else attempt insert
+          if (method && typeof supabaseClient.from(path)[method] === 'function') {
+            res = await supabaseClient.from(path)[method](payload);
+          } else {
+            console.warn('[offlineClient] unknown mutation method, attempting insert fallback', method, mutation);
+            res = await supabaseClient.from(path).insert(payload);
+          }
+        }
+        const { data, error } = res || {};
         if (!error) {
           // Remove mutation and associated files
           await deleteFilesForMutation(mutation.id);

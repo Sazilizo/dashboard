@@ -9,9 +9,16 @@ export default function useOnlineStatus() {
   const [lastChanged, setLastChanged] = useState(Date.now());
   const isChecking = useRef(false);
   const checkCount = useRef(0);
+  const lastHiddenAt = useRef(null);
+  const lastCheckedAt = useRef(0);
 
   // Check actual internet connectivity by trying to reach a reliable endpoint
   const checkRealConnectivity = async () => {
+    // Rate-limit checks to avoid rapid-fire verifications (e.g. many visibility events)
+    const now = Date.now();
+    if (now - lastCheckedAt.current < 3000) return; // 3s cooldown
+    lastCheckedAt.current = now;
+
     if (isChecking.current) return;
     
     isChecking.current = true;
@@ -82,10 +89,29 @@ export default function useOnlineStatus() {
 
     // Visibility change - check connectivity when user returns to tab
     function handleVisibilityChange() {
-      if (!document.hidden) {
-        console.log('[useOnlineStatus] Tab visible - checking connectivity');
-        checkRealConnectivity();
+      if (document.hidden) {
+        // record when the tab was hidden
+        lastHiddenAt.current = Date.now();
+        return;
       }
+
+      // only check when the tab becomes visible if it was hidden long enough
+      // or if the browser reports offline (we may have missed events)
+      const now = Date.now();
+      const hiddenAt = lastHiddenAt.current || 0;
+      const hiddenDuration = now - hiddenAt;
+
+      const MIN_HIDDEN_MS = 5000; // 5 seconds
+      if (hiddenAt === 0 || hiddenDuration < MIN_HIDDEN_MS) {
+        // Skip quick visibility toggles to avoid noisy background refreshes
+        console.log('[useOnlineStatus] Tab visible again (brief) - skipping connectivity check');
+        return;
+      }
+
+      console.log('[useOnlineStatus] Tab visible - checking connectivity');
+      checkRealConnectivity();
+      lastHiddenAt.current = null;
+      
     }
 
     window.addEventListener('online', handleOnline);

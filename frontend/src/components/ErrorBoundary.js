@@ -48,7 +48,19 @@ export default function ErrorBoundary({ error: propError }) {
         )}
 
         <div className="error-actions">
-          <button className="btn btn-primary" onClick={() => window.location.reload()}>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              // Prefer a soft refresh to avoid losing in-memory state
+              if (typeof window.refreshCache === 'function') {
+                console.log('[ErrorBoundary] Triggering soft refresh via window.refreshCache()');
+                try { window.refreshCache(); } catch (e) { console.warn('soft refresh failed', e); }
+              } else {
+                // Fallback to full reload only when no soft-refresh available
+                window.location.reload();
+              }
+            }}
+          >
             Reload Page
           </button>
           <button className="btn btn-secondary" onClick={() => window.history.back()}>

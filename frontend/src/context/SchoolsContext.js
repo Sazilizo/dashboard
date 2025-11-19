@@ -71,7 +71,7 @@ export function SchoolsProvider({ children }) {
   const lastFetchTime = React.useRef(0);
   const FETCH_DEBOUNCE_MS = 10000; // 10 seconds debounce
 
-  const refreshSchools = async (forceRefresh = false) => {
+  const refreshSchools = async (forceRefresh = false, skipLoading = false) => {
     const now = Date.now();
     
     // Debounce rapid refreshes unless forced
@@ -80,7 +80,7 @@ export function SchoolsProvider({ children }) {
       return;
     }
 
-    console.log('[SchoolsContext] Starting school refresh, isOnline:', isOnline);
+    console.log('[SchoolsContext] Starting school refresh, isOnline:', isOnline, 'skipLoading:', skipLoading);
 
     // CRITICAL: ALWAYS load cache first and set it immediately
     let cached = [];
@@ -91,11 +91,11 @@ export function SchoolsProvider({ children }) {
       if (cached && cached.length > 0) {
         console.log('[SchoolsContext] Setting schools from cache immediately');
         setSchools(cached);
-        setLoading(false);
+        if (!skipLoading) setLoading(false);
         setError(null); // Clear any previous errors
       } else {
         console.warn('[SchoolsContext] No cached schools found - IndexedDB may be empty');
-        setLoading(false); // Still stop loading even if cache is empty
+        if (!skipLoading) setLoading(false); // Still stop loading even if cache is empty
       }
     } catch (cacheErr) {
       console.error('[SchoolsContext] Critical: Failed to load from cache:', cacheErr);
@@ -154,6 +154,8 @@ export function SchoolsProvider({ children }) {
       setError(null);
       lastFetchTime.current = now;
 
+      if (!skipLoading) setLoading(false);
+
       // Cache for offline use
       try {
         await cacheSchoolsOffline(schoolsData);
@@ -175,7 +177,8 @@ export function SchoolsProvider({ children }) {
   // Initial load - ALWAYS load on mount
   useEffect(() => {
     console.log('[SchoolsContext] Initial mount - loading schools from cache/API');
-    refreshSchools(true);
+    // Initial load should show loading UI
+    refreshSchools(true, false);
   }, []);
 
   // Don't refresh on filter changes - filters consume schools, not trigger refresh
@@ -189,15 +192,16 @@ export function SchoolsProvider({ children }) {
   useEffect(() => {
     if (isOnline) {
       console.log('[SchoolsContext] Back online - refreshing schools from API');
-      refreshSchools(true);
+      // background refresh to avoid disrupting user's current view
+      refreshSchools(true, true);
     }
   }, [isOnline]);
 
   // Listen for connectivity restored event
   useEffect(() => {
     const handleConnectivityRestored = () => {
-      console.log('[SchoolsContext] Connectivity restored - refreshing schools');
-      refreshSchools(true);
+      console.log('[SchoolsContext] Connectivity restored - refreshing schools (background)');
+      refreshSchools(true, true);
     };
 
     window.addEventListener('connectivity-restored', handleConnectivityRestored);

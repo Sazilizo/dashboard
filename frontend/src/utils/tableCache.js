@@ -403,6 +403,62 @@ export async function queueMutation(table, type, payload) {
   const fileFields = [];
   const cleanedPayload = Array.isArray(payload) ? [...payload] : { ...payload };
 
+  // Normalize common field aliases and build required fields for specific tables
+  try {
+    if (table === 'students' && cleanedPayload) {
+      // If the app sometimes uses studentId or student_id, map to id
+      if (cleanedPayload.studentId && !cleanedPayload.id) {
+        cleanedPayload.id = cleanedPayload.studentId;
+        delete cleanedPayload.studentId;
+      }
+      if (cleanedPayload.student_id && !cleanedPayload.id) {
+        cleanedPayload.id = cleanedPayload.student_id;
+        delete cleanedPayload.student_id;
+      }
+
+      // Build full_name when first_name/last_name present
+      if (!cleanedPayload.full_name) {
+        const fn = (cleanedPayload.first_name || cleanedPayload.firstName || '').trim();
+        const ln = (cleanedPayload.last_name || cleanedPayload.lastName || '').trim();
+        const combined = `${fn} ${ln}`.trim();
+        if (combined) cleanedPayload.full_name = combined;
+      }
+    }
+
+    if (table === 'academic_session_participants' && cleanedPayload) {
+      // Map known aliases
+      if (cleanedPayload.studentId && !cleanedPayload.student_id) {
+        cleanedPayload.student_id = cleanedPayload.studentId;
+        delete cleanedPayload.studentId;
+      }
+      if (cleanedPayload.sessionId && !cleanedPayload.session_id) {
+        cleanedPayload.session_id = cleanedPayload.sessionId;
+        delete cleanedPayload.sessionId;
+      }
+
+      // Deduplicate: if an identical participant already exists, convert insert -> update
+      try {
+        if (memoryCache.has(table)) {
+          const rows = memoryCache.get(table) || [];
+          const sid = cleanedPayload.session_id || cleanedPayload.sessionId;
+          const stud = cleanedPayload.student_id || cleanedPayload.studentId;
+          if (sid && stud) {
+            const existing = rows.find((r) => (r.session_id === sid || r.sessionId === sid) && (r.student_id === stud || r.studentId === stud));
+            if (existing) {
+              // switch to update targeting the existing id
+              type = 'update';
+              cleanedPayload.id = existing.id;
+            }
+          }
+        }
+      } catch (e) {
+        // ignore dedupe failures
+      }
+    }
+  } catch (e) {
+    console.warn('[tableCache] queueMutation normalization failed:', e);
+  }
+
   Object.entries(payload || {}).forEach(([key, value]) => {
     if (value instanceof Blob || value instanceof File) {
       cleanedPayload[key] = { __file_pending: true };
@@ -463,6 +519,44 @@ export async function getMutations() {
   const values = await tx.store.getAll();
   const keys = await tx.store.getAllKeys();
   return values.map((v, i) => ({ id: keys[i], ...v }));
+}
+
+export async function getMutation(id) {
+  const db = await getDB();
+  const tx = db.transaction('mutations');
+  const val = await tx.store.get(id);
+  if (!val) return null;
+  return { id, ...val };
+}
+
+export async function updateMutation(id, changes = {}) {
+  const db = await getDB();
+  const tx = db.transaction('mutations', 'readwrite');
+  const existing = await tx.store.get(id);
+  if (!existing) {
+    await tx.done;
+    return null;
+  }
+  const merged = { ...existing, ...changes };
+  try {
+    await tx.store.put(merged, id);
+  } catch (e) {
+    // some stores are keyPath-based; fall back to put without explicit key
+    await tx.store.put(merged);
+  }
+  await tx.done;
+  return { id, ...merged };
+}
+
+export async function deleteMutation(id) {
+  const db = await getDB();
+  const tx = db.transaction('mutations', 'readwrite');
+  try {
+    await tx.store.delete(id);
+  } catch (e) {
+    console.warn('[tableCache] deleteMutation failed', e);
+  }
+  await tx.done;
 }
 
 export async function getFiles() {
@@ -549,6 +643,82 @@ export async function syncMutations() {
       if (["insert", "INSERT"].includes(m.type)) {
         let payload = replaceTempIds(m.payload || {});
         if (payload?.id?.startsWith("__tmp_")) delete payload.id;
+        // Best-effort server-side duplicate detection to avoid duplicate inserts
+        try {
+          if (m.table === 'students') {
+            const fn = (payload.full_name || '').trim();
+            const grade = payload.grade;
+            const school = payload.school_id || payload.schoolId || null;
+            if (fn && grade) {
+              const q = api.from('students').select('id').eq('full_name', fn).eq('grade', grade);
+              if (school) q.eq('school_id', school);
+              const resp = await q.limit(1).maybeSingle();
+              const existingId = resp?.data?.id || (Array.isArray(resp?.data) && resp.data[0]?.id) || null;
+              if (existingId) {
+                // Convert this insert into an update against the existing record
+                payload.id = existingId;
+                // perform update instead of insert
+                try {
+                  for (const fe of fileEntries) {
+                    try {
+                      const url = await UploadFileHelper(fe.file, m.table, existingId);
+                      payload[fe.fieldName] = url;
+                    } catch (err) {
+                      console.error('File upload failed during dedupe-update:', err);
+                    }
+                  }
+                  await api.from(m.table).update(payload).eq('id', existingId);
+                  clearTimeout(timeoutId);
+
+                  const tableCache = await getTable(m.table);
+                  const updated = (tableCache || []).map((r) => (r.id === existingId ? { ...r, ...payload } : r));
+                  await cacheTable(m.table, updated);
+                  await deleteFilesForMutation(m.id);
+                  succeeded.push(m.id);
+                  console.log(`[tableCache] ✓ Converted insert -> update for existing ${m.table} ${existingId}`);
+                  continue; // move to next mutation
+                } catch (uerr) {
+                  console.warn('[tableCache] dedupe update failed, will try insert:', uerr?.message || uerr);
+                  // fall-through to attempt insert
+                }
+              }
+            }
+          }
+
+          if (m.table === 'workers' && payload && payload.id_number) {
+            const resp = await api.from('workers').select('id').eq('id_number', payload.id_number).limit(1).maybeSingle();
+            const existingId = resp?.data?.id || (Array.isArray(resp?.data) && resp.data[0]?.id) || null;
+            if (existingId) {
+              payload.id = existingId;
+              try {
+                for (const fe of fileEntries) {
+                  try {
+                    const url = await UploadFileHelper(fe.file, m.table, existingId);
+                    payload[fe.fieldName] = url;
+                  } catch (err) {
+                    console.error('File upload failed during dedupe-update:', err);
+                  }
+                }
+                await api.from(m.table).update(payload).eq('id', existingId);
+                clearTimeout(timeoutId);
+
+                const tableCache = await getTable(m.table);
+                const updated = (tableCache || []).map((r) => (r.id === existingId ? { ...r, ...payload } : r));
+                await cacheTable(m.table, updated);
+                await deleteFilesForMutation(m.id);
+                succeeded.push(m.id);
+                console.log(`[tableCache] ✓ Converted worker insert -> update for existing worker ${existingId}`);
+                continue; // move to next mutation
+              } catch (uerr) {
+                console.warn('[tableCache] dedupe worker update failed, will try insert:', uerr?.message || uerr);
+                // fall-through
+              }
+            }
+          }
+        } catch (dedupeErr) {
+          console.warn('[tableCache] dedupe check failed:', dedupeErr?.message || dedupeErr);
+          // proceed with insert attempt
+        }
 
         let insertQuery = api.from(m.table).insert(payload);
         
@@ -648,6 +818,21 @@ export async function syncMutations() {
       } else {
         console.error(`[tableCache] ✗ Sync error for mutation ${m.id}:`, err.message);
         failed.push({ id: m.id, reason: err.message });
+        // Persist failure metadata on the mutation record so UI can show retries/diagnostics
+        try {
+          const dbu = await getDB();
+          const txu = dbu.transaction('mutations', 'readwrite');
+          const existing = await txu.store.get(m.id);
+          if (existing) {
+            existing.attempts = (existing.attempts || 0) + 1;
+            existing.lastError = String(err.message || err);
+            existing.lastAttempt = Date.now();
+            await txu.store.put(existing, m.id);
+          }
+          await txu.done;
+        } catch (uerr) {
+          console.warn('[tableCache] failed to persist mutation failure metadata', uerr);
+        }
       }
       
       notifyChannel({
@@ -655,6 +840,7 @@ export async function syncMutations() {
         table: m.table,
         mutationKey: m.id,
         error: String(err),
+        attempts: (m.attempts || 0) + 1,
       });
       // don't throw — continue other mutations
     }
@@ -748,22 +934,44 @@ async function checkRealConnectivity() {
   if (typeof navigator === 'undefined' || !navigator.onLine) {
     return false;
   }
-
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
 
-    await fetch('https://www.google.com/favicon.ico', {
-      method: 'HEAD',
-      mode: 'no-cors',
-      cache: 'no-cache',
-      signal: controller.signal
-    });
+    // First try a same-origin lightweight fetch (more reliable behind captive portals)
+    const sameOriginUrl = (typeof window !== 'undefined' && window.location && window.location.origin)
+      ? `${window.location.origin}/favicon.ico`
+      : null;
 
-    clearTimeout(timeoutId);
-    return true; // Successfully connected
+    if (sameOriginUrl) {
+      try {
+        await fetch(sameOriginUrl, { method: 'GET', cache: 'no-cache', signal: controller.signal });
+        clearTimeout(timeoutId);
+        return true;
+      } catch (e) {
+        // ignore and fall back to external check
+        console.warn('[tableCache] same-origin connectivity check failed, falling back to external check:', e?.message || e);
+      }
+    }
+
+    // Fallback: external resource (may be blocked in some networks)
+    try {
+      await fetch('https://www.google.com/favicon.ico', {
+        method: 'HEAD',
+        mode: 'no-cors',
+        cache: 'no-cache',
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      return true; // Successfully connected
+    } catch (err) {
+      clearTimeout(timeoutId);
+      console.warn('[tableCache] external connectivity check failed:', err?.message || err);
+      return false;
+    }
+
   } catch (err) {
-    console.warn('[tableCache] Real connectivity check failed:', err.message);
+    console.warn('[tableCache] Real connectivity check failed (outer):', err?.message || err);
     return false; // No real internet
   }
 }

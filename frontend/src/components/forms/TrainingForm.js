@@ -65,6 +65,26 @@ export default function TrainingForm() {
 
   return (
     <div className="p-6">
+      {process.env.NODE_ENV === 'development' && typeof window !== 'undefined' && (
+        <div style={{ marginBottom: 8 }}>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={async () => {
+              try {
+                if (typeof window.softRefresh === 'function') await window.softRefresh();
+                else if (typeof window.refreshCache === 'function') await window.refreshCache();
+                else window.location.reload();
+              } catch (err) {
+                console.warn('softRefresh failed', err);
+                try { window.location.reload(); } catch (e) { /* ignore */ }
+              }
+            }}
+          >
+            Debug: Soft Refresh Cache
+          </button>
+        </div>
+      )}
       <h1 className="text-2xl font-bold mb-6">
         {id ? "Log Training for Worker" : "Create Worker Trainings (Bulk)"}
       </h1>

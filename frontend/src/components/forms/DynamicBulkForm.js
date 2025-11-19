@@ -115,6 +115,8 @@ export default function DynamicBulkFormRHF({
   const [schema, setSchema] = useState([]);
   const [formSchema, setFormSchema] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [draftAvailable, setDraftAvailable] = useState(false);
+  const [draftValues, setDraftValues] = useState(null);
 
   // ---------------------- BUILD DEFAULTS & VALIDATION ----------------------
   const buildDefaultsAndSchema = (fields) => {
@@ -188,6 +190,19 @@ export default function DynamicBulkFormRHF({
               const fields = schemaData?.schema?.fields || [];
               setSchema(fields);
               const [defaults, yupSchema] = buildDefaultsAndSchema(fields);
+              // If an autosaved draft exists, mark it available but don't auto-apply
+              try {
+                const userIdForAutosave = (typeof window !== 'undefined' && window.__USER_ID__) || (typeof window !== 'undefined' && window.localStorage && localStorage.getItem('user_id')) || 'anon';
+                const autosaveKeyLocal = `form-autosave:${schema_name}:${userIdForAutosave}:${typeof window !== 'undefined' ? window.location.pathname : 'unknown'}`;
+                const saved = typeof sessionStorage !== 'undefined' ? JSON.parse(sessionStorage.getItem(autosaveKeyLocal) || 'null') : null;
+                if (saved && saved.values) {
+                  setDraftAvailable(true);
+                  setDraftValues(saved.values);
+                }
+              } catch (e) {
+                // ignore parse errors
+              }
+              // Initialize form with defaults/preset (do not merge draft automatically)
               reset({ ...defaults, ...presetFields });
               setFormSchema(yupSchema);
               console.log('[DynamicBulkForm] Using cached schema for', schema_name);
@@ -210,6 +225,17 @@ export default function DynamicBulkFormRHF({
 
         setSchema(fields);
         const [defaults, yupSchema] = buildDefaultsAndSchema(fields);
+        try {
+          const userIdForAutosave = (typeof window !== 'undefined' && window.__USER_ID__) || (typeof window !== 'undefined' && window.localStorage && localStorage.getItem('user_id')) || 'anon';
+          const autosaveKeyLocal = `form-autosave:${schema_name}:${userIdForAutosave}:${typeof window !== 'undefined' ? window.location.pathname : 'unknown'}`;
+          const saved = typeof sessionStorage !== 'undefined' ? JSON.parse(sessionStorage.getItem(autosaveKeyLocal) || 'null') : null;
+          if (saved && saved.values) {
+            setDraftAvailable(true);
+            setDraftValues(saved.values);
+          }
+        } catch (e) {
+          // ignore parse errors
+        }
         reset({ ...defaults, ...presetFields });
         setFormSchema(yupSchema);
 
@@ -239,6 +265,17 @@ export default function DynamicBulkFormRHF({
             const fields = schemaData?.schema?.fields || [];
             setSchema(fields);
             const [defaults, yupSchema] = buildDefaultsAndSchema(fields);
+            try {
+              const userIdForAutosave = (typeof window !== 'undefined' && window.__USER_ID__) || (typeof window !== 'undefined' && window.localStorage && localStorage.getItem('user_id')) || 'anon';
+              const autosaveKeyLocal = `form-autosave:${schema_name}:${userIdForAutosave}:${typeof window !== 'undefined' ? window.location.pathname : 'unknown'}`;
+              const saved = typeof sessionStorage !== 'undefined' ? JSON.parse(sessionStorage.getItem(autosaveKeyLocal) || 'null') : null;
+              if (saved && saved.values) {
+                setDraftAvailable(true);
+                setDraftValues(saved.values);
+              }
+            } catch (e) {
+              // ignore parse errors
+            }
             reset({ ...defaults, ...presetFields });
             setFormSchema(yupSchema);
             console.log('[DynamicBulkForm] Recovered from cache after error');
@@ -265,6 +302,35 @@ export default function DynamicBulkFormRHF({
   } = useForm({
     resolver: formSchema ? yupResolver(formSchema) : undefined,
   });
+
+  // ---------------------- Autosave (sessionStorage) ----------------------
+  const AUTOSAVE_PREFIX = `form-autosave:${schema_name}`;
+  const userIdForAutosave = (typeof window !== 'undefined' && window.__USER_ID__) || (typeof window !== 'undefined' && window.localStorage && localStorage.getItem('user_id')) || 'anon';
+  const autosaveKey = `${AUTOSAVE_PREFIX}:${userIdForAutosave}:${typeof window !== 'undefined' ? window.location.pathname : 'unknown'}`;
+
+  // Debounced save
+  useEffect(() => {
+    let timeout = null;
+    const handler = () => {
+      try {
+        const values = getValues();
+        sessionStorage.setItem(autosaveKey, JSON.stringify({ ts: Date.now(), values }));
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    // Subscribe to form changes via watch
+    const subscription = watch((value) => {
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(handler, 800); // 800ms debounce
+    });
+
+    return () => {
+      if (timeout) clearTimeout(timeout);
+      if (typeof subscription === 'function') subscription();
+    };
+  }, [watch, getValues, autosaveKey]);
 
   const watchAll = useWatch({ control });
   const selectedSchool = watchAll.school_id;
@@ -1055,8 +1121,38 @@ export default function DynamicBulkFormRHF({
     }
   };
 
+  // Handlers for draft restore / dismiss
+  const restoreDraft = () => {
+    try {
+      const [defaults] = buildDefaultsAndSchema(schema || []);
+      const merged = { ...defaults, ...presetFields, ...(draftValues || {}) };
+      reset(merged);
+      setDraftAvailable(false);
+      setDraftValues(null);
+    } catch (err) {
+      console.warn('[DynamicBulkForm] restoreDraft failed', err);
+    }
+  };
+
+  const dismissDraft = () => {
+    try {
+      if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(autosaveKey);
+    } catch (err) { /* ignore */ }
+    setDraftAvailable(false);
+    setDraftValues(null);
+  };
+
   return (
     <form onSubmit={rhfSubmit(submitForm)} className="space-y-4">
+      {draftAvailable && (
+        <div className="draft-banner bg-yellow-100 border-l-4 border-yellow-400 p-3 mb-3 flex items-center justify-between">
+          <div className="text-sm text-yellow-800">Recovered unsaved draft available for this form.</div>
+          <div className="flex gap-2">
+            <button type="button" className="btn btn-sm btn-primary" onClick={restoreDraft}>Restore Draft</button>
+            <button type="button" className="btn btn-sm btn-secondary" onClick={dismissDraft}>Dismiss</button>
+          </div>
+        </div>
+      )}
       {schema.map(renderField)}
       <button
         type="submit"

@@ -39,8 +39,12 @@ export default function useDashboardData(schoolIds = []) {
     }
 
     lastFetchRef.current = now;
-    setLoading(true);
     setError(null);
+    // Only toggle the loading indicator for user-initiated or initial fetches.
+    // When called as a background refresh (e.g. on connectivity restore), callers
+    // can pass `skipLoading=true` to avoid showing the global loading UI.
+    const skipLoading = arguments.length > 1 ? arguments[1] === true : false;
+    if (!skipLoading) setLoading(true);
 
     try {
       // Load cached data first for instant display
@@ -149,7 +153,7 @@ export default function useDashboardData(schoolIds = []) {
 
       if (isMounted.current) {
         setData(freshData);
-        setLoading(false);
+        if (!skipLoading) setLoading(false);
       }
 
       console.log('[useDashboardData] ✅ Dashboard data loaded:', {
@@ -184,7 +188,8 @@ export default function useDashboardData(schoolIds = []) {
   useEffect(() => {
     if (isOnline) {
       console.log('[useDashboardData] Back online - refreshing');
-      fetchDashboardData(true);
+      // Refresh in background so we don't interrupt the user's current work
+      fetchDashboardData(true, true);
     }
   }, [isOnline]);
 
@@ -193,7 +198,8 @@ export default function useDashboardData(schoolIds = []) {
     const handleConnectivityRestored = () => {
       console.log('[useDashboardData] Connectivity restored');
       invalidateCache('dashboard');
-      fetchDashboardData(true);
+      // Background refresh on connectivity restore to avoid flipping global `loading`
+      fetchDashboardData(true, true);
     };
 
     window.addEventListener('connectivity-restored', handleConnectivityRestored);

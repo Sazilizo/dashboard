@@ -1059,8 +1059,12 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
       
       try {
         // Trigger global cache refresh if available
-        if (typeof window !== 'undefined' && typeof window.refreshCache === 'function') {
-          await window.refreshCache();
+        if (typeof window !== 'undefined') {
+          if (typeof window.softRefresh === 'function') {
+            await window.softRefresh();
+          } else if (typeof window.refreshCache === 'function') {
+            await window.refreshCache();
+          }
           setMessage(m => `${m}\n✅ Cache refreshed - retrying...`);
           // Retry loading after cache refresh
           setTimeout(() => loadFaceReferences(0, true), 2000);

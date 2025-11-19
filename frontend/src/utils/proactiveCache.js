@@ -1,5 +1,5 @@
 import api from "../api/client";
-import { cacheTable } from "./tableCache";
+import { cacheTable, getTable } from "./tableCache";
 import { cacheAllUserImages, cacheAllStudentImages } from "./proactiveImageCache";
 import { getUserContext, applyRLSFiltering, getUserCacheKey, canAccessTable } from "./rlsCache";
 
@@ -9,8 +9,29 @@ import { getUserContext, applyRLSFiltering, getUserCacheKey, canAccessTable } fr
  * 
  * @param {Object} user - Current authenticated user from AuthProvider
  */
+// Module-level guards to avoid running this heavy background job repeatedly
+let _proactiveInFlight = null;
+let _proactiveLastRun = 0;
+const PROACTIVE_MIN_INTERVAL_MS = 30 * 1000; // 30s debounce by default
+
 export async function cacheFormSchemasIfOnline(user = null) {
-  try {
+  // If a run is already in-flight, return the same promise so callers coalesce
+  if (_proactiveInFlight) {
+    console.info('[proactiveCache] a refresh is already in-flight - coalescing call');
+    return _proactiveInFlight;
+  }
+
+  // If we ran recently, skip (debounce)
+  const now = Date.now();
+  if (now - _proactiveLastRun < PROACTIVE_MIN_INTERVAL_MS) {
+    console.info('[proactiveCache] Skipping refresh - last run was recent');
+    return Promise.resolve();
+  }
+
+  // Mark as in-flight
+  _proactiveLastRun = now;
+  _proactiveInFlight = (async () => {
+    try {
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       console.info("[proactiveCache] navigator.onLine=false, skipping cache refresh");
       return;
@@ -51,6 +72,49 @@ export async function cacheFormSchemasIfOnline(user = null) {
       }
 
       try {
+        // Attempt incremental fetch using updated_at if available in cached rows
+        const cachedRows = await getTable(table);
+        let lastUpdated = 0;
+        if (Array.isArray(cachedRows) && cachedRows.length) {
+          for (const r of cachedRows) {
+            const ts = r?.updated_at ? new Date(r.updated_at).getTime() : 0;
+            if (ts > lastUpdated) lastUpdated = ts;
+          }
+        }
+
+        // If we have a lastUpdated timestamp, attempt delta fetch
+        let result;
+        if (lastUpdated) {
+          try {
+            const iso = new Date(lastUpdated).toISOString();
+            // Try server-side filtering on updated_at (best-effort)
+            result = await api.from(table).select("*").gt('updated_at', iso);
+          } catch (deltaErr) {
+            // If server doesn't support this filter or error occurs, fall back
+            result = null;
+          }
+
+          // If delta fetch returned rows successfully, merge them with cache
+          if (result && Array.isArray(result.data)) {
+            const newRows = result.data || [];
+            if (newRows.length === 0) {
+              console.info(`[proactiveCache] No changes for ${table} since ${new Date(lastUpdated).toISOString()}`);
+              // Still update cache timestamp via cacheTable to keep consistency
+              await cacheTable(table, cachedRows || []);
+              continue;
+            }
+
+            // Merge by id
+            const map = new Map((cachedRows || []).map((r) => [String(r.id), r]));
+            for (const nr of newRows) map.set(String(nr.id), nr);
+            const merged = Array.from(map.values());
+            await cacheTable(table, merged);
+            console.info(`[proactiveCache] ✓ merged ${newRows.length} updated rows into ${table}`);
+            continue;
+          }
+        }
+
+        // Fallback to full fetch when no delta info available
         // Use AbortController for timeout
         const controller = new AbortController();
         const timeoutMs = 5000;
@@ -61,7 +125,7 @@ export async function cacheFormSchemasIfOnline(user = null) {
           const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
           try {
             query = query.abortSignal(controller.signal);
-            var result = await query;
+            result = await query;
           } finally {
             clearTimeout(timeoutId);
           }
@@ -71,7 +135,7 @@ export async function cacheFormSchemasIfOnline(user = null) {
           const timeoutPromise = new Promise((_, reject) => {
             setTimeout(() => reject(Object.assign(new Error('Timeout'), { name: 'AbortError' })), timeoutMs);
           });
-          var result = await Promise.race([resultPromise, timeoutPromise]);
+          result = await Promise.race([resultPromise, timeoutPromise]);
         }
         const { data, error } = result || {};
 
@@ -102,12 +166,19 @@ export async function cacheFormSchemasIfOnline(user = null) {
     }
 
     console.info("[proactiveCache] RLS-aware cache refresh complete");
-    
+
     // Cache profile images in background (don't block)
     cacheProfileImagesInBackground();
   } catch (err) {
     console.warn("[proactiveCache] unexpected error:", err);
+  } finally {
+    // Clear in-flight marker after a short grace window so callers that trigger
+    // immediately afterwards still observe the recent-run debounce above.
+    setTimeout(() => { _proactiveInFlight = null; }, 1000);
   }
+  })();
+
+  return _proactiveInFlight;
 }
 
 /**
