@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
 
     // Upsert into auth_tokens using service role (bypasses RLS)
     const payload = {
-      auth_uid: current_user_id,
+      user_id: current_user_id,
       profile_id: profileId,
       token,
       expires_at: expiresAt,
@@ -58,7 +58,7 @@ Deno.serve(async (req) => {
     try {
       const res = await supabaseAdmin
         .from('auth_tokens')
-        .upsert(payload, { onConflict: 'auth_uid' })
+        .upsert(payload, { onConflict: 'user_id' })
         .select();
       upserted = res.data;
       upsertError = res.error;
@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
       try {
         const res2 = await supabaseAdmin
           .from('auth_token')
-          .upsert(payload, { onConflict: 'auth_uid' })
+          .upsert(payload, { onConflict: 'user_id' })
           .select();
         upserted = res2.data;
         upsertError = res2.error;

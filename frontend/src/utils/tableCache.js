@@ -287,6 +287,26 @@ export async function cacheTable(name, rows) {
   }
 }
 
+/**
+ * Clear cached snapshots for specific tables (memory + 'tables' store) without resetting full DB.
+ * Useful when switching users to avoid leaking previous user's rows while keeping other offline state.
+ */
+export async function clearTableSnapshots(tableNames = []) {
+  try {
+    // Remove from memory cache first
+    for (const t of tableNames) memoryCache.delete(t);
+
+    const db = await getDB();
+    const tx = db.transaction('tables', 'readwrite');
+    for (const t of tableNames) {
+      try { await tx.store.delete(t); } catch (e) { /* ignore individual delete errors */ }
+    }
+    await tx.done;
+  } catch (err) {
+    console.warn('[offlineDB] clearTableSnapshots failed:', err);
+  }
+}
+
 /** Get cached table data (fast: memoryCache -> tables store) */
 export async function getTable(name) {
   if (memoryCache.has(name)) return memoryCache.get(name);

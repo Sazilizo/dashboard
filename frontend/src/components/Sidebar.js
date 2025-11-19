@@ -40,13 +40,13 @@ export default function Sidebar() {
   const roleName = extractRoleName(user?.profile?.roles);
 
   const isAdmin = roleName && (roleName.includes('admin') || roleName.includes('superuser'));
-  const isHeadTutor = roleName && (roleName === 'head_tutor' || roleName.includes('head') && roleName.includes('tutor') || roleName === 'headtutor');
-  const isHeadCoach = roleName && (roleName === 'head_coach' || roleName.includes('head') && roleName.includes('coach') || roleName === 'headcoach');
+  const isHeadTutor = roleName && (roleName === 'head tutor');
+  const isHeadCoach = roleName && (roleName === 'headcoach');
   const isTutor = roleName && roleName.includes('tutor') && !roleName.includes('head');
   const isCoach = roleName && roleName.includes('coach') && !roleName.includes('head');
 
   // Users who should NOT see worker/user management links:
-  const hideWorkersAndUsers = !(isAdmin || isHeadTutor || isHeadCoach || isTutor || isCoach);
+  const hideWorkersAndUsers = !(isAdmin || isHeadTutor || isHeadCoach);
 
   useEffect(()=>{
     console.log("user:", user);
@@ -76,7 +76,7 @@ export default function Sidebar() {
               if (item.alwaysShow) {
                 // render unconditionally
               } else {
-                // Hide Workers/Users for low-privilege users; allow head tutors/coaches/tutors/coaches/admins
+                // Hide Workers/Users for low-privilege users; allow head tutors/coaches/admins
                 if ((item.label.includes("Workers") || item.label.includes("Worker Trainings")) && hideWorkersAndUsers) {
                   return null;
                 }

@@ -14,8 +14,27 @@ export default function ProtectedRoute({ children, redirectIfAuthenticated = fal
   const { user, loading } = useAuth();
   const location = useLocation();
 
+  // New: show a nicer refreshing UX while auth provider refreshes user data
+  const { isRefreshing } = useAuth();
+
   // Show loading state while checking authentication
   if (loading) {
+    if (isRefreshing) {
+      return (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+          <div style={{ textAlign: 'center', color: '#444' }}>
+            <svg width="56" height="56" viewBox="0 0 50 50" aria-hidden>
+              <circle cx="25" cy="25" r="20" stroke="#e6e6e6" strokeWidth="5" fill="none" />
+              <path d="M45 25a20 20 0 0 1-20 20" stroke="#6366f1" strokeWidth="5" strokeLinecap="round" fill="none">
+                <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite" />
+              </path>
+            </svg>
+            <div style={{ marginTop: 12, fontSize: 16 }}>Refreshing account…</div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div style={{ 
         display: "flex", 
