@@ -5,30 +5,53 @@ import RenderIcons from "../icons/RenderIcons";
 import '../styles/sidebar.css'
 
 const navItems = [
-  {icon:"dashboard", to: "/dashboard", label: "Dashboard" },
-  {icon:"schools", to: "/dashboard/schools", label: "schools" },
-  {icon:"students", to: "/dashboard/students", label: "Students" },
-  {icon:"sessions", to: "/dashboard/sessions", label: "Sessions" },
-  {icon:"workers", to: "/dashboard/workers", label: "Workers" },
-  {icon:"trainings", to: "/dashboard/trainings/create", label: "Trainings" },
-  {icon:"meals", to: "/dashboard/meals/create", label: "Create Meal"},
-  {icon:"user", to: "/dashboard/workers/users", label: "Users"},
-  {icon: "settings", to: "/dashboard/settings", label: "Settings"}
-  // { to: "/dashboard/settings", label: "Settings" },
+  { icon: "dashboard", to: "/dashboard", label: "Dashboard" },
+  { icon: "schools", to: "/dashboard/schools", label: "Schools" },
+  { icon: "students", to: "/dashboard/students", label: "Students" },
+  { icon: "sessions", to: "/dashboard/sessions", label: "Sessions" },
+  { icon: "workers", to: "/dashboard/workers", label: "Workers" },
+  { icon: "trainings", to: "/dashboard/trainings/create", label: "Trainings" },
+  { icon: "meals", to: "/dashboard/meals/create", label: "Create Meal" },
+  { icon: "settings", to: "/dashboard/settings", label: "Settings", alwaysShow: true },
+  { icon: "user", to: "/dashboard/workers/users", label: "Users" },
 ];
 
 export default function Sidebar() {
   const [open, setOpen] = useState(false);
   const { user } = useAuth();
 
-  // Be defensive: role name may be missing (offline or synthesized), so normalize safely
-  const roleName = user?.profile?.roles?.name ? String(user.profile.roles.name).toLowerCase() : null;
-  const notPrivileged = roleName ? ["head tutor", "head coach"].includes(roleName) : false;
+  // Robust role detection: `roles` might be a string, an object with `name`, or an array
+  const extractRoleName = (roles) => {
+    if (!roles) return null;
+    if (typeof roles === 'string') return roles.toLowerCase();
+    if (Array.isArray(roles) && roles.length) {
+      const first = roles[0];
+      return typeof first === 'string' ? first.toLowerCase() : (first?.name ? String(first.name).toLowerCase() : null);
+    }
+    if (typeof roles === 'object') {
+      if (roles.name) return String(roles.name).toLowerCase();
+      // fallback: if roles has keys, return the first key
+      const keys = Object.keys(roles);
+      if (keys.length) return String(keys[0]).toLowerCase();
+    }
+    return null;
+  };
+
+  const roleName = extractRoleName(user?.profile?.roles);
+
+  const isAdmin = roleName && (roleName.includes('admin') || roleName.includes('superuser'));
+  const isHeadTutor = roleName && (roleName === 'head_tutor' || roleName.includes('head') && roleName.includes('tutor') || roleName === 'headtutor');
+  const isHeadCoach = roleName && (roleName === 'head_coach' || roleName.includes('head') && roleName.includes('coach') || roleName === 'headcoach');
+  const isTutor = roleName && roleName.includes('tutor') && !roleName.includes('head');
+  const isCoach = roleName && roleName.includes('coach') && !roleName.includes('head');
+
+  // Users who should NOT see worker/user management links:
+  const hideWorkersAndUsers = !(isAdmin || isHeadTutor || isHeadCoach || isTutor || isCoach);
 
   useEffect(()=>{
     console.log("user:", user);
-    console.log("roleName:", roleName, "notPrivileged:", notPrivileged);
-  },[user, roleName, notPrivileged])
+    console.log("roleName:", roleName, "hideWorkersAndUsers:", hideWorkersAndUsers);
+  },[user, roleName, hideWorkersAndUsers])
 
   return (
     <>
@@ -49,11 +72,17 @@ export default function Sidebar() {
           <ul style={{ listStyle: "none", padding: 0, width: '100%' }}>
             {navItems.map(item => {
 
-              if ((item.label.includes("Worker Trainings") || item.label.includes("Workers")) && notPrivileged) {
-                return null; 
-              }
-              if (item.label.includes("Users") && notPrivileged) {
-                return null; 
+              // Always show items explicitly flagged `alwaysShow` (e.g. Settings)
+              if (item.alwaysShow) {
+                // render unconditionally
+              } else {
+                // Hide Workers/Users for low-privilege users; allow head tutors/coaches/tutors/coaches/admins
+                if ((item.label.includes("Workers") || item.label.includes("Worker Trainings")) && hideWorkersAndUsers) {
+                  return null;
+                }
+                if (item.label.includes("Users") && hideWorkersAndUsers) {
+                  return null;
+                }
               }
 
               return (
