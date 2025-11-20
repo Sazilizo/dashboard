@@ -170,10 +170,17 @@ const SpecsRadarChart = ({ student, user, className }) => {
   }, [sessions, selectedYear, selectedMonths, selectedTerms]);
 
   // compute max for radius from the aggregated values (use data-driven max with a sensible minimum)
-  const maxVal = aggregatedData.length > 0 ? Math.max(10, ...aggregatedData.map((d) => (typeof d.A === 'number' ? d.A : 0))) : 10;
+  const maxVal = aggregatedData.length > 0 ? Math.max(10, ...aggregatedData.map((d) => (typeof d.A === 'number' ? d.A : Number(d.A) || 0))) : 10;
+
+  // Ensure outer radius in pixels based on container height so the radar polygon is visible
+  const outerRadiusPx = Math.max(80, Math.min(140, Math.round(containerHeight * 0.4)));
+
+  // Ensure the chart container has a sane pixel height so ResponsiveContainer can size itself.
+  // Some build setups may not include utility classes like `h-96`, so fall back to 360px.
+  const containerHeight = 360;
 
   return (
-    <div className={`${className} p-4 bg-white rounded-2xl shadow-md`}>
+    <div className={`${className} p-4 bg-white rounded-2xl shadow-md`} style={{ width: '100%', position: 'relative' }}>
       {/* Admin filter */}
       <div className="specs-filters">
 
@@ -215,14 +222,30 @@ const SpecsRadarChart = ({ student, user, className }) => {
 
       {/* Chart */}
       {aggregatedData.length > 0 ? (
-        <div className="specs-radar w-full h-96">
-          <div className="radar-wrapper" style={{ width: '100%', height: '100%' }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <RadarChart outerRadius="70%" data={aggregatedData}>
-                <PolarGrid />
+        <div className="specs-radar w-full" style={{ height: containerHeight, position: 'relative' }}>
+          <div className="radar-wrapper" style={{ width: '100%', height: '100%', position: 'relative', zIndex: 2, pointerEvents: 'auto' }}>
+            <ResponsiveContainer width="100%" height="100%" style={{ position: 'relative', zIndex: 2 }}>
+              <RadarChart
+                cx="50%"
+                cy="50%"
+                outerRadius={outerRadiusPx}
+                data={aggregatedData}
+                margin={{ top: 20, right: 20, left: 20, bottom: 20 }}
+              >
+                <PolarGrid stroke="#e6e6e6" strokeWidth={1} />
                 <PolarAngleAxis dataKey="subject" tick={{ fontSize: 12 }} tickFormatter={(t) => (typeof t === 'string' && t.length > 14 ? t.slice(0, 14) + '…' : t)} />
-                <PolarRadiusAxis angle={40} domain={[0, maxVal]} />
-                <Radar name="Specs" dataKey="A" stroke="#6D28D9" fill="#7C3AED" fillOpacity={0.6} />
+                <PolarRadiusAxis angle={40} domain={[0, maxVal]} tickFormatter={(v) => String(v)} />
+                <Radar
+                  name="Specs"
+                  dataKey="A"
+                  stroke="#3b1464"
+                  fill="#7C3AED"
+                  fillOpacity={0.85}
+                  strokeWidth={3}
+                  dot={{ r: 4, stroke: '#fff', strokeWidth: 1 }}
+                />
+                {/* Ensure the rendered SVG sits above surrounding elements */}
+                <defs />
                 <Legend verticalAlign="bottom" height={36} />
                 <Tooltip />
               </RadarChart>

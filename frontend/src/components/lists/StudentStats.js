@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import PieChartStats from "../charts/PieChart";
-import GradeDistributionBarChart from "../charts/DashboardSummary";
+import StackedStudentsGradeChart from "../charts/StackedStudentsGradeCharts";
 import StackedCategoryGradeChart from "../charts/StackedChart";
 import "../../styles/main.css";
  // Assuming you have styles for the charts
@@ -56,14 +56,7 @@ const StudentStats = ({ students, loading }) => {
         {/* Stacked Chart */}
           {barChartData.length > 0 && (
             <div className="grid-item page-stats-grid-items grade-distribution-chart">
-              <GradeDistributionBarChart
-                title="Categories per Grade"
-                students={students}
-                data={barChartData}
-                dataKey="count"
-                labelKey="grade"
-                height={300}
-              />
+              <StackedStudentsGradeChart students={students} height={300} />
             </div>
           )}
 

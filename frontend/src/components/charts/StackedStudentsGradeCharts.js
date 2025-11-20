@@ -142,8 +142,7 @@ export default React.memo(function StackedStudentsGradeChart({ students, height 
           />
           <YAxis allowDecimals={false} />
           <Tooltip />
-          {/* Disable built-in legend to avoid duplicates */}
-          <Legend verticalAlign="bottom" height={36} />
+          {/* built-in legend removed - we render a simplified LetterLegend below */}
           {subgradeKeys.map((subgrade) => (
             <Bar
               key={subgrade}

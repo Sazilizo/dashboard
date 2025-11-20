@@ -40,10 +40,10 @@ import SeoHelmet from '../../components/SeoHelmet';
 
     // Specs chart
     const specsDataChart = {
-      title: "Performance Overview",
-      Component: SpecsRadarChart,
-      props: { student, user, className: "specs-radar-grid" },
-    };
+        title: "Performance Overview",
+        Component: require('../charts/SpecsRadarChartV2').default,
+        props: { student, user, className: "specs-radar-grid", height: 360 },
+      };
 
     // Attendance chart
     const attendanceDataChart = {
@@ -169,7 +169,7 @@ import SeoHelmet from '../../components/SeoHelmet';
       setGeneratingReport(false);
     }
   };
-
+console.log("student academic sessions:", student?.academic_sessions)
   // Modal state for printable report
   const [showReportModal, setShowReportModal] = useState(false);
 
