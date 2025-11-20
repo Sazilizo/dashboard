@@ -614,7 +614,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
 
           <div className="flex items-center gap-2">
             <Link to={`/dashboard/sessions/create`} className="btn primary-btn">
-              <span className="text-sm">Create Session</span>
+              <span className="text-sm primary-btn">Create Session</span>
             </Link>
           </div>
         </div>
@@ -639,7 +639,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                   <label className="text-sm font-medium">Filter by date</label>
                   <div>
                     <input type="date" value={filterDate || ''} onChange={(e) => setFilterDate(e.target.value || null)} className="p-2 border rounded" />
-                    <button onClick={() => setFilterDate(null)} className="ml-2 px-2 py-1 border rounded">Clear</button>
+                    <button onClick={() => setFilterDate(null)} className="ml-2 px-2 py-1 border rounded secondary-btn">Clear</button>
                   </div>
                 </div>
 

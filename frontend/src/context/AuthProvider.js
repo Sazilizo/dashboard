@@ -12,7 +12,7 @@ import {
 import useOnlineStatus from "../hooks/useOnlineStatus";
 import { startAutoCloseMonitoring, stopAutoCloseMonitoring } from "../utils/autoCloseWorkDay";
 import cacheFormSchemasIfOnline from "../utils/proactiveCache";
-import { getTable, cacheTable } from "../utils/tableCache";
+import { getTable, cacheTable, resetOfflineDB, clearTableSnapshots } from "../utils/tableCache";
 // debug flag
 const DEBUG = false;
 
@@ -21,15 +21,36 @@ const AuthContext = createContext();
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const { isOnline } = useOnlineStatus();
 
   const cachedUser = useRef(null);
   const lastFetchTime = useRef(0);
   const FETCH_DEBOUNCE_MS = 15 * 1000; // 15 seconds debounce
+  const refreshInProgress = useRef(false);
   const isInitialized = useRef(false);
 
   const refreshUser = async (forceRefresh = false) => {
     const now = Date.now();
+
+    if (refreshInProgress.current && !forceRefresh) {
+      if (DEBUG) console.log('[AuthProvider] refreshUser skipped because already in progress');
+      return;
+    }
+    refreshInProgress.current = true;
+    setIsRefreshing(true);
+
+    // watchdog: avoid leaving loading state indefinitely
+    let watchdogId = null;
+    try {
+      watchdogId = setTimeout(() => {
+        console.warn('[AuthProvider] refreshUser watchdog triggered - clearing loading state');
+        try { setLoading(false); } catch (e) {}
+        refreshInProgress.current = false;
+      }, 10000);
+    } catch (e) {
+      watchdogId = null;
+    }
 
     // Return cached user if within debounce interval and not forcing refresh
     if (!forceRefresh && cachedUser.current && now - lastFetchTime.current < FETCH_DEBOUNCE_MS) {
@@ -61,15 +82,27 @@ export function AuthProvider({ children }) {
     setLoading(true);
     try {
       console.log('[AuthProvider] Fetching user from Supabase');
-      const {
-        data: { user: supabaseUser },
-        error: userError,
-      } = await api.auth.getUser();
+      // helper: wrap promise with timeout to fail fast
+      const withTimeout = (p, ms = 8000, label = 'op') => Promise.race([
+        p,
+        new Promise((_, rej) => setTimeout(() => rej(new Error(`timeout:${label}`)), ms)),
+      ]);
 
-      if (userError || !supabaseUser) {
+      let supabaseUser = null;
+      try {
+        console.log('[AuthProvider] -> calling api.auth.getUser()');
+        const res = await withTimeout(api.auth.getUser(), 8000, 'auth.getUser');
+        supabaseUser = res?.data?.user || null;
+        if (res?.error) console.warn('[AuthProvider] api.auth.getUser error', res.error);
+        console.log('[AuthProvider] <- api.auth.getUser() returned');
+      } catch (e) {
+        console.error('[AuthProvider] api.auth.getUser() failed or timed out', e);
+        throw e;
+      }
+
+      if (!supabaseUser) {
+        // unify with previous behavior: no authenticated user
         console.log('[AuthProvider] No authenticated user found');
-        
-        // Check if we have stored data before logging out
         const { user: storedUser } = await getStoredAuthData();
         if (storedUser) {
           console.log('[AuthProvider] Using stored user - server unreachable but user exists locally');
@@ -78,7 +111,6 @@ export function AuthProvider({ children }) {
           setLoading(false);
           return;
         }
-        
         setUser(null);
         cachedUser.current = null;
         lastFetchTime.current = 0;
@@ -88,30 +120,35 @@ export function AuthProvider({ children }) {
         return;
       }
 
+      
+
       console.log('[AuthProvider] User authenticated:', supabaseUser.email);
 
       // Fetch profile - with fallbacks: try auth_uid, then email, then stored data, then build a minimal profile
       let profile = null;
       try {
         const selectCols = "id, username, role_id, school_id, avatar_url, email, roles:role_id(name)";
-
         // Primary lookup by auth_uid
-        let { data: profileData, error: profileError } = await api
-          .from("profiles")
-          .select(selectCols)
-          .eq("auth_uid", supabaseUser.id)
-          .maybeSingle();
+        let profileData = null;
+        let profileError = null;
+        try {
+          console.log('[AuthProvider] -> querying profiles by auth_uid');
+          const res = await withTimeout(api.from('profiles').select(selectCols).eq('auth_uid', supabaseUser.id).maybeSingle(), 8000, 'profiles.query');
+          profileData = res?.data || null;
+          profileError = res?.error || null;
+          console.log('[AuthProvider] <- profiles auth_uid query returned');
+        } catch (e) {
+          console.warn('[AuthProvider] profiles auth_uid lookup failed', e);
+        }
 
         // If not found by auth_uid, try by email as a secondary lookup (some installs store profile.email)
         if (!profileData && (!profileError)) {
           try {
-            const res = await api
-              .from("profiles")
-              .select(selectCols)
-              .eq("email", supabaseUser.email)
-              .maybeSingle();
+            console.log('[AuthProvider] -> querying profiles by email fallback');
+            const res = await withTimeout(api.from('profiles').select(selectCols).eq('email', supabaseUser.email).maybeSingle(), 8000, 'profiles.email');
             if (res && res.data) profileData = res.data;
             if (res && res.error) profileError = res.error;
+            console.log('[AuthProvider] <- profiles email query returned');
           } catch (e) {
             // ignore and continue to other fallbacks
             if (DEBUG) console.warn('[AuthProvider] secondary profile lookup by email failed', e);
@@ -193,6 +230,25 @@ export function AuthProvider({ children }) {
               profile.roles = profile.roles || {};
               profile.roles.name = match.name || profile.roles.name || match.role_name;
             }
+          } else if (isOnline) {
+            // If local cache was empty, attempt to fetch roles from server with timeout
+            try {
+              console.log('[AuthProvider] -> fetching roles from server');
+              const rres = await withTimeout(api.from('roles').select('*'), 8000, 'roles.fetch');
+              const fetchedRoles = rres?.data || [];
+              if (Array.isArray(fetchedRoles) && fetchedRoles.length) {
+                rolesRows = fetchedRoles;
+                try { await cacheTable('roles', rolesRows); } catch (cErr) { if (DEBUG) console.warn('cacheTable roles failed', cErr); }
+                const match2 = rolesRows.find(r => String(r.id) === String(profile.role_id) || String(r.role_id) === String(profile.role_id));
+                if (match2) {
+                  profile.roles = profile.roles || {};
+                  profile.roles.name = match2.name || profile.roles.name || match2.role_name;
+                }
+              }
+              console.log('[AuthProvider] <- fetched roles from server');
+            } catch (e) {
+              console.warn('[AuthProvider] Failed to fetch roles from server or timed out', e);
+            }
           }
         }
       } catch (roleErr) {
@@ -208,11 +264,18 @@ export function AuthProvider({ children }) {
       // Store auth data for offline use (don't fail if storage fails)
       try {
         await storeAuthData(fullUser);
-        
-        // Store session data
-        const { data: { session } } = await api.auth.getSession();
-        if (session) {
-          await storeSessionData(session);
+
+        // Store session data (with timeout)
+        try {
+          console.log('[AuthProvider] -> api.auth.getSession()');
+          const sres = await withTimeout(api.auth.getSession(), 8000, 'auth.getSession');
+          const session = sres?.data?.session;
+          if (session) {
+            await storeSessionData(session);
+          }
+          console.log('[AuthProvider] <- api.auth.getSession() returned');
+        } catch (e) {
+          console.warn('[AuthProvider] api.auth.getSession() failed or timed out', e);
         }
       } catch (storeErr) {
         console.warn('[AuthProvider] Failed to store auth data, continuing anyway:', storeErr);
@@ -251,7 +314,10 @@ export function AuthProvider({ children }) {
         }
       }
     } finally {
+      if (watchdogId) try { clearTimeout(watchdogId); } catch (e) {}
       setLoading(false);
+      refreshInProgress.current = false;
+      setIsRefreshing(false);
     }
   };
 
@@ -275,12 +341,34 @@ export function AuthProvider({ children }) {
         // Store session immediately (don't fail if storage fails)
         try {
           await storeSessionData(session);
+          console.log('[AuthProvider] Stored session data successfully');
         } catch (storeErr) {
           console.warn('[AuthProvider] Failed to store session, continuing anyway:', storeErr);
         }
-        refreshUser(true);
-        
-  // Start auto-close monitoring when user is authenticated
+
+        // Refresh user first so we have a canonical profile and role mapping for
+        // the newly-signed-in user. Doing this before clearing snapshots prevents
+        // synthesizing a fallback profile when role/profile lookups rely on cache.
+        await refreshUser(true);
+
+        // Now clear cached table snapshots for sensitive tables. Clearing after
+        // refresh ensures the app has the correct current-user profile available
+        // while we remove previous user's snapshot rows.
+        try {
+          await clearTableSnapshots([
+            'students',
+            'workers',
+            'attendance_records',
+            'academic_session_participants',
+            'academic_sessions',
+            'pe_session_participants'
+          ]);
+          console.log('[AuthProvider] Cleared sensitive table snapshots due to sign-in');
+        } catch (e) {
+          console.warn('[AuthProvider] clearTableSnapshots failed during sign-in', e);
+        }
+
+        // Start auto-close monitoring when user is authenticated
         startAutoCloseMonitoring();
       } else if (_event === 'SIGNED_OUT') {
         // Only clear on explicit sign out
@@ -292,6 +380,20 @@ export function AuthProvider({ children }) {
           await clearStoredSession();
         } catch (clearErr) {
           console.warn('[AuthProvider] Failed to clear stored data:', clearErr);
+        }
+        // Also clear sensitive table snapshots on sign-out to avoid showing stale cached rows
+        try {
+          await clearTableSnapshots([
+            'students',
+            'workers',
+            'attendance_records',
+            'academic_session_participants',
+            'academic_sessions',
+            'pe_session_participants'
+          ]);
+          console.log('[AuthProvider] Cleared sensitive table snapshots due to sign-out');
+        } catch (e) {
+          console.warn('[AuthProvider] clearTableSnapshots failed during sign-out', e);
         }
         
         // Stop auto-close monitoring when user signs out
