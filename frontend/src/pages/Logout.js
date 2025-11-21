@@ -464,11 +464,10 @@ const LogoutButton = () => {
                   ×
                 </button>
               </div>
-              <BiometricsSignIn
+              <WorkerBiometrics
                 userId={userProfile.id}
-                entityType="user"
-                schoolId={userProfile.school_id}
                 workerId={userProfile.worker_id}
+                schoolId={userProfile.school_id}
                 forceOperation="signout"
                 onCompleted={handleBiometricComplete}
                 onCancel={handleBiometricCancel}

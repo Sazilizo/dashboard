@@ -456,6 +456,21 @@ export async function queueMutation(table, type, payload) {
         delete cleanedPayload.sessionId;
       }
 
+      // Coerce numeric-ish ID strings to numbers to avoid type mismatches
+      try {
+        if (cleanedPayload.student_id && typeof cleanedPayload.student_id === 'string' && /^\d+$/.test(cleanedPayload.student_id)) {
+          cleanedPayload.student_id = Number(cleanedPayload.student_id);
+        }
+        if (cleanedPayload.session_id && typeof cleanedPayload.session_id === 'string' && /^\d+$/.test(cleanedPayload.session_id)) {
+          cleanedPayload.session_id = Number(cleanedPayload.session_id);
+        }
+        if (cleanedPayload.school_id && typeof cleanedPayload.school_id === 'string' && /^\d+$/.test(cleanedPayload.school_id)) {
+          cleanedPayload.school_id = Number(cleanedPayload.school_id);
+        }
+      } catch (e) {
+        // ignore coercion errors
+      }
+
       // Deduplicate: if an identical participant already exists, convert insert -> update
       try {
         if (memoryCache.has(table)) {

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import api from "../../api/client";
 import { onlineApi } from "../../api/client";
-import SpecsRadarChart from "../charts/SpecsRadarGraph";
+import SpecsRadarChartEnhanced from "../charts/SpecsRadarChartEnhanced";
 import AttendanceBarChart from "../charts/AttendanceBarChart";
 import Photos from "./Photos";
 import LearnerAttendance from "./LearnerAttendance";
@@ -41,7 +41,7 @@ import SeoHelmet from '../../components/SeoHelmet';
     // Specs chart
     const specsDataChart = {
       title: "Performance Overview",
-      Component: SpecsRadarChart,
+      Component: SpecsRadarChartEnhanced,
       props: { student, user, className: "specs-radar-grid" },
     };
 

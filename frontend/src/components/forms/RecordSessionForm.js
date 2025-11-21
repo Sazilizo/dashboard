@@ -9,7 +9,7 @@ import { useSchools } from "../../context/SchoolsContext";
 import useOfflineTable from "../../hooks/useOfflineTable";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { getTableFiltered, getTable } from "../../utils/tableCache";
-import BiometricsSignIn from "../forms/BiometricsSignIn";
+import StudentBiometrics from "../forms/StudentBiometrics";
 import LearnerAttendance from "../profiles/LearnerAttendance";
 import ToastContainer from "../ToastContainer";
 
@@ -343,6 +343,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
           school_id: studentById[String(sId)]?.school_id || null,
         };
         console.log('[RecordSessionForm] addParticipant payload', participantPayload);
+        console.log('[RecordSessionForm] current user profile for RLS debug', user?.profile);
         const startMs = Date.now();
         let partRes = null;
         try {
@@ -476,6 +477,8 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
               school_id: studentById[String(r.studentId)]?.school_id || null,
             };
             console.log('[RecordSessionForm] adding participant to table:', participantsTable, 'payload:', partPayload);
+            console.log('[RecordSessionForm] addParticipant payload (biometrics)', partPayload);
+            console.log('[RecordSessionForm] current user profile for RLS debug', user?.profile);
             const partRes = await addParticipant(partPayload);
             console.log('[RecordSessionForm] addParticipant result:', partRes);
           }
@@ -528,6 +531,8 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
                   const payload = { session_id: selectedSession, student_id: Number(p.student_id), school_id: studentById[String(p.student_id)]?.school_id || null };
                   console.log('[RecordSessionForm] addParticipant (auto from recordingStop) payload:', payload);
                   try {
+                    console.log('[RecordSessionForm] addParticipant payload (auto from recordingStop)', payload);
+                    console.log('[RecordSessionForm] current user profile for RLS debug', user?.profile);
                     const addRes = await addParticipant(payload);
                     console.log('[RecordSessionForm] addParticipant result:', addRes);
                   } catch (addErr) {
@@ -767,13 +772,13 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
 
           {showBiometrics && (
             <div className="mt-4 border rounded p-4 bg-white">
-              <BiometricsSignIn
-                entityType="student"
+              <StudentBiometrics
                 // If user selected students, pass those IDs; otherwise fall back to the first filtered student
                 studentId={selectedStudentIds && selectedStudentIds.length ? selectedStudentIds : (filteredStudents[0]?.id ? [filteredStudents[0].id] : null)}
                 schoolId={filteredStudents[0]?.school_id || null}
-                sessionType={participantsTable}
                 academicSessionId={selectedSession}
+                // pass session name as note so biometric component can include it
+                sessionNote={(sessionRows || []).find(s => String(s.id) === String(selectedSession))?.session_name || (sessionRows || []).find(s => String(s.id) === String(selectedSession))?.name || null}
                 bucketName="student-uploads"
                 folderName="faces"
                 onCompleted={(data) => handleBiometricsCompleted(data)}
