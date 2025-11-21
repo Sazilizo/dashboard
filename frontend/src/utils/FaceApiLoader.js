@@ -239,19 +239,70 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
   // Load faceapi and the selected networks
   try {
     const faceapi = await getFaceApi();
+    // Some servers may serve gzipped JSON manifests without proper
+    // Content-Encoding headers. face-api.js calls `fetch(...).then(r=>r.json())`
+    // internally and will throw if it receives compressed bytes. To work
+    // around that, temporarily wrap `fetch` so that requests for model
+    // manifest/weights JSON are normalized to a decompressed JSON Response.
+    const origFetch = (typeof globalThis.fetch === 'function') ? globalThis.fetch.bind(globalThis) : null;
+    let fetchedShimInstalled = false;
+    if (origFetch) {
+      globalThis.fetch = async function(resource, init) {
+        try {
+          const url = (typeof resource === 'string') ? resource : (resource && resource.url) || '';
+          // Only intercept requests that look like model manifests or json files
+          const lower = String(url).toLowerCase();
+          const shouldIntercept = lower.indexOf(workingPath.toLowerCase()) === 0 && (lower.endsWith('.json') || lower.endsWith('weights_manifest.json'));
+          if (!shouldIntercept) return origFetch(resource, init);
 
-    if (variant === 'ssd') {
-      await Promise.all([
-        faceapi.nets.ssdMobilenetv1.loadFromUri(workingPath),
-        faceapi.nets.faceLandmark68Net.loadFromUri(workingPath),
-        faceapi.nets.faceRecognitionNet.loadFromUri(workingPath)
-      ]);
-    } else {
-      await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri(workingPath),
-        faceapi.nets.faceLandmark68Net.loadFromUri(workingPath),
-        faceapi.nets.faceRecognitionNet.loadFromUri(workingPath)
-      ]);
+          const resp = await origFetch(resource, init);
+          if (!resp) return resp;
+
+          // Try to parse as JSON quickly; if that works, return original response
+          try {
+            await resp.clone().json();
+            return resp;
+          } catch (e) {
+            // Attempt to get ArrayBuffer and decompress if gzipped
+            try {
+              const ab = await arrayBufferFromResponseWithGzipFallback(resp.clone());
+              const headers = {};
+              try { resp.headers.forEach((v, k) => { if (k !== 'content-encoding') headers[k] = v; }); } catch (ee) {}
+              // Ensure content-type is application/json so consumers call .json() correctly
+              if (!headers['content-type']) headers['content-type'] = 'application/json';
+              return new Response(ab, { status: resp.status, statusText: resp.statusText, headers });
+            } catch (ee) {
+              // If anything goes wrong, fall back to original response
+              return resp;
+            }
+          }
+        } catch (outer) {
+          // If our shim fails, fallback to original fetch
+          try { return origFetch(resource, init); } catch (e) { throw outer; }
+        }
+      };
+      fetchedShimInstalled = true;
+    }
+
+    try {
+      if (variant === 'ssd') {
+        await Promise.all([
+          faceapi.nets.ssdMobilenetv1.loadFromUri(workingPath),
+          faceapi.nets.faceLandmark68Net.loadFromUri(workingPath),
+          faceapi.nets.faceRecognitionNet.loadFromUri(workingPath)
+        ]);
+      } else {
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(workingPath),
+          faceapi.nets.faceLandmark68Net.loadFromUri(workingPath),
+          faceapi.nets.faceRecognitionNet.loadFromUri(workingPath)
+        ]);
+      }
+    } finally {
+      // Restore original fetch if we replaced it
+      if (fetchedShimInstalled && origFetch) {
+        try { globalThis.fetch = origFetch; } catch (e) { /* ignore */ }
+      }
     }
 
     modelsLoaded = true;
