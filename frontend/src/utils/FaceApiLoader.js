@@ -52,13 +52,15 @@ async function arrayBufferFromResponseWithGzipFallback(resp) {
 }
 
 async function parseJsonResponseWithGzipFallback(resp) {
-  // Try normal json() first (fast path)
+  // Use clones so we don't consume the same body stream twice.
   try {
-    return await resp.json();
+    const tryJson = resp.clone();
+    return await tryJson.json();
   } catch (e) {
-    // Fallback: get arrayBuffer, detect/decompress gzip, decode text and parse
+    // Fallback: use a fresh clone to read ArrayBuffer and detect/decompress gzip
     try {
-      const ab = await arrayBufferFromResponseWithGzipFallback(resp);
+      const ar = resp.clone();
+      const ab = await arrayBufferFromResponseWithGzipFallback(ar);
       const text = new TextDecoder('utf-8').decode(ab);
       return JSON.parse(text);
     } catch (e2) {
