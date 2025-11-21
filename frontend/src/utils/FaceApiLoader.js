@@ -1,6 +1,7 @@
 // src/utils/FaceApiLoader.js
 import { getFaceApi } from './faceApiShim';
 import { hasBiometricConsent } from './biometricConsent';
+import pako from 'pako';
 
 let modelsLoaded = false;
 let lastBaseUrl = null;
@@ -26,6 +27,48 @@ function isOnWifiLike() {
   }
 }
 
+async function arrayBufferFromResponseWithGzipFallback(resp) {
+  // Read raw bytes
+  const raw = await resp.arrayBuffer();
+  try {
+    const ce = resp.headers && resp.headers.get ? resp.headers.get('content-encoding') : null;
+    if (ce && /gzip/i.test(ce)) return raw;
+  } catch (e) {}
+
+  // If server omitted Content-Encoding but bytes look gzipped, decompress client-side
+  if (raw && raw.byteLength >= 2) {
+    const view = new Uint8Array(raw, 0, 2);
+    if (view[0] === 0x1F && view[1] === 0x8B) {
+      try {
+        const dec = pako.ungzip(new Uint8Array(raw));
+        return dec.buffer;
+      } catch (err) {
+        console.warn('[FaceApiLoader] pako.ungzip failed for', resp.url, err);
+        return raw;
+      }
+    }
+  }
+  return raw;
+}
+
+async function parseJsonResponseWithGzipFallback(resp) {
+  // Use clones so we don't consume the same body stream twice.
+  try {
+    const tryJson = resp.clone();
+    return await tryJson.json();
+  } catch (e) {
+    // Fallback: use a fresh clone to read ArrayBuffer and detect/decompress gzip
+    try {
+      const ar = resp.clone();
+      const ab = await arrayBufferFromResponseWithGzipFallback(ar);
+      const text = new TextDecoder('utf-8').decode(ab);
+      return JSON.parse(text);
+    } catch (e2) {
+      throw e2;
+    }
+  }
+}
+
 async function probeModelUrl(baseUrl, testFile) {
   const url = baseUrl + testFile;
   const details = { url, ok: false, status: null, contentType: null, contentLength: null, error: null };
@@ -47,25 +90,15 @@ async function probeModelUrl(baseUrl, testFile) {
     }
 
     // Prefer JSON manifests; if we get HTML (e.g., 403/404 page), reject
-    if (ct && !/application\/json/i.test(ct)) {
       try {
-        await resp.clone().json();
+        await parseJsonResponseWithGzipFallback(resp.clone());
         details.ok = true;
         return details;
       } catch (e) {
-        details.error = 'non_json_response';
+        details.error = 'json_parse_error';
+        try { details.errorMessage = e && e.message ? e.message : String(e); } catch (ee) {}
         return details;
       }
-    }
-
-    try {
-      await resp.clone().json();
-      details.ok = true;
-      return details;
-    } catch (e) {
-      details.error = 'json_parse_error';
-      return details;
-    }
   } catch (e) {
     details.error = String(e);
     return details;
@@ -108,7 +141,8 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
 
   const MODEL_FILES = FILES_BY_VARIANT[variant] || FILES_BY_VARIANT.tiny;
 
-  let BASE_URL = modelsUrl || process.env.REACT_APP_MODELS_URL || '/models/';
+  // Prefer explicit param, then REACT_APP_MODELS_URLS (plural), then REACT_APP_MODELS_URL, then default
+  let BASE_URL = modelsUrl || process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';
   BASE_URL = ensureSlash(BASE_URL);
 
   // probe the provided base url first, then try a small set of fallbacks
@@ -134,34 +168,17 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
     try {
       const cache = await caches.open('faceapi-models');
 
-      // Attempt to fetch manifest for integrity checks
+      // Attempt to fetch manifest for integrity checks (supports gzip-without-Content-Encoding)
       let manifest = null;
       try {
         const manifestUrl = workingPath + 'models-manifest.json';
         const mresp = await fetch(manifestUrl, { mode: 'cors' });
         if (mresp && mresp.ok) {
           try {
-            const ct = mresp.headers && mresp.headers.get ? mresp.headers.get('content-type') : null;
-            if (ct && !/application\/json/i.test(ct)) {
-              // content-type indicates non-JSON; attempt parse once, then fail clearly
-              try {
-                manifest = await mresp.clone().json();
-              } catch (e) {
-                console.warn('[FaceApiLoader] models-manifest.json is not valid JSON (content-type:', ct, ')');
-                return { success: false, reason: 'models_unavailable', error: 'invalid_manifest' };
-              }
-            } else {
-              // try parse; if it fails, return a clear failure so UI can guide the user
-              try {
-                manifest = await mresp.json();
-              } catch (e) {
-                console.warn('[FaceApiLoader] Failed to parse models-manifest.json', e);
-                return { success: false, reason: 'models_unavailable', error: 'invalid_manifest' };
-              }
-            }
+            manifest = await parseJsonResponseWithGzipFallback(mresp);
           } catch (e) {
-            console.warn('[FaceApiLoader] Unexpected error while reading manifest headers', e);
-            return { success: false, reason: 'models_unavailable', error: String(e) };
+            console.warn('[FaceApiLoader] models-manifest.json is not valid JSON or could not be parsed', e);
+            return { success: false, reason: 'models_unavailable', error: 'invalid_manifest' };
           }
         }
       } catch (e) {
@@ -185,36 +202,29 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
           const resp = await fetch(url, { mode: 'cors' });
           if (!resp || !resp.ok) return;
 
+          // Always normalize to an ArrayBuffer, decompressing client-side if needed
+          const ab = await arrayBufferFromResponseWithGzipFallback(resp);
+
           if (manifest && manifest.files && manifest.files[f] && manifest.files[f].sha256) {
-            // verify checksum
-            const ab = await resp.arrayBuffer();
+            // verify checksum against decompressed bytes
             const hex = await bufferToHex(ab);
             const expected = manifest.files[f].sha256;
             if (hex !== expected) {
               throw new Error(`Checksum mismatch for ${f}: expected ${expected} got ${hex}`);
             }
-            // prepare headers for cached response
+            // prepare headers for cached response (remove content-encoding since we store decompressed bytes)
             const headers = {};
-            try { resp.headers.forEach((v, k) => { headers[k] = v; }); } catch (e) {}
-            // If the server served gzipped bytes but omitted the content-encoding header
-            // detect gzip via magic bytes and set the header so future fetches (or the
-            // service worker cache) will allow the browser to transparently decompress.
-            try {
-              if ((!headers['content-encoding'] || headers['content-encoding'] === '') && ab && ab.byteLength >= 2) {
-                const view = new Uint8Array(ab, 0, 2);
-                if (view[0] === 0x1F && view[1] === 0x8B) {
-                  headers['content-encoding'] = 'gzip';
-                }
-              }
-            } catch (e) {}
+            try { resp.headers.forEach((v, k) => { if (k !== 'content-encoding') headers[k] = v; }); } catch (e) {}
             // Ensure content-type present (manifest may declare it)
             if (!headers['content-type'] && manifest.files[f] && manifest.files[f].contentType) {
               headers['content-type'] = manifest.files[f].contentType;
             }
             await cache.put(url, new Response(ab, { headers }));
           } else {
-            // no manifest entry — store as-is
-            await cache.put(url, resp.clone());
+            // No manifest entry — cache decompressed bytes to avoid repeated client decompression
+            const headers = {};
+            try { resp.headers.forEach((v, k) => { if (k !== 'content-encoding') headers[k] = v; }); } catch (e) {}
+            await cache.put(url, new Response(ab, { headers }));
           }
         } catch (e) {
           // ignore single-file failures but log
@@ -259,7 +269,17 @@ export function areFaceApiModelsLoaded() {
 }
 
 export function getFaceApiModelsBaseUrl() {
-  return lastBaseUrl;
+  // Return the last working path discovered during a load, or fall back to configured env values
+  if (lastBaseUrl) return lastBaseUrl;
+  // allow a runtime override for debugging without rebuild: window.__FACEAPI_MODELS_BASE_URL
+  try {
+    // eslint-disable-next-line no-undef
+    const runtime = (typeof window !== 'undefined' && window.__FACEAPI_MODELS_BASE_URL) ? window.__FACEAPI_MODELS_BASE_URL : null;
+    if (runtime) return ensureSlash(runtime);
+  } catch (e) {}
+
+  const cfg = process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';
+  return ensureSlash(cfg);
 }
 
 // Backwards-compatible wrapper for older imports that expect a boolean-returning

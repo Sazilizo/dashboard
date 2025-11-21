@@ -10,19 +10,20 @@ CREATE POLICY allow_heads_select_workers_by_role ON public.workers
   USING (
     EXISTS (
       SELECT 1 FROM public.profiles p
-      WHERE p.id = auth.uid()
+      LEFT JOIN public.roles r ON r.id = p.role_id
+      WHERE p.auth_uid = auth.uid()
         AND (
           -- admins and superusers can see all workers
-          (p.roles->>'name') IN ('admin','superuser')
+          (r.name IS NOT NULL AND r.name IN ('admin','superuser'))
           -- head_tutor may see worker rows where worker role is 'tutor' within same school
           OR (
-            (p.roles->>'name') = 'head_tutor'
+            (r.name IS NOT NULL AND r.name = 'head_tutor')
             AND (public.workers.roles->>'name') = 'tutor'
             AND p.school_id = public.workers.school_id
           )
           -- head_coach may see worker rows where worker role is 'coach' within same school
           OR (
-            (p.roles->>'name') = 'head_coach'
+            (r.name IS NOT NULL AND r.name = 'head_coach')
             AND (public.workers.roles->>'name') = 'coach'
             AND p.school_id = public.workers.school_id
           )

@@ -10,7 +10,7 @@ import ConfirmToast from "../ConfirmToast";
 import { cacheUserImages } from "../../utils/proactiveImageCache";
 import { generateAuthToken, storeAuthToken } from "../../utils/authTokenGenerator";
 
-const BiometricsSignIn = lazy(() => import("./BiometricsSignIn"));
+const WorkerBiometrics = lazy(() => import("./WorkerBiometrics"));
 
 export default function LoginForm() {
   const [form, setForm] = useState({ email: "", password: "" });
@@ -354,15 +354,13 @@ export default function LoginForm() {
                 </button>
               </div>
               <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading biometric authentication...</div>}>
-                <BiometricsSignIn
+                <WorkerBiometrics
                   userId={userProfile.id}
-                  entityType="user"
-                  schoolId={userProfile.school_id}
                   workerId={userProfile.worker_id}
+                  schoolId={userProfile.school_id}
                   forceOperation="signin"
                   onCompleted={handleBiometricComplete}
                   primaryActionLabel="Sign In"
-                  
                 />
               </Suspense>
             </div>

@@ -10,9 +10,10 @@ CREATE POLICY allow_tutors_select_academic_sessions ON public.academic_sessions
   USING (
     EXISTS (
       SELECT 1 FROM public.profiles p
-      WHERE p.id = auth.uid()
+      LEFT JOIN public.roles r ON r.id = p.role_id
+      WHERE p.auth_uid = auth.uid()
         AND (
-          (p.roles->>'name') IN ('tutor','head_tutor','admin','superuser')
+          (r.name IS NOT NULL AND r.name IN ('tutor','head_tutor','admin','superuser'))
           OR p.school_id = public.academic_sessions.school_id
         )
     )
@@ -26,9 +27,10 @@ CREATE POLICY allow_tutors_select_pe_sessions ON public.pe_sessions
   USING (
     EXISTS (
       SELECT 1 FROM public.profiles p
-      WHERE p.id = auth.uid()
+      LEFT JOIN public.roles r ON r.id = p.role_id
+      WHERE p.auth_uid = auth.uid()
         AND (
-          (p.roles->>'name') IN ('tutor','head_tutor','admin','superuser')
+          (r.name IS NOT NULL AND r.name IN ('tutor','head_tutor','admin','superuser'))
           OR p.school_id = public.pe_sessions.school_id
         )
     )
@@ -42,23 +44,29 @@ CREATE POLICY allow_tutors_manage_academic_session_participants ON public.academ
   USING (
     EXISTS (
       SELECT 1 FROM public.profiles p
-      WHERE p.id = auth.uid()
+      LEFT JOIN public.roles r ON r.id = p.role_id
+      WHERE p.auth_uid = auth.uid()
         AND (
-          (p.roles->>'name') IN ('tutor','head_tutor','admin','superuser')
+          (r.name IS NOT NULL AND r.name IN ('tutor','head_tutor','admin','superuser'))
           OR p.school_id = public.academic_session_participants.school_id
         )
     )
   )
   WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.profiles p
-      WHERE p.id = auth.uid()
-        AND (
-          (p.roles->>'name') IN ('tutor','head_tutor','admin','superuser')
-          OR p.school_id = new.school_id
-        )
-    )
-  );
+    (
+      (
+        (SELECT r.name
+         FROM public.profiles p
+         LEFT JOIN public.roles r ON r.id = p.role_id
+         WHERE p.auth_uid = auth.uid()
+         LIMIT 1
+        ) IN ('tutor','head_tutor','admin','superuser')
+      )
+      OR
+      (
+        (SELECT p.school_id FROM public.profiles p WHERE p.auth_uid = auth.uid() LIMIT 1) = new.school_id
+      )
+    );
 
 -- Same for PE session participants table
 DROP POLICY IF EXISTS allow_tutors_manage_pe_session_participants ON public.pe_session_participants;
@@ -68,23 +76,29 @@ CREATE POLICY allow_tutors_manage_pe_session_participants ON public.pe_session_p
   USING (
     EXISTS (
       SELECT 1 FROM public.profiles p
-      WHERE p.id = auth.uid()
+      LEFT JOIN public.roles r ON r.id = p.role_id
+      WHERE p.auth_uid = auth.uid()
         AND (
-          (p.roles->>'name') IN ('tutor','head_tutor','admin','superuser')
+          (r.name IS NOT NULL AND r.name IN ('tutor','head_tutor','admin','superuser'))
           OR p.school_id = public.pe_session_participants.school_id
         )
     )
   )
   WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.profiles p
-      WHERE p.id = auth.uid()
-        AND (
-          (p.roles->>'name') IN ('tutor','head_tutor','admin','superuser')
-          OR p.school_id = new.school_id
-        )
-    )
-  );
+    (
+      (
+        (SELECT r.name
+         FROM public.profiles p
+         LEFT JOIN public.roles r ON r.id = p.role_id
+         WHERE p.auth_uid = auth.uid()
+         LIMIT 1
+        ) IN ('tutor','head_tutor','admin','superuser')
+      )
+      OR
+      (
+        (SELECT p.school_id FROM public.profiles p WHERE p.auth_uid = auth.uid() LIMIT 1) = new.school_id
+      )
+    );
 
 -- Allow tutors/head_tutors to INSERT attendance_records for students in their school
 DROP POLICY IF EXISTS allow_tutors_insert_attendance_records ON public.attendance_records;
@@ -94,9 +108,10 @@ CREATE POLICY allow_tutors_insert_attendance_records ON public.attendance_record
   WITH CHECK (
     EXISTS (
       SELECT 1 FROM public.profiles p
-      WHERE p.id = auth.uid()
+      LEFT JOIN public.roles r ON r.id = p.role_id
+      WHERE p.auth_uid = auth.uid()
         AND (
-          (p.roles->>'name') IN ('tutor','head_tutor','admin','superuser')
+          (r.name IS NOT NULL AND r.name IN ('tutor','head_tutor','admin','superuser'))
           OR p.school_id = new.school_id
         )
     )
@@ -118,15 +133,20 @@ CREATE POLICY allow_tutors_update_attendance_records ON public.attendance_record
     )
   )
   WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.profiles p
-      WHERE p.id = auth.uid()
-        AND (
-          (p.roles->>'name') IN ('tutor','head_tutor','admin','superuser')
-          OR p.school_id = new.school_id
-        )
-    )
-  );
+    (
+      (
+        (SELECT r.name
+         FROM public.profiles p
+         LEFT JOIN public.roles r ON r.id = p.role_id
+         WHERE p.auth_uid = auth.uid()
+         LIMIT 1
+        ) IN ('tutor','head_tutor','admin','superuser')
+      )
+      OR
+      (
+        (SELECT p.school_id FROM public.profiles p WHERE p.auth_uid = auth.uid() LIMIT 1) = new.school_id
+      )
+    );
 
 -- Note: these policies grant reasonable access for tutor/head_tutor roles within their school.
 -- If your `profiles.roles` structure differs, or `profiles.id` is not auth.uid(), adjust the checks accordingly.

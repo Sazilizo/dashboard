@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import api from "../../api/client";
 import { onlineApi } from "../../api/client";
-import SpecsRadarChart from "../charts/SpecsRadarGraph";
+import SpecsRadarChartEnhanced from "../charts/SpecsRadarChartEnhanced";
 import AttendanceBarChart from "../charts/AttendanceBarChart";
 import Photos from "./Photos";
 import LearnerAttendance from "./LearnerAttendance";

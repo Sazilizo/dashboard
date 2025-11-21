@@ -66,7 +66,46 @@ export default function OfflineSettings() {
     }
     setModelsStatus('downloading');
     setModelsErrorDetails(null);
-    const res = await loadFaceApiModels({ variant: 'tiny', requireWifi: wifiOnly, requireConsent: true });
+    // Verify model base URL is reachable before attempting the full download
+    const baseUrl = getFaceApiModelsBaseUrl() || (process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '');
+    const verify = async (base) => {
+      if (!base) return { success: false, reason: 'no_base_url', details: 'No models base URL configured.' };
+      const files = [
+        'tiny_face_detector_model-weights_manifest.json',
+        'face_landmark_68_model-weights_manifest.json',
+        'face_recognition_model-weights_manifest.json',
+        'ssd_mobilenetv1_model-weights_manifest.json'
+      ];
+      const results = [];
+      for (const f of files) {
+        const url = base.replace(/\/+$/, '') + '/' + f;
+        try {
+          const r = await fetch(url, { method: 'GET' });
+          if (!r.ok) {
+            results.push({ file: f, url, ok: false, status: r.status, statusText: r.statusText });
+            continue;
+          }
+          const ct = r.headers.get('content-type') || '';
+          const size = r.headers.get('content-length') || null;
+          results.push({ file: f, url, ok: true, status: r.status, contentType: ct, contentLength: size });
+        } catch (err) {
+          results.push({ file: f, url, ok: false, error: String(err) });
+        }
+      }
+      const allOk = results.every(x => x.ok);
+      return { success: allOk, details: results };
+    };
+
+    const verification = await verify(baseUrl);
+    if (!verification.success) {
+      setModelsStatus('error');
+      setModelsErrorDetails({ baseUrl, probe: verification.details });
+      // show a helpful alert and abort download
+      alert('Model manifest files could not be fetched from configured base URL. Check the configured REACT_APP_MODELS_URLS / REACT_APP_MODELS_URL and ensure the files are publicly accessible. See diagnostics below.');
+      return;
+    }
+
+    const res = await loadFaceApiModels({ variant: 'tiny', requireWifi: wifiOnly, requireConsent: true, baseUrl });
     if (res.success) {
       setModelsStatus('loaded');
       alert('Face models downloaded and cached. Biometric features are ready.');
@@ -102,6 +141,52 @@ export default function OfflineSettings() {
     }
   };
 
+  // Manual verification helper: probe manifest files at configured base URL
+  const handleVerifyModels = async () => {
+    const baseUrl = getFaceApiModelsBaseUrl() || (process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '');
+    setModelsStatus('verifying');
+    setModelsErrorDetails(null);
+    if (!baseUrl) {
+      setModelsStatus('error');
+      setModelsErrorDetails({ reason: 'no_base_url', message: 'No REACT_APP_MODELS_URL(S) configured.' });
+      alert('No models base URL configured. Set REACT_APP_MODELS_URLS (or REACT_APP_MODELS_URL) to your models folder URL.');
+      return;
+    }
+
+    const files = [
+      'tiny_face_detector_model-weights_manifest.json',
+      'face_landmark_68_model-weights_manifest.json',
+      'face_recognition_model-weights_manifest.json',
+      'ssd_mobilenetv1_model-weights_manifest.json'
+    ];
+    const results = [];
+    for (const f of files) {
+      const url = baseUrl.replace(/\/+$/, '') + '/' + f;
+      try {
+        const r = await fetch(url, { method: 'GET' });
+        if (!r.ok) {
+          results.push({ file: f, url, ok: false, status: r.status, statusText: r.statusText });
+          continue;
+        }
+        const ct = r.headers.get('content-type') || '';
+        const size = r.headers.get('content-length') || null;
+        results.push({ file: f, url, ok: true, status: r.status, contentType: ct, contentLength: size });
+      } catch (err) {
+        results.push({ file: f, url, ok: false, error: String(err) });
+      }
+    }
+    const allOk = results.every(x => x.ok);
+    if (allOk) {
+      setModelsStatus('loaded');
+      setModelsErrorDetails({ baseUrl, probe: results });
+      alert('Model manifests are reachable from configured URL.');
+    } else {
+      setModelsStatus('error');
+      setModelsErrorDetails({ baseUrl, probe: results });
+      alert('One or more model manifest files could not be fetched. See diagnostics below.');
+    }
+  };
+
   return (
     <div style={{ maxWidth: 1000, margin: '0 auto' }}>
       <h2>Offline & Biometric Settings</h2>
@@ -125,8 +210,10 @@ export default function OfflineSettings() {
           </label>
           <button onClick={handleDownloadModelsNow} style={{ padding: '8px 12px' }}>{modelsStatus === 'downloading' ? 'Downloading...' : 'Download Models Now'}</button>
           <button onClick={handleClearModelsAndDownload} style={{ padding: '8px 12px' }}>{modelsStatus === 'clearing' ? 'Clearing...' : 'Clear models & re-download'}</button>
+          <button onClick={handleVerifyModels} style={{ padding: '8px 12px' }}>{modelsStatus === 'verifying' ? 'Verifying...' : 'Verify Model URLs'}</button>
         </div>
           <p style={{ marginTop: 8 }}><small>If you enable biometric features, the app will need to download a small set of ML model files (only once). They will be cached for offline use. You can pre-download them here while on Wi‑Fi.</small></p>
+          <p style={{ marginTop: 6 }}><small>Models base URL: <code style={{ background: '#f3f4f6', padding: '2px 6px', borderRadius: 4 }}>{getFaceApiModelsBaseUrl() || (process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '(not set)')}</code></small></p>
           {modelsErrorDetails && (
             <div style={{ marginTop: 8, padding: 8, background: '#fff3cd', border: '1px solid #ffeeba', borderRadius: 4 }}>
               <strong>Download diagnostics</strong>
