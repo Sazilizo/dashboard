@@ -88,14 +88,15 @@ async function probeModelUrl(baseUrl, testFile) {
     }
 
     // Prefer JSON manifests; if we get HTML (e.g., 403/404 page), reject
-    try {
-      await parseJsonResponseWithGzipFallback(resp.clone());
-      details.ok = true;
-      return details;
-    } catch (e) {
-      details.error = 'json_parse_error';
-      return details;
-    }
+      try {
+        await parseJsonResponseWithGzipFallback(resp.clone());
+        details.ok = true;
+        return details;
+      } catch (e) {
+        details.error = 'json_parse_error';
+        try { details.errorMessage = e && e.message ? e.message : String(e); } catch (ee) {}
+        return details;
+      }
   } catch (e) {
     details.error = String(e);
     return details;
