@@ -246,6 +246,44 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
     // manifest/weights JSON are normalized to a decompressed JSON Response.
     const origFetch = (typeof globalThis.fetch === 'function') ? globalThis.fetch.bind(globalThis) : null;
     let fetchedShimInstalled = false;
+    let xhrShimInstalled = false;
+    let origXHROpen = null;
+    let origXHRSend = null;
+    // Install a temporary Response.prototype.json wrapper so that any call to
+    // `response.json()` during model loading will attempt gzip-detection and
+    // decompression before failing. This addresses cases where a caller calls
+    // `.json()` on a response whose bytes are compressed but missing
+    // Content-Encoding headers.
+    const origResponseJson = (typeof Response !== 'undefined' && Response.prototype && Response.prototype.json) ? Response.prototype.json : null;
+    let responseJsonShimInstalled = false;
+    if (origResponseJson) {
+      Response.prototype.json = async function() {
+        try {
+          // First try the original behavior
+          return await origResponseJson.call(this);
+        } catch (err) {
+          // If parsing failed, attempt to read ArrayBuffer and decompress
+          try {
+            const ab = await arrayBufferFromResponseWithGzipFallback(this.clone());
+            const text = new TextDecoder('utf-8').decode(ab);
+            const obj = JSON.parse(text);
+            if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) {
+              try { console.warn('[FaceApiLoader shim] Response.json fallback parsed decompressed JSON for', (this.url || '(unknown)'), 'size', ab.byteLength); } catch (e) { console.warn('[FaceApiLoader shim] Response.json fallback parsed decompressed JSON'); }
+            }
+            return obj;
+          } catch (err2) {
+            if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) {
+              try {
+                console.error('[FaceApiLoader shim] Response.json fallback failed for', (this.url || '(unknown)'), err2);
+              } catch (e) { console.error('[FaceApiLoader shim] Response.json fallback failed', err2); }
+            }
+            // Re-throw original error to preserve caller behavior
+            throw err;
+          }
+        }
+      };
+      responseJsonShimInstalled = true;
+    }
     if (origFetch) {
       globalThis.fetch = async function(resource, init) {
         try {
@@ -312,6 +350,90 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
       fetchedShimInstalled = true;
     }
 
+    // Install XMLHttpRequest shim to diagnose and mitigate XHR-based model fetches.
+    if (typeof globalThis.XMLHttpRequest !== 'undefined') {
+      try {
+        origXHROpen = XMLHttpRequest.prototype.open;
+        origXHRSend = XMLHttpRequest.prototype.send;
+
+        XMLHttpRequest.prototype.open = function(method, url) {
+          try { this.__fh_url = url; } catch (e) {}
+          return origXHROpen.apply(this, arguments);
+        };
+
+        XMLHttpRequest.prototype.send = function(body) {
+          const xhr = this;
+          const url = String(xhr.__fh_url || '');
+          const lower = url.toLowerCase();
+          const looksLikeModelFile = (
+            (workingPath && lower.indexOf(workingPath.toLowerCase()) !== -1) ||
+            MODEL_FILES.some(f => lower.endsWith(f.toLowerCase())) ||
+            lower.endsWith('models-manifest.json') ||
+            lower.endsWith('.bin')
+          );
+
+          if (looksLikeModelFile) {
+            const onLoadHandler = async function() {
+              try {
+                if (!xhr || !xhr.status || xhr.status < 200 || xhr.status >= 300) return;
+                // Try parsing responseText as JSON
+                try {
+                  JSON.parse(xhr.responseText);
+                  // parsed fine
+                  return;
+                } catch (parseErr) {
+                  if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader XHR shim] XHR responseText not valid JSON for', url, parseErr && parseErr.message);
+                  // Attempt to re-fetch via origFetch and decompress/cache for subsequent consumers
+                  if (origFetch) {
+                    try {
+                      const fresp = await origFetch(url, { mode: 'cors' });
+                      if (fresp && fresp.ok) {
+                        const ab = await arrayBufferFromResponseWithGzipFallback(fresp.clone());
+                        // Try to parse decompressed text
+                        try {
+                          const txt = new TextDecoder('utf-8').decode(ab);
+                          JSON.parse(txt);
+                          if (typeof caches !== 'undefined') {
+                            try {
+                              const cache = await caches.open('faceapi-models');
+                              const headers = {};
+                              try { fresp.headers.forEach((v, k) => { if (k !== 'content-encoding') headers[k] = v; }); } catch (e) {}
+                              if (!headers['content-type']) headers['content-type'] = 'application/json';
+                              await cache.put(url, new Response(ab, { headers }));
+                              if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader XHR shim] Cached decompressed copy for', url);
+                            } catch (cacheErr) {
+                              if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader XHR shim] Failed to cache decompressed copy for', url, cacheErr);
+                            }
+                          }
+                        } catch (parse2) {
+                          if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader XHR shim] Re-fetched response still not valid JSON for', url, parse2 && parse2.message);
+                        }
+                      }
+                    } catch (reErr) {
+                      if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader XHR shim] Re-fetch failed for', url, reErr);
+                    }
+                  }
+                }
+              } catch (e) {
+                if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.error('[FaceApiLoader XHR shim] Handler error for', url, e);
+              }
+            };
+            try {
+              xhr.addEventListener('load', onLoadHandler);
+            } catch (e) {
+              try { xhr.onload = onLoadHandler; } catch (ee) {}
+            }
+          }
+
+          return origXHRSend.apply(this, arguments);
+        };
+
+        xhrShimInstalled = true;
+      } catch (e) {
+        if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader] Failed to install XHR shim', e);
+      }
+    }
+
     try {
       if (variant === 'ssd') {
         await Promise.all([
@@ -330,6 +452,19 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
       // Restore original fetch if we replaced it
       if (fetchedShimInstalled && origFetch) {
         try { globalThis.fetch = origFetch; } catch (e) { /* ignore */ }
+      }
+      // Restore Response.prototype.json if we replaced it
+      if (responseJsonShimInstalled && origResponseJson) {
+        try { Response.prototype.json = origResponseJson; } catch (e) { /* ignore */ }
+      }
+      // Restore XHR methods if we replaced them
+      if (xhrShimInstalled) {
+        try {
+          if (origXHROpen) XMLHttpRequest.prototype.open = origXHROpen;
+        } catch (e) {}
+        try {
+          if (origXHRSend) XMLHttpRequest.prototype.send = origXHRSend;
+        } catch (e) {}
       }
     }
 

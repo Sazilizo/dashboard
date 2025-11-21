@@ -91,9 +91,13 @@ async function uploadFile(remotePath, buffer, contentType, contentEncoding) {
       const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
       const contentType = mimeTypeForFile(f);
 
-      // For JSON manifests, upload raw (don't gzip) so they are served as valid JSON
-      // and avoid issues where Content-Encoding may not be preserved by proxies.
-      const shouldGzip = contentType !== 'application/json';
+        // For JSON manifests, upload raw (don't gzip) so they are served as valid JSON
+        // and avoid issues where Content-Encoding may not be preserved by proxies.
+        // You can override gzipping behaviour with the UPLOAD_GZIP env var:
+        // - set UPLOAD_GZIP=0 to disable gzipping for all files (safe, slower uploads)
+        // - any other value (or unset) enables gzip for non-JSON files (default)
+        const uploadGzipEnabled = !(process.env.UPLOAD_GZIP === '0');
+        const shouldGzip = uploadGzipEnabled && contentType !== 'application/json';
       const dataToUpload = shouldGzip ? zlib.gzipSync(buf, { level: zlib.constants.Z_BEST_COMPRESSION }) : buf;
       const contentEncoding = shouldGzip ? 'gzip' : undefined;
 
