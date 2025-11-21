@@ -250,9 +250,11 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
       globalThis.fetch = async function(resource, init) {
         try {
           const url = (typeof resource === 'string') ? resource : (resource && resource.url) || '';
-          // Only intercept requests that look like model manifests or json files
+          // Intercept requests that look like JSON/manifest files. We broaden the
+          // match to any `.json` or `weights_manifest` URL because some fetches
+          // may be relative or routed differently by face-api internals.
           const lower = String(url).toLowerCase();
-          const shouldIntercept = lower.indexOf(workingPath.toLowerCase()) === 0 && (lower.endsWith('.json') || lower.endsWith('weights_manifest.json'));
+          const shouldIntercept = lower.endsWith('.json') || lower.indexOf('weights_manifest') !== -1;
           if (!shouldIntercept) return origFetch(resource, init);
 
           const resp = await origFetch(resource, init);
@@ -261,6 +263,7 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
           // Try to parse as JSON quickly; if that works, return original response
           try {
             await resp.clone().json();
+            if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.log('[FaceApiLoader shim] JSON parse succeeded without decompression for', url);
             return resp;
           } catch (e) {
             // Attempt to get ArrayBuffer and decompress if gzipped
@@ -270,8 +273,10 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
               try { resp.headers.forEach((v, k) => { if (k !== 'content-encoding') headers[k] = v; }); } catch (ee) {}
               // Ensure content-type is application/json so consumers call .json() correctly
               if (!headers['content-type']) headers['content-type'] = 'application/json';
+              if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.log('[FaceApiLoader shim] Decompressed response for', url, '-> size', ab.byteLength);
               return new Response(ab, { status: resp.status, statusText: resp.statusText, headers });
             } catch (ee) {
+              if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader shim] Failed to decompress/normalize response for', url, ee);
               // If anything goes wrong, fall back to original response
               return resp;
             }
