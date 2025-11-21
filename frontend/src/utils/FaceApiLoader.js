@@ -250,12 +250,10 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
       globalThis.fetch = async function(resource, init) {
         try {
           const url = (typeof resource === 'string') ? resource : (resource && resource.url) || '';
-          // Intercept requests that look like JSON/manifest files. We broaden the
-          // match to any `.json` or `weights_manifest` URL because some fetches
-          // may be relative or routed differently by face-api internals.
-          const lower = String(url).toLowerCase();
-          const shouldIntercept = lower.endsWith('.json') || lower.indexOf('weights_manifest') !== -1;
-          if (!shouldIntercept) return origFetch(resource, init);
+          // Intercept all requests while loading models. We attempt to parse
+          // JSON responses quickly and, on failure, try to decompress.
+          // This wide interception is temporary and only active during model
+          // loading.
 
           const resp = await origFetch(resource, init);
           if (!resp) return resp;
@@ -269,12 +267,27 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
             // Attempt to get ArrayBuffer and decompress if gzipped
             try {
               const ab = await arrayBufferFromResponseWithGzipFallback(resp.clone());
-              const headers = {};
-              try { resp.headers.forEach((v, k) => { if (k !== 'content-encoding') headers[k] = v; }); } catch (ee) {}
-              // Ensure content-type is application/json so consumers call .json() correctly
-              if (!headers['content-type']) headers['content-type'] = 'application/json';
-              if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.log('[FaceApiLoader shim] Decompressed response for', url, '-> size', ab.byteLength);
-              return new Response(ab, { status: resp.status, statusText: resp.statusText, headers });
+              // Try to parse decompressed bytes as JSON text for diagnostics
+              try {
+                const txt = new TextDecoder('utf-8').decode(ab);
+                JSON.parse(txt);
+                const headers = {};
+                try { resp.headers.forEach((v, k) => { if (k !== 'content-encoding') headers[k] = v; }); } catch (ee) {}
+                if (!headers['content-type']) headers['content-type'] = 'application/json';
+                if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.log('[FaceApiLoader shim] Decompressed and parsed JSON for', url, '-> size', ab.byteLength);
+                return new Response(ab, { status: resp.status, statusText: resp.statusText, headers });
+              } catch (parseErr) {
+                // Not valid JSON after decompression — log a hex/text snippet for debugging
+                if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) {
+                  const u8 = new Uint8Array(ab);
+                  const hex = Array.from(u8.slice(0, 64)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                  let preview = '';
+                  try { preview = new TextDecoder('utf-8', { fatal: false }).decode(u8.slice(0, 128)); } catch (_) { preview = '' }
+                  console.warn('[FaceApiLoader shim] Decompressed response is not valid JSON for', url, 'size', ab.byteLength, 'hex64:', hex, 'textPreview:', preview, 'parseError:', parseErr && parseErr.message);
+                }
+                // Fall back to returning original response so the consumer still errors
+                return resp;
+              }
             } catch (ee) {
               if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader shim] Failed to decompress/normalize response for', url, ee);
               // If anything goes wrong, fall back to original response
