@@ -250,13 +250,23 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
       globalThis.fetch = async function(resource, init) {
         try {
           const url = (typeof resource === 'string') ? resource : (resource && resource.url) || '';
-          // Intercept all requests while loading models. We attempt to parse
-          // JSON responses quickly and, on failure, try to decompress.
-          // This wide interception is temporary and only active during model
-          // loading.
+          // Intercept only requests that are likely model files (manifests,
+          // weight manifests, or binary shards) or that explicitly include
+          // the discovered `workingPath`. This avoids trying to parse unrelated
+          // network requests (favicons, third-party probes) as JSON.
 
           const resp = await origFetch(resource, init);
           if (!resp) return resp;
+
+          // Decide whether this URL looks like a model asset we should normalize
+          const lower = String(url).toLowerCase();
+          const looksLikeModelFile = (
+            (workingPath && lower.indexOf(workingPath.toLowerCase()) !== -1) ||
+            MODEL_FILES.some(f => lower.endsWith(f.toLowerCase())) ||
+            lower.endsWith('models-manifest.json') ||
+            lower.endsWith('.bin')
+          );
+          if (!looksLikeModelFile) return origFetch(resource, init);
 
           // Try to parse as JSON quickly; if that works, return original response
           try {
