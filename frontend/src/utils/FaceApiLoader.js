@@ -205,6 +205,26 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
           // Always normalize to an ArrayBuffer, decompressing client-side if needed
           const ab = await arrayBufferFromResponseWithGzipFallback(resp);
 
+              // If this is a weights manifest, try to parse and log a compact summary
+              try {
+                if (f.toLowerCase().endsWith('weights_manifest.json')) {
+                  try {
+                    const txt = new TextDecoder('utf-8').decode(ab);
+                    const parsed = JSON.parse(txt);
+                    // parsed is typically an array of manifest groups; summarize names/shapes
+                    const summary = (Array.isArray(parsed) ? parsed : [parsed]).map((g) => {
+                      if (!g.weights) return { info: 'no weights array' };
+                      return g.weights.map(w => ({ name: w.name, shape: w.shape }));
+                    });
+                    console.log('[FaceApiLoader] Weight manifest summary for', f, summary);
+                  } catch (e) {
+                    console.warn('[FaceApiLoader] Failed to parse weight manifest', f, e);
+                  }
+                }
+              } catch (logErr) {
+                console.warn('[FaceApiLoader] weight manifest logging failed', f, logErr);
+              }
+
           if (manifest && manifest.files && manifest.files[f] && manifest.files[f].sha256) {
             // verify checksum against decompressed bytes
             const hex = await bufferToHex(ab);
