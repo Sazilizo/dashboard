@@ -38,7 +38,16 @@ export default function ListItems({
   };
 
   return (
-    <ul className="app-list wave-list">
+    <>
+      {resource === 'students' && (
+        <div className="list-toolbar" style={{ marginBottom: 8 }}>
+          <Link to="/dashboard/students/group-sign" className="btn btn-secondary">
+            Group Sign
+          </Link>
+        </div>
+      )}
+
+      <ul className="app-list wave-list">
       {data.map((s) => {
         const id = s.id ?? s.value ?? s;
         const strId = String(id);
@@ -154,6 +163,7 @@ export default function ListItems({
           </li>
         );
       })}
-    </ul>
+      </ul>
+    </>
   );
 }

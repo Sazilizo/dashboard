@@ -141,8 +141,24 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
 
   const MODEL_FILES = FILES_BY_VARIANT[variant] || FILES_BY_VARIANT.tiny;
 
-  // Prefer explicit param, then REACT_APP_MODELS_URLS (plural), then REACT_APP_MODELS_URL, then default
-  let BASE_URL = modelsUrl || process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';
+  // Prefer explicit param, then environment/runtime overrides, then REACT_APP_MODELS_URLS (plural), then REACT_APP_MODELS_URL, then default
+  // Support a temporary force-local flag to prefer the app's bundled `/public/models/` while hosted models are fixed.
+  // - Build-time env: REACT_APP_FORCE_LOCAL_MODELS === 'true'
+  // - Runtime override: window.__FACEAPI_FORCE_LOCAL === true
+  let forceLocal = false;
+  try {
+    if (typeof window !== 'undefined' && window.__FACEAPI_FORCE_LOCAL) forceLocal = true;
+  } catch (e) {}
+  try {
+    if (process && process.env && String(process.env.REACT_APP_FORCE_LOCAL_MODELS).toLowerCase() === 'true') forceLocal = true;
+  } catch (e) {}
+
+  let BASE_URL = null;
+  if (forceLocal && !modelsUrl) {
+    BASE_URL = '/public/models/';
+  } else {
+    BASE_URL = modelsUrl || process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';
+  }
   BASE_URL = ensureSlash(BASE_URL);
 
   // probe the provided base url first, then try a small set of fallbacks
@@ -510,6 +526,14 @@ export function getFaceApiModelsBaseUrl() {
     // eslint-disable-next-line no-undef
     const runtime = (typeof window !== 'undefined' && window.__FACEAPI_MODELS_BASE_URL) ? window.__FACEAPI_MODELS_BASE_URL : null;
     if (runtime) return ensureSlash(runtime);
+  } catch (e) {}
+
+  // Allow forcing local models at runtime or via build env
+  try {
+    if (typeof window !== 'undefined' && window.__FACEAPI_FORCE_LOCAL) return ensureSlash('/public/models/');
+  } catch (e) {}
+  try {
+    if (process && process.env && String(process.env.REACT_APP_FORCE_LOCAL_MODELS).toLowerCase() === 'true') return ensureSlash('/public/models/');
   } catch (e) {}
 
   const cfg = process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';

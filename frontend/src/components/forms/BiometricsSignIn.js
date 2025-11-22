@@ -70,6 +70,8 @@ const BiometricsSignIn = ({
   onSignIn = null, // (info) => {}
   onSignOut = null, // (info) => {}
   folderName = null,
+  // Hide internal primary controls (parent supplies its own buttons)
+  hidePrimaryControls = false,
 }) => {
   // External control: parent or global events can request sign-in/sign-out operations.
   const [externalForceOperation, setExternalForceOperation] = useState(null);
@@ -2195,10 +2197,13 @@ useEffect(() => {
     ? (primaryRecordStartLabel || 'Record Session')
     : (primaryRecordEndLabel || 'End Session');
 
+  // Use 80% viewport width across devices per group-sign requirement
+  const containerStyle = { width: '80vw', maxWidth: '1200px', margin: '0 auto' };
+
   return (
     <div
       className="student-signin-container"
-      style={{ width: isSmallScreen ? '80vw' : '40vw', margin: '0 auto' }}
+      style={containerStyle}
     >
       {loadingModels && <p style={{ textAlign: 'center' }}>Loading models…</p>}
 
@@ -2365,7 +2370,8 @@ useEffect(() => {
             )}
           </div>
 
-          <div style={{ marginBottom: 12 }}>
+          {!hidePrimaryControls && (
+            <div style={{ marginBottom: 12 }}>
               <div style={{ marginBottom: 6 }}>
                 <div style={{ textAlign: 'center' }}>{mode === 'continuous' ? 'Recording…' : ''}</div>
               </div>
@@ -2384,7 +2390,8 @@ useEffect(() => {
                   {recordToggleLabel}
                 </button>
               </div>
-          </div>
+            </div>
+          )}
             </>
           )}
 

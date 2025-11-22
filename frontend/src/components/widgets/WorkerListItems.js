@@ -10,50 +10,58 @@ export default function WorkerListItems({ workers, bucketName = "worker-uploads"
   const { roles = [] } = useData();
 
   return (
-    <ul className="app-list wave-list">
-      {workers.map((w) => (
-        <li key={w.id}>
-          <Link to={`/dashboard/workers/${w.id}`}>
-            <div className="app-profile-photo">
-              <Photos
-                bucketName={bucketName}
-                folderName={folderName}
-                id={w.id}
-                photoCount={1}
-                restrictToProfileFolder={true}
-              />
-            </div>
-            <div className="app-list-item-details">
-              <div className="item-info">
-                <p className="item-name">
-                  <strong>{`${w.name} ${w.last_name}`}</strong>
-                  {isBirthdayFromId(w.id_number) && (
-                    <span className="birthday-badge">🎂 Birthday Today!</span>
-                  )}
-                </p>
-                <p className="item-details">
-                  Role: {(
-                    w?.roles?.name ||
-                    // fallback to global cached roles by role_id if present
-                    (roles && roles.find(r => String(r.id) === String(w.role_id))?.name) ||
-                    '—'
-                  )}
-                  {w.__queued && (
-                    <span className="queued-badge">
-                      (Queued)
-                    </span>
-                  )}
-                </p>
-                {w.school && (
-                  <p className="item-school">
-                    School: {w.school.name || w.school_name || '—'}
-                  </p>
-                )}
+    <>
+      <div className="list-toolbar" style={{ marginBottom: 8 }}>
+        <Link to="/dashboard/workers/group-sign" className="btn btn-secondary">
+          Group Sign
+        </Link>
+      </div>
+
+      <ul className="app-list wave-list">
+        {workers.map((w) => (
+          <li key={w.id}>
+            <Link to={`/dashboard/workers/${w.id}`}>
+              <div className="app-profile-photo">
+                <Photos
+                  bucketName={bucketName}
+                  folderName={folderName}
+                  id={w.id}
+                  photoCount={1}
+                  restrictToProfileFolder={true}
+                />
               </div>
-            </div>
-          </Link>
-        </li>
-      ))}
-    </ul>
+              <div className="app-list-item-details">
+                <div className="item-info">
+                  <p className="item-name">
+                    <strong>{`${w.name} ${w.last_name}`}</strong>
+                    {isBirthdayFromId(w.id_number) && (
+                      <span className="birthday-badge">🎂 Birthday Today!</span>
+                    )}
+                  </p>
+                  <p className="item-details">
+                    Role: {(
+                      w?.roles?.name ||
+                      // fallback to global cached roles by role_id if present
+                      (roles && roles.find(r => String(r.id) === String(w.role_id))?.name) ||
+                      '—'
+                    )}
+                    {w.__queued && (
+                      <span className="queued-badge">
+                        (Queued)
+                      </span>
+                    )}
+                  </p>
+                  {w.school && (
+                    <p className="item-school">
+                      School: {w.school.name || w.school_name || '—'}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }

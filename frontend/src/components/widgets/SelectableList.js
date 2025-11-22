@@ -17,6 +17,7 @@ export default function SelectableList({
   checkbox = false,
   value = [],
   onChange,
+  maxSelect = null,
 }) {
   const [editId, setEditId] = useState(null);
   const [editName, setEditName] = useState("");
@@ -29,15 +30,30 @@ export default function SelectableList({
   const toggleSelect = (id, e) => {
     if (e && e.stopPropagation) e.stopPropagation();
     if (!onChange) return;
+    // Enforce maxSelect: if selecting new item would exceed limit, ignore
     const sid = String(id);
-    if (safeValue.includes(sid)) onChange(safeValue.filter((v) => v !== sid));
-    else onChange([...(safeValue || []), sid]);
+    if (maxSelect && !safeValue.includes(sid) && safeValue.length >= maxSelect) {
+      return; // ignore additional selects
+    }
+    if (safeValue.includes(sid)) {
+      // remove while preserving original types
+      const newVal = (value || []).filter((v) => String(v) !== sid);
+      onChange(newVal);
+    } else {
+      onChange([...(value || []), id]);
+    }
   };
 
   const handleItemClick = (s, e) => {
     // If checkbox mode, toggle selection
     if (checkbox) {
-      toggleSelect(s.id ?? s.value ?? s, e);
+      const idVal = s.id ?? s.value ?? s;
+      // Enforce maxSelect when clicking the item
+      const sid = String(idVal);
+      if (maxSelect && !safeValue.includes(sid) && safeValue.length >= maxSelect) {
+        return; // ignore
+      }
+      toggleSelect(idVal, e);
     }
     // Fire optional single-select callback
     if (typeof onSelect === "function") onSelect(s.id ?? s.value ?? s);
@@ -98,9 +114,18 @@ export default function SelectableList({
                     checked={safeValue.includes(strId)}
                     onChange={(e) => toggleSelect(id, e)}
                     onClick={(e) => e.stopPropagation()}
+                    disabled={
+                      maxSelect && !safeValue.includes(strId) && safeValue.length >= maxSelect
+                    }
                     style={{ position: 'relative', zIndex: 50 }}
                   />
                 </label>
+              )}
+
+              {maxSelect && safeValue.length >= maxSelect && (
+                <span className="text-sm text-muted" style={{ marginLeft: 8 }}>
+                  Max {maxSelect} selected
+                </span>
               )}
 
               {onDelete && (
