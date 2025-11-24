@@ -70,8 +70,8 @@ module.exports = {
     new MiniCssExtractPlugin({
       filename: isProd ? "css/[name].[contenthash].css" : "[name].css",
     }),
-  // copy public folder to the output directory, but ignore models/ (we host models remotely)
-  new CopyWebpackPlugin({ patterns: [{ from: path.resolve(__dirname, "public"), to: path.resolve(__dirname, "dist"), globOptions: { ignore: ["**/models/**"] } }] }),
+  // copy public folder to the output directory (include models so local/public/models is available)
+  new CopyWebpackPlugin({ patterns: [{ from: path.resolve(__dirname, "public"), to: path.resolve(__dirname, "dist") }] }),
   ],
   devServer: {
     // serve static files from public during development, then fall back to dist

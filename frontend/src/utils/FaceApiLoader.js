@@ -154,8 +154,9 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
   } catch (e) {}
 
   let BASE_URL = null;
+  // Prefer serving models from the app's public `models/` directory by default.
   if (forceLocal && !modelsUrl) {
-    BASE_URL = '/public/models/';
+    BASE_URL = '/models/';
   } else {
     BASE_URL = modelsUrl || process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';
   }
@@ -530,7 +531,7 @@ export function getFaceApiModelsBaseUrl() {
 
   // Allow forcing local models at runtime or via build env
   try {
-    if (typeof window !== 'undefined' && window.__FACEAPI_FORCE_LOCAL) return ensureSlash('/public/models/');
+    if (typeof window !== 'undefined' && window.__FACEAPI_FORCE_LOCAL) return ensureSlash('/models/');
   } catch (e) {}
   try {
     if (process && process.env && String(process.env.REACT_APP_FORCE_LOCAL_MODELS).toLowerCase() === 'true') return ensureSlash('/public/models/');
