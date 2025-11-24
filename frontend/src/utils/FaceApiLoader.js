@@ -114,7 +114,7 @@ async function probeModelUrl(baseUrl, testFile) {
  *  - requireConsent: boolean - if true, will refuse to download unless biometric consent exists
  * Returns: { success: boolean, reason?: string }
  */
-export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, requireWifi = false, requireConsent = false } = {}) {
+export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, requireWifi = false, requireConsent = false, allowRemote = false } = {}) {
   if (modelsLoaded) return { success: true };
 
   if (requireConsent && !hasBiometricConsent()) {
@@ -154,13 +154,29 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
   } catch (e) {}
 
   let BASE_URL = null;
-  // Prefer serving models from the app's public `models/` directory by default.
-  if (forceLocal && !modelsUrl) {
+  // Determine whether remote models are allowed. By default, disallow remote
+  // model downloads so the app uses its bundled public/models directory.
+  let allowRemoteEnv = false;
+  try {
+    if (typeof window !== 'undefined' && window.__FACEAPI_ALLOW_REMOTE) allowRemoteEnv = true;
+  } catch (e) {}
+  try {
+    if (process && process.env && String(process.env.REACT_APP_ALLOW_REMOTE_MODELS).toLowerCase() === 'true') allowRemoteEnv = true;
+  } catch (e) {}
+  const allowRemoteFinal = allowRemote || allowRemoteEnv;
+
+  if (!allowRemoteFinal) {
+    // Force local public models
     BASE_URL = '/models/';
   } else {
-    BASE_URL = modelsUrl || process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';
+    if (forceLocal && !modelsUrl) {
+      BASE_URL = '/models/';
+    } else {
+      BASE_URL = modelsUrl || process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';
+    }
   }
   BASE_URL = ensureSlash(BASE_URL);
+  try { console.info('[FaceApiLoader] models base URL chosen:', BASE_URL, 'allowRemote=', allowRemoteFinal); } catch (e) {}
 
   // probe the provided base url first, then try a small set of fallbacks
   const candidatePaths = [BASE_URL, '/models/', '/public/models/', 'models/', './models/'];
@@ -520,7 +536,17 @@ export function areFaceApiModelsLoaded() {
 }
 
 export function getFaceApiModelsBaseUrl() {
-  // Return the last working path discovered during a load, or fall back to configured env values
+  // If remote models are not explicitly allowed, always return local `/models/`.
+  let allowRemoteEnv = false;
+  try {
+    if (typeof window !== 'undefined' && window.__FACEAPI_ALLOW_REMOTE) allowRemoteEnv = true;
+  } catch (e) {}
+  try {
+    if (process && process.env && String(process.env.REACT_APP_ALLOW_REMOTE_MODELS).toLowerCase() === 'true') allowRemoteEnv = true;
+  } catch (e) {}
+  if (!allowRemoteEnv) return ensureSlash('/models/');
+
+  // Remote models allowed: prefer last discovered working path
   if (lastBaseUrl) return lastBaseUrl;
   // allow a runtime override for debugging without rebuild: window.__FACEAPI_MODELS_BASE_URL
   try {
@@ -534,7 +560,7 @@ export function getFaceApiModelsBaseUrl() {
     if (typeof window !== 'undefined' && window.__FACEAPI_FORCE_LOCAL) return ensureSlash('/models/');
   } catch (e) {}
   try {
-    if (process && process.env && String(process.env.REACT_APP_FORCE_LOCAL_MODELS).toLowerCase() === 'true') return ensureSlash('/public/models/');
+    if (process && process.env && String(process.env.REACT_APP_FORCE_LOCAL_MODELS).toLowerCase() === 'true') return ensureSlash('/models/');
   } catch (e) {}
 
   const cfg = process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';
