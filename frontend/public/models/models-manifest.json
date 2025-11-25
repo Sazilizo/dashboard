@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "generated": "2025-11-25T00:00:00Z",
+  "models": {
+    "tiny_face_detector": "tiny_face_detector_model-weights_manifest.json",
+    "face_landmark_68": "face_landmark_68_model-weights_manifest.json",
+    "face_recognition": "face_recognition_model-weights_manifest.json",
+    "ssd_mobilenetv1": "ssd_mobilenetv1_model-weights_manifest.json"
+  }
+}
