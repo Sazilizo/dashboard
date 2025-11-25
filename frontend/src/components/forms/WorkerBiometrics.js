@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import BiometricsSignIn from './BiometricsSignIn';
 import useOfflineTable from '../../hooks/useOfflineTable';
 import api from '../../api/client';
@@ -17,6 +17,11 @@ export default function WorkerBiometrics(props) {
   } = props;
 
   const { addRow, updateRow, rows: workerRows = [] } = useOfflineTable('worker_attendance_records');
+
+  // Local UI state for small control panel and participants list
+  const [showBiometrics, setShowBiometrics] = useState(false);
+  const [participants, setParticipants] = useState([]);
+  const [showParticipants, setShowParticipants] = useState(false);
   const { user } = useAuth() || {};
 
   const handleCompleted = useCallback(async (data) => {
@@ -52,6 +57,10 @@ export default function WorkerBiometrics(props) {
             const { data: rpcData, error: rpcErr } = await api.rpc('rpc_record_worker_attendance', params);
             if (rpcErr) throw rpcErr;
             results.push({ type: 'signin', result: rpcData });
+            try {
+              const pid = rpcData?.id || null;
+              setParticipants((p) => [...p, { workerId: wid, displayName: null, signInTime: ts, attendanceId: pid }]);
+            } catch (e) {}
             continue;
           } catch (rpcError) {
             // fallback to offline insertion
@@ -66,6 +75,10 @@ export default function WorkerBiometrics(props) {
               };
               const added = await addRow(payload);
               results.push({ type: 'signin', result: added });
+              try {
+                const pid = added?.id || added?.tempId || null;
+                setParticipants((p) => [...p, { workerId: wid, displayName: null, signInTime: ts, attendanceId: pid }]);
+              } catch (e) {}
               continue;
             } catch (err2) {
               results.push({ type: 'signin', error: err2?.message || String(err2) });
@@ -94,6 +107,7 @@ export default function WorkerBiometrics(props) {
                 const { data: upd, error: upderr } = await api.from('worker_attendance_records').update({ sign_out_time: ts }).eq('id', r.attendanceId).select().maybeSingle();
                 if (upderr) throw upderr;
                 results.push({ type: 'signout', result: upd });
+                try { setParticipants((p) => p.filter(x => Number(x.workerId) !== Number(wid))); } catch (e) {}
                 continue;
               }
 
@@ -109,6 +123,7 @@ export default function WorkerBiometrics(props) {
                 const { data: upd, error: uerr } = await api.from('worker_attendance_records').update({ sign_out_time: ts }).eq('id', open.id).select().maybeSingle();
                 if (uerr) throw uerr;
                 results.push({ type: 'signout', result: upd });
+                try { setParticipants((p) => p.filter(x => Number(x.workerId) !== Number(wid))); } catch (e) {}
                 continue;
               }
 
@@ -124,6 +139,7 @@ export default function WorkerBiometrics(props) {
               };
               const added = await addRow(payload2);
               results.push({ type: 'signout', result: added });
+              try { setParticipants((p) => p.filter(x => Number(x.workerId) !== Number(wid))); } catch (e) {}
               continue;
             } catch (err2) {
               results.push({ type: 'signout', error: err2?.message || String(err2) });
@@ -144,16 +160,59 @@ export default function WorkerBiometrics(props) {
   }, [addRow, updateRow, api, onCompleted, user, userId, workerId]);
 
   return (
-    <BiometricsSignIn
-      entityType="user"
-      bucketName={bucketName}
-      folderName={folderName}
-      userId={userId}
-      workerId={workerId}
-      forceOperation={forceOperation}
-      onCompleted={handleCompleted}
-      onCancel={onCancel}
-      {...rest}
-    />
+    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+      <div style={{ minWidth: 220, border: '1px solid #e5e7eb', padding: 10, borderRadius: 8, background: '#fff' }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <button className="submit-btn" onClick={() => { setShowBiometrics(true); }}>
+            Sign In
+          </button>
+          <button className="submit-btn" onClick={() => { setShowBiometrics(true); }}>
+            Sign Out
+          </button>
+          <button className="submit-btn" onClick={() => { try { if (typeof onCancel === 'function') onCancel(); } catch (e) {} }}>
+            Cancel
+          </button>
+        </div>
+
+        <div style={{ fontSize: '0.9rem', color: '#374151', marginBottom: 8 }}>
+          <div>Time: {new Date().toLocaleTimeString()}</div>
+          <div>Participants: {participants.length}</div>
+        </div>
+
+        <div>
+          <button className="submit-btn" onClick={() => setShowParticipants((s) => !s)}>
+            {showParticipants ? 'Hide' : 'Show'} Signed In
+          </button>
+        </div>
+
+        {showParticipants && (
+          <div style={{ marginTop: 8, maxHeight: 220, overflow: 'auto' }}>
+            {participants.length === 0 && <div style={{ color: '#6b7280' }}>No participants yet</div>}
+            {participants.map((p, idx) => (
+              <div key={`${p.workerId}-${idx}`} style={{ padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
+                <div style={{ fontSize: '0.95rem' }}>{p.displayName || `Worker ${p.workerId}`}</div>
+                <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>{p.signInTime ? new Date(p.signInTime).toLocaleTimeString() : '—'}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ flex: 1 }}>
+        {showBiometrics && (
+          <BiometricsSignIn
+            entityType="user"
+            bucketName={bucketName}
+            folderName={folderName}
+            userId={userId}
+            workerId={workerId}
+            forceOperation={forceOperation}
+            onCompleted={handleCompleted}
+            onCancel={onCancel}
+            {...rest}
+          />
+        )}
+      </div>
+    </div>
   );
 }
