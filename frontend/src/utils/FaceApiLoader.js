@@ -114,7 +114,7 @@ async function probeModelUrl(baseUrl, testFile) {
  *  - requireConsent: boolean - if true, will refuse to download unless biometric consent exists
  * Returns: { success: boolean, reason?: string }
  */
-export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, requireWifi = false, requireConsent = false, allowRemote = false } = {}) {
+export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, baseUrl = null, requireWifi = false, requireConsent = false, allowRemote = false } = {}) {
   if (modelsLoaded) return { success: true };
 
   if (requireConsent && !hasBiometricConsent()) {
@@ -165,7 +165,10 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
   } catch (e) {}
   const allowRemoteFinal = allowRemote || allowRemoteEnv;
 
-  if (!allowRemoteFinal) {
+  // If caller provided an explicit baseUrl use that first (e.g. caller verified it)
+  if (baseUrl) {
+    BASE_URL = baseUrl;
+  } else if (!allowRemoteFinal) {
     // Force local public models
     BASE_URL = '/models/';
   } else {
@@ -193,6 +196,7 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
   }
 
   if (!workingPath) {
+    try { console.warn('[FaceApiLoader] no workingPath from probes', probeResults); } catch (e) {}
     return { success: false, reason: 'models_unavailable', details: { probes: probeResults } };
   }
 

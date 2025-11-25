@@ -85,9 +85,19 @@ export default function OfflineSettings() {
             results.push({ file: f, url, ok: false, status: r.status, statusText: r.statusText });
             continue;
           }
+          // Try to ensure the response is actually JSON (some servers return index.html with 200)
+          let parsedOk = false;
+          try {
+            await r.clone().json();
+            parsedOk = true;
+          } catch (parseErr) {
+            // If JSON parse fails, also accept if content-type explicitly indicates JSON
+            const ct = (r.headers.get('content-type') || '').toLowerCase();
+            if (ct.indexOf('application/json') !== -1 || ct.indexOf('application/octet-stream') !== -1) parsedOk = true;
+          }
           const ct = r.headers.get('content-type') || '';
           const size = r.headers.get('content-length') || null;
-          results.push({ file: f, url, ok: true, status: r.status, contentType: ct, contentLength: size });
+          results.push({ file: f, url, ok: parsedOk, status: r.status, contentType: ct, contentLength: size });
         } catch (err) {
           results.push({ file: f, url, ok: false, error: String(err) });
         }
@@ -168,9 +178,17 @@ export default function OfflineSettings() {
           results.push({ file: f, url, ok: false, status: r.status, statusText: r.statusText });
           continue;
         }
+        let parsedOk = false;
+        try {
+          await r.clone().json();
+          parsedOk = true;
+        } catch (parseErr) {
+          const ct = (r.headers.get('content-type') || '').toLowerCase();
+          if (ct.indexOf('application/json') !== -1 || ct.indexOf('application/octet-stream') !== -1) parsedOk = true;
+        }
         const ct = r.headers.get('content-type') || '';
         const size = r.headers.get('content-length') || null;
-        results.push({ file: f, url, ok: true, status: r.status, contentType: ct, contentLength: size });
+        results.push({ file: f, url, ok: parsedOk, status: r.status, contentType: ct, contentLength: size });
       } catch (err) {
         results.push({ file: f, url, ok: false, error: String(err) });
       }
