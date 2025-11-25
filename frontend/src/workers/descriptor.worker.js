@@ -61,86 +61,7 @@ async function ensureFaceApi() {
       } catch (e) {}
     }
 
-    // Install pako for gzip decompression in the worker, then load face-api UMD bundle
-    try {
-      importScripts('https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js');
-      console.info('[descriptor.worker] pako loaded in worker');
-    } catch (e) {
-      console.warn('[descriptor.worker] failed to load pako from CDN, gzip fallbacks may not work', e);
-    }
-
-    // Provide a helper to normalize ArrayBuffer responses and decompress gzipped bytes
-    async function arrayBufferFromResponseWithGzipFallback(resp) {
-      const raw = await resp.arrayBuffer();
-      try {
-        const ce = resp.headers && resp.headers.get ? resp.headers.get('content-encoding') : null;
-        if (ce && /gzip/i.test(ce)) return raw;
-      } catch (e) {}
-      if (raw && raw.byteLength >= 2) {
-        const view = new Uint8Array(raw, 0, 2);
-        if (view[0] === 0x1F && view[1] === 0x8B && typeof pako !== 'undefined') {
-          try {
-            const dec = pako.ungzip(new Uint8Array(raw));
-            return dec.buffer;
-          } catch (err) {
-            console.warn('[descriptor.worker] pako.ungzip failed for', err);
-            return raw;
-          }
-        }
-      }
-      return raw;
-    }
-
-    // Shim Response.prototype.json to try JSON.parse on decompressed bytes when needed
-    if (typeof Response !== 'undefined' && Response.prototype && Response.prototype.json) {
-      const origJson = Response.prototype.json;
-      Response.prototype.json = async function() {
-        try {
-          return await origJson.call(this);
-        } catch (err) {
-          try {
-            const ab = await arrayBufferFromResponseWithGzipFallback(this.clone());
-            const text = new TextDecoder('utf-8').decode(ab);
-            return JSON.parse(text);
-          } catch (err2) {
-            throw err; // preserve original error
-          }
-        }
-      };
-    }
-
-    // Wrap fetch to normalize model asset responses (manifests and binary shards)
-    if (typeof globalThis.fetch === 'function') {
-      const origFetch = globalThis.fetch.bind(globalThis);
-      globalThis.fetch = async function(resource, init) {
-        const resp = await origFetch(resource, init);
-        try {
-          const url = (typeof resource === 'string') ? resource : (resource && resource.url) || '';
-          const lower = String(url).toLowerCase();
-          const looksLikeModel = lower.endsWith('weights_manifest.json') || lower.endsWith('models-manifest.json') || lower.endsWith('.bin');
-          if (!looksLikeModel) return resp;
-          try {
-            // Normalize to ArrayBuffer and decompress client-side if necessary
-            const ab = await arrayBufferFromResponseWithGzipFallback(resp.clone());
-            // If content is text (manifest), create a JSON response
-            const ct = resp.headers && resp.headers.get ? resp.headers.get('content-type') || '' : '';
-            const headers = {};
-            try { resp.headers.forEach((v, k) => { if (k !== 'content-encoding') headers[k] = v; }); } catch (e) {}
-            if (ct.indexOf('application/json') !== -1 || lower.endsWith('weights_manifest.json') || lower.endsWith('models-manifest.json')) {
-              if (!headers['content-type']) headers['content-type'] = 'application/json';
-              return new Response(ab, { status: resp.status, statusText: resp.statusText, headers });
-            }
-            // For binary shards return decompressed bytes
-            return new Response(ab, { status: resp.status, statusText: resp.statusText, headers });
-          } catch (e) {
-            // fallback to original response
-            return resp;
-          }
-        } catch (e) {
-          return resp;
-        }
-      };
-    }
+    // No gzip handling in worker: rely on server to serve the model files as-is.
 
     // Skip dynamic import and go straight to UMD bundle
     console.log('[descriptor.worker] loading face-api.js from CDN');
@@ -358,16 +279,6 @@ self.onmessage = async (e) => {
             landmarks: fullDetection.landmarks.positions.length,
             imageSize: { width: bitmap.width, height: bitmap.height },
             descriptor: fullDetection.descriptor.length
-          }
-        });
-        
-        // Send back success diagnostic
-        self.postMessage({ 
-          id, 
-          diagnostic: { 
-            status: 'success',
-            score: detection.score,
-            imageSize: { width: bitmap.width, height: bitmap.height }
           }
         });
       } catch (err) {
