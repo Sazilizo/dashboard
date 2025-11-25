@@ -214,8 +214,10 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, ba
           try {
             manifest = await parseJsonResponseWithGzipFallback(mresp);
           } catch (e) {
-            console.warn('[FaceApiLoader] models-manifest.json is not valid JSON or could not be parsed', e);
-            return { success: false, reason: 'models_unavailable', error: 'invalid_manifest' };
+            // If manifest exists but cannot be parsed (e.g., server returned HTML index),
+            // log a warning and continue without manifest checks rather than aborting.
+            console.warn('[FaceApiLoader] models-manifest.json is not valid JSON or could not be parsed; continuing without manifest checks', e);
+            manifest = null;
           }
         }
       } catch (e) {
