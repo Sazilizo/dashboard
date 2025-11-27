@@ -1,7 +1,6 @@
 // src/utils/FaceApiLoader.js
 import { getFaceApi } from './faceApiShim';
 import { hasBiometricConsent } from './biometricConsent';
-import pako from 'pako';
 
 let modelsLoaded = false;
 let lastBaseUrl = null;
@@ -28,45 +27,13 @@ function isOnWifiLike() {
 }
 
 async function arrayBufferFromResponseWithGzipFallback(resp) {
-  // Read raw bytes
-  const raw = await resp.arrayBuffer();
-  try {
-    const ce = resp.headers && resp.headers.get ? resp.headers.get('content-encoding') : null;
-    if (ce && /gzip/i.test(ce)) return raw;
-  } catch (e) {}
-
-  // If server omitted Content-Encoding but bytes look gzipped, decompress client-side
-  if (raw && raw.byteLength >= 2) {
-    const view = new Uint8Array(raw, 0, 2);
-    if (view[0] === 0x1F && view[1] === 0x8B) {
-      try {
-        const dec = pako.ungzip(new Uint8Array(raw));
-        return dec.buffer;
-      } catch (err) {
-        console.warn('[FaceApiLoader] pako.ungzip failed for', resp.url, err);
-        return raw;
-      }
-    }
-  }
-  return raw;
+  // No client-side gzip fallback: return raw bytes as served by the server.
+  return await resp.arrayBuffer();
 }
 
 async function parseJsonResponseWithGzipFallback(resp) {
-  // Use clones so we don't consume the same body stream twice.
-  try {
-    const tryJson = resp.clone();
-    return await tryJson.json();
-  } catch (e) {
-    // Fallback: use a fresh clone to read ArrayBuffer and detect/decompress gzip
-    try {
-      const ar = resp.clone();
-      const ab = await arrayBufferFromResponseWithGzipFallback(ar);
-      const text = new TextDecoder('utf-8').decode(ab);
-      return JSON.parse(text);
-    } catch (e2) {
-      throw e2;
-    }
-  }
+  // No gzip fallback: rely on server to return JSON with correct headers.
+  return await resp.json();
 }
 
 async function probeModelUrl(baseUrl, testFile) {
@@ -114,7 +81,7 @@ async function probeModelUrl(baseUrl, testFile) {
  *  - requireConsent: boolean - if true, will refuse to download unless biometric consent exists
  * Returns: { success: boolean, reason?: string }
  */
-export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, requireWifi = false, requireConsent = false } = {}) {
+export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, baseUrl = null, requireWifi = false, requireConsent = false, allowRemote = false } = {}) {
   if (modelsLoaded) return { success: true };
 
   if (requireConsent && !hasBiometricConsent()) {
@@ -154,12 +121,32 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
   } catch (e) {}
 
   let BASE_URL = null;
-  if (forceLocal && !modelsUrl) {
-    BASE_URL = '/public/models/';
+  // Determine whether remote models are allowed. By default, disallow remote
+  // model downloads so the app uses its bundled public/models directory.
+  let allowRemoteEnv = false;
+  try {
+    if (typeof window !== 'undefined' && window.__FACEAPI_ALLOW_REMOTE) allowRemoteEnv = true;
+  } catch (e) {}
+  try {
+    if (process && process.env && String(process.env.REACT_APP_ALLOW_REMOTE_MODELS).toLowerCase() === 'true') allowRemoteEnv = true;
+  } catch (e) {}
+  const allowRemoteFinal = allowRemote || allowRemoteEnv;
+
+  // If caller provided an explicit baseUrl use that first (e.g. caller verified it)
+  if (baseUrl) {
+    BASE_URL = baseUrl;
+  } else if (!allowRemoteFinal) {
+    // Force local public models
+    BASE_URL = '/models/';
   } else {
-    BASE_URL = modelsUrl || process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';
+    if (forceLocal && !modelsUrl) {
+      BASE_URL = '/models/';
+    } else {
+      BASE_URL = modelsUrl || process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';
+    }
   }
   BASE_URL = ensureSlash(BASE_URL);
+  try { console.info('[FaceApiLoader] models base URL chosen:', BASE_URL, 'allowRemote=', allowRemoteFinal); } catch (e) {}
 
   // probe the provided base url first, then try a small set of fallbacks
   const candidatePaths = [BASE_URL, '/models/', '/public/models/', 'models/', './models/'];
@@ -176,6 +163,7 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
   }
 
   if (!workingPath) {
+    try { console.warn('[FaceApiLoader] no workingPath from probes', probeResults); } catch (e) {}
     return { success: false, reason: 'models_unavailable', details: { probes: probeResults } };
   }
 
@@ -193,8 +181,10 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
           try {
             manifest = await parseJsonResponseWithGzipFallback(mresp);
           } catch (e) {
-            console.warn('[FaceApiLoader] models-manifest.json is not valid JSON or could not be parsed', e);
-            return { success: false, reason: 'models_unavailable', error: 'invalid_manifest' };
+            // If manifest exists but cannot be parsed (e.g., server returned HTML index),
+            // log a warning and continue without manifest checks rather than aborting.
+            console.warn('[FaceApiLoader] models-manifest.json is not valid JSON or could not be parsed; continuing without manifest checks', e);
+            manifest = null;
           }
         }
       } catch (e) {
@@ -275,200 +265,7 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
   // Load faceapi and the selected networks
   try {
     const faceapi = await getFaceApi();
-    // Some servers may serve gzipped JSON manifests without proper
-    // Content-Encoding headers. face-api.js calls `fetch(...).then(r=>r.json())`
-    // internally and will throw if it receives compressed bytes. To work
-    // around that, temporarily wrap `fetch` so that requests for model
-    // manifest/weights JSON are normalized to a decompressed JSON Response.
-    const origFetch = (typeof globalThis.fetch === 'function') ? globalThis.fetch.bind(globalThis) : null;
-    let fetchedShimInstalled = false;
-    let xhrShimInstalled = false;
-    let origXHROpen = null;
-    let origXHRSend = null;
-    // Install a temporary Response.prototype.json wrapper so that any call to
-    // `response.json()` during model loading will attempt gzip-detection and
-    // decompression before failing. This addresses cases where a caller calls
-    // `.json()` on a response whose bytes are compressed but missing
-    // Content-Encoding headers.
-    const origResponseJson = (typeof Response !== 'undefined' && Response.prototype && Response.prototype.json) ? Response.prototype.json : null;
-    let responseJsonShimInstalled = false;
-    if (origResponseJson) {
-      Response.prototype.json = async function() {
-        try {
-          // First try the original behavior
-          return await origResponseJson.call(this);
-        } catch (err) {
-          // If parsing failed, attempt to read ArrayBuffer and decompress
-          try {
-            const ab = await arrayBufferFromResponseWithGzipFallback(this.clone());
-            const text = new TextDecoder('utf-8').decode(ab);
-            const obj = JSON.parse(text);
-            if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) {
-              try { console.warn('[FaceApiLoader shim] Response.json fallback parsed decompressed JSON for', (this.url || '(unknown)'), 'size', ab.byteLength); } catch (e) { console.warn('[FaceApiLoader shim] Response.json fallback parsed decompressed JSON'); }
-            }
-            return obj;
-          } catch (err2) {
-            if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) {
-              try {
-                console.error('[FaceApiLoader shim] Response.json fallback failed for', (this.url || '(unknown)'), err2);
-              } catch (e) { console.error('[FaceApiLoader shim] Response.json fallback failed', err2); }
-            }
-            // Re-throw original error to preserve caller behavior
-            throw err;
-          }
-        }
-      };
-      responseJsonShimInstalled = true;
-    }
-    if (origFetch) {
-      globalThis.fetch = async function(resource, init) {
-        try {
-          const url = (typeof resource === 'string') ? resource : (resource && resource.url) || '';
-          // Intercept only requests that are likely model files (manifests,
-          // weight manifests, or binary shards) or that explicitly include
-          // the discovered `workingPath`. This avoids trying to parse unrelated
-          // network requests (favicons, third-party probes) as JSON.
-
-          const resp = await origFetch(resource, init);
-          if (!resp) return resp;
-
-          // Decide whether this URL looks like a model asset we should normalize
-          const lower = String(url).toLowerCase();
-          const looksLikeModelFile = (
-            (workingPath && lower.indexOf(workingPath.toLowerCase()) !== -1) ||
-            MODEL_FILES.some(f => lower.endsWith(f.toLowerCase())) ||
-            lower.endsWith('models-manifest.json') ||
-            lower.endsWith('.bin')
-          );
-          if (!looksLikeModelFile) return origFetch(resource, init);
-
-          // Try to parse as JSON quickly; if that works, return original response
-          try {
-            await resp.clone().json();
-            if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.log('[FaceApiLoader shim] JSON parse succeeded without decompression for', url);
-            return resp;
-          } catch (e) {
-            // Attempt to get ArrayBuffer and decompress if gzipped
-            try {
-              const ab = await arrayBufferFromResponseWithGzipFallback(resp.clone());
-              // Try to parse decompressed bytes as JSON text for diagnostics
-              try {
-                const txt = new TextDecoder('utf-8').decode(ab);
-                JSON.parse(txt);
-                const headers = {};
-                try { resp.headers.forEach((v, k) => { if (k !== 'content-encoding') headers[k] = v; }); } catch (ee) {}
-                if (!headers['content-type']) headers['content-type'] = 'application/json';
-                if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.log('[FaceApiLoader shim] Decompressed and parsed JSON for', url, '-> size', ab.byteLength);
-                return new Response(ab, { status: resp.status, statusText: resp.statusText, headers });
-              } catch (parseErr) {
-                // Not valid JSON after decompression — log a hex/text snippet for debugging
-                if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) {
-                  const u8 = new Uint8Array(ab);
-                  const hex = Array.from(u8.slice(0, 64)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-                  let preview = '';
-                  try { preview = new TextDecoder('utf-8', { fatal: false }).decode(u8.slice(0, 128)); } catch (_) { preview = '' }
-                  console.warn('[FaceApiLoader shim] Decompressed response is not valid JSON for', url, 'size', ab.byteLength, 'hex64:', hex, 'textPreview:', preview, 'parseError:', parseErr && parseErr.message);
-                }
-                // Fall back to returning original response so the consumer still errors
-                return resp;
-              }
-            } catch (ee) {
-              if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader shim] Failed to decompress/normalize response for', url, ee);
-              // If anything goes wrong, fall back to original response
-              return resp;
-            }
-          }
-        } catch (outer) {
-          // If our shim fails, fallback to original fetch
-          try { return origFetch(resource, init); } catch (e) { throw outer; }
-        }
-      };
-      fetchedShimInstalled = true;
-    }
-
-    // Install XMLHttpRequest shim to diagnose and mitigate XHR-based model fetches.
-    if (typeof globalThis.XMLHttpRequest !== 'undefined') {
-      try {
-        origXHROpen = XMLHttpRequest.prototype.open;
-        origXHRSend = XMLHttpRequest.prototype.send;
-
-        XMLHttpRequest.prototype.open = function(method, url) {
-          try { this.__fh_url = url; } catch (e) {}
-          return origXHROpen.apply(this, arguments);
-        };
-
-        XMLHttpRequest.prototype.send = function(body) {
-          const xhr = this;
-          const url = String(xhr.__fh_url || '');
-          const lower = url.toLowerCase();
-          const looksLikeModelFile = (
-            (workingPath && lower.indexOf(workingPath.toLowerCase()) !== -1) ||
-            MODEL_FILES.some(f => lower.endsWith(f.toLowerCase())) ||
-            lower.endsWith('models-manifest.json') ||
-            lower.endsWith('.bin')
-          );
-
-          if (looksLikeModelFile) {
-            const onLoadHandler = async function() {
-              try {
-                if (!xhr || !xhr.status || xhr.status < 200 || xhr.status >= 300) return;
-                // Try parsing responseText as JSON
-                try {
-                  JSON.parse(xhr.responseText);
-                  // parsed fine
-                  return;
-                } catch (parseErr) {
-                  if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader XHR shim] XHR responseText not valid JSON for', url, parseErr && parseErr.message);
-                  // Attempt to re-fetch via origFetch and decompress/cache for subsequent consumers
-                  if (origFetch) {
-                    try {
-                      const fresp = await origFetch(url, { mode: 'cors' });
-                      if (fresp && fresp.ok) {
-                        const ab = await arrayBufferFromResponseWithGzipFallback(fresp.clone());
-                        // Try to parse decompressed text
-                        try {
-                          const txt = new TextDecoder('utf-8').decode(ab);
-                          JSON.parse(txt);
-                          if (typeof caches !== 'undefined') {
-                            try {
-                              const cache = await caches.open('faceapi-models');
-                              const headers = {};
-                              try { fresp.headers.forEach((v, k) => { if (k !== 'content-encoding') headers[k] = v; }); } catch (e) {}
-                              if (!headers['content-type']) headers['content-type'] = 'application/json';
-                              await cache.put(url, new Response(ab, { headers }));
-                              if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader XHR shim] Cached decompressed copy for', url);
-                            } catch (cacheErr) {
-                              if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader XHR shim] Failed to cache decompressed copy for', url, cacheErr);
-                            }
-                          }
-                        } catch (parse2) {
-                          if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader XHR shim] Re-fetched response still not valid JSON for', url, parse2 && parse2.message);
-                        }
-                      }
-                    } catch (reErr) {
-                      if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader XHR shim] Re-fetch failed for', url, reErr);
-                    }
-                  }
-                }
-              } catch (e) {
-                if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.error('[FaceApiLoader XHR shim] Handler error for', url, e);
-              }
-            };
-            try {
-              xhr.addEventListener('load', onLoadHandler);
-            } catch (e) {
-              try { xhr.onload = onLoadHandler; } catch (ee) {}
-            }
-          }
-
-          return origXHRSend.apply(this, arguments);
-        };
-
-        xhrShimInstalled = true;
-      } catch (e) {
-        if (typeof window !== 'undefined' && window.__FACEAPI_DEBUG) console.warn('[FaceApiLoader] Failed to install XHR shim', e);
-      }
-    }
+    // No fetch/Response/XHR gzip shims: rely on server to serve correct bytes and headers.
 
     try {
       if (variant === 'ssd') {
@@ -485,23 +282,7 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
         ]);
       }
     } finally {
-      // Restore original fetch if we replaced it
-      if (fetchedShimInstalled && origFetch) {
-        try { globalThis.fetch = origFetch; } catch (e) { /* ignore */ }
-      }
-      // Restore Response.prototype.json if we replaced it
-      if (responseJsonShimInstalled && origResponseJson) {
-        try { Response.prototype.json = origResponseJson; } catch (e) { /* ignore */ }
-      }
-      // Restore XHR methods if we replaced them
-      if (xhrShimInstalled) {
-        try {
-          if (origXHROpen) XMLHttpRequest.prototype.open = origXHROpen;
-        } catch (e) {}
-        try {
-          if (origXHRSend) XMLHttpRequest.prototype.send = origXHRSend;
-        } catch (e) {}
-      }
+      // Nothing to restore because no runtime shims were installed.
     }
 
     modelsLoaded = true;
@@ -519,7 +300,17 @@ export function areFaceApiModelsLoaded() {
 }
 
 export function getFaceApiModelsBaseUrl() {
-  // Return the last working path discovered during a load, or fall back to configured env values
+  // If remote models are not explicitly allowed, always return local `/models/`.
+  let allowRemoteEnv = false;
+  try {
+    if (typeof window !== 'undefined' && window.__FACEAPI_ALLOW_REMOTE) allowRemoteEnv = true;
+  } catch (e) {}
+  try {
+    if (process && process.env && String(process.env.REACT_APP_ALLOW_REMOTE_MODELS).toLowerCase() === 'true') allowRemoteEnv = true;
+  } catch (e) {}
+  if (!allowRemoteEnv) return ensureSlash('/models/');
+
+  // Remote models allowed: prefer last discovered working path
   if (lastBaseUrl) return lastBaseUrl;
   // allow a runtime override for debugging without rebuild: window.__FACEAPI_MODELS_BASE_URL
   try {
@@ -530,10 +321,10 @@ export function getFaceApiModelsBaseUrl() {
 
   // Allow forcing local models at runtime or via build env
   try {
-    if (typeof window !== 'undefined' && window.__FACEAPI_FORCE_LOCAL) return ensureSlash('/public/models/');
+    if (typeof window !== 'undefined' && window.__FACEAPI_FORCE_LOCAL) return ensureSlash('/models/');
   } catch (e) {}
   try {
-    if (process && process.env && String(process.env.REACT_APP_FORCE_LOCAL_MODELS).toLowerCase() === 'true') return ensureSlash('/public/models/');
+    if (process && process.env && String(process.env.REACT_APP_FORCE_LOCAL_MODELS).toLowerCase() === 'true') return ensureSlash('/models/');
   } catch (e) {}
 
   const cfg = process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';

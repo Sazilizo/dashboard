@@ -61,15 +61,15 @@ async function ensureFaceApi() {
       } catch (e) {}
     }
 
+    // No gzip handling in worker: rely on server to serve the model files as-is.
+
     // Skip dynamic import and go straight to UMD bundle
     console.log('[descriptor.worker] loading face-api.js from CDN');
-    
     // Try jsdelivr first (primary CDN)
     try {
       importScripts('https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js');
     } catch (err) {
       console.warn('[descriptor.worker] jsdelivr failed, trying unpkg fallback');
-      // Fallback to unpkg if jsdelivr fails
       importScripts('https://unpkg.com/face-api.js@0.22.2/dist/face-api.min.js');
     }
 
@@ -279,16 +279,6 @@ self.onmessage = async (e) => {
             landmarks: fullDetection.landmarks.positions.length,
             imageSize: { width: bitmap.width, height: bitmap.height },
             descriptor: fullDetection.descriptor.length
-          }
-        });
-        
-        // Send back success diagnostic
-        self.postMessage({ 
-          id, 
-          diagnostic: { 
-            status: 'success',
-            score: detection.score,
-            imageSize: { width: bitmap.width, height: bitmap.height }
           }
         });
       } catch (err) {

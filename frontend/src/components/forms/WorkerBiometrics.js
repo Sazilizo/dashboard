@@ -17,6 +17,11 @@ export default function WorkerBiometrics(props) {
   } = props;
 
   const { addRow, updateRow, rows: workerRows = [] } = useOfflineTable('worker_attendance_records');
+
+  // Local UI state for small control panel and participants list
+  const [showBiometrics, setShowBiometrics] = useState(false);
+  const [participants, setParticipants] = useState([]);
+  const [showParticipants, setShowParticipants] = useState(false);
   const { user } = useAuth() || {};
 
   // UI controls state (moved above handler so we can update UI from handler)
@@ -88,6 +93,10 @@ export default function WorkerBiometrics(props) {
             const { data: rpcData, error: rpcErr } = await api.rpc('rpc_record_worker_attendance', params);
             if (rpcErr) throw rpcErr;
             results.push({ type: 'signin', result: rpcData });
+            try {
+              const pid = rpcData?.id || null;
+              setParticipants((p) => [...p, { workerId: wid, displayName: null, signInTime: ts, attendanceId: pid }]);
+            } catch (e) {}
             continue;
           } catch (rpcError) {
             // fallback to offline insertion
@@ -103,6 +112,10 @@ export default function WorkerBiometrics(props) {
               };
               const added = await addRow(payload);
               results.push({ type: 'signin', result: added });
+              try {
+                const pid = added?.id || added?.tempId || null;
+                setParticipants((p) => [...p, { workerId: wid, displayName: null, signInTime: ts, attendanceId: pid }]);
+              } catch (e) {}
               continue;
             } catch (err2) {
               results.push({ type: 'signin', error: err2?.message || String(err2) });
@@ -132,6 +145,7 @@ export default function WorkerBiometrics(props) {
                 const { data: upd, error: upderr } = await api.from('worker_attendance_records').update({ sign_out_time: ts }).eq('id', r.attendanceId).select().maybeSingle();
                 if (upderr) throw upderr;
                 results.push({ type: 'signout', result: upd });
+                try { setParticipants((p) => p.filter(x => Number(x.workerId) !== Number(wid))); } catch (e) {}
                 continue;
               }
 
@@ -147,6 +161,7 @@ export default function WorkerBiometrics(props) {
                 const { data: upd, error: uerr } = await api.from('worker_attendance_records').update({ sign_out_time: ts }).eq('id', open.id).select().maybeSingle();
                 if (uerr) throw uerr;
                 results.push({ type: 'signout', result: upd });
+                try { setParticipants((p) => p.filter(x => Number(x.workerId) !== Number(wid))); } catch (e) {}
                 continue;
               }
 
@@ -163,6 +178,7 @@ export default function WorkerBiometrics(props) {
               };
               const added = await addRow(payload2);
               results.push({ type: 'signout', result: added });
+              try { setParticipants((p) => p.filter(x => Number(x.workerId) !== Number(wid))); } catch (e) {}
               continue;
             } catch (err2) {
               results.push({ type: 'signout', error: err2?.message || String(err2) });

@@ -13,8 +13,11 @@ try {
   console.warn("Descriptor worker not available, falling back to main-thread processing", err);
   DescriptorWorker = null;
 }
-// models URL (can be configured via env var REACT_APP_MODELS_URL)
-const MODELS_URL = process.env.REACT_APP_MODELS_URL || "/models";
+// models URL - force local public models for now to ensure local loading
+// This intentionally prefers the app-bundled `/models/` folder. If you
+// later want to allow remote hosted models, change this to read from
+// `process.env.REACT_APP_MODELS_URL` or a runtime flag.
+const MODELS_URL = '/models';
 
 // Bucket/folder mapping for different entity types
 const STORAGE_PATHS = {

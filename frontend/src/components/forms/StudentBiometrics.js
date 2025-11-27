@@ -18,6 +18,11 @@ export default function StudentBiometrics(props) {
 
   const { addRow, updateRow } = useOfflineTable('attendance_records');
 
+  // Local UI state: control showing the biometric panel and signed-in participants
+  const [showBiometrics, setShowBiometrics] = useState(false);
+  const [participants, setParticipants] = useState([]);
+  const [showParticipants, setShowParticipants] = useState(false);
+
   const handleCompleted = useCallback(async (data) => {
     // data: { studentId, type: 'signin'|'signout', timestamp, note }
     try {
@@ -46,6 +51,11 @@ export default function StudentBiometrics(props) {
           try {
             const added = await addRow(payload);
             results.push({ type: 'signin', result: added });
+            // Update small participant UI when sign-in succeeds (or queued)
+            try {
+              const pid = added?.id || added?.tempId || (added && added.id) || null;
+              setParticipants((p) => [...p, { studentId: sid, displayName: null, signInTime: (payload.created_at || new Date().toISOString()), attendanceId: pid }]);
+            } catch (e) {}
           } catch (err) {
             try {
               const { data: inserted, error } = await api.from('attendance_records').insert(payload).select().maybeSingle();
@@ -71,6 +81,8 @@ export default function StudentBiometrics(props) {
                 const { data: upd, error: uerr } = await api.from('attendance_records').update({ sign_out_time: signOutTime }).eq('id', open.id).select().maybeSingle();
                 if (uerr) throw uerr;
                 results.push({ type: 'signout', result: upd });
+                // Remove from participants UI
+                try { setParticipants((p) => p.filter(x => Number(x.studentId) !== Number(sid))); } catch (e) {}
                 continue;
               }
             }
@@ -80,12 +92,14 @@ export default function StudentBiometrics(props) {
             const { data: inserted, error: ierr } = await api.from('attendance_records').insert(payload2).select().maybeSingle();
             if (ierr) throw ierr;
             results.push({ type: 'signout', result: inserted });
+            try { setParticipants((p) => p.filter(x => Number(x.studentId) !== Number(sid))); } catch (e) {}
           } catch (err) {
             // fallback to offline insert
             try {
               const payload3 = { ...payload, sign_out_time: signOutTime };
               const added = await addRow(payload3);
               results.push({ type: 'signout', result: added });
+              try { setParticipants((p) => p.filter(x => Number(x.studentId) !== Number(sid))); } catch (e) {}
             } catch (err2) {
               results.push({ type: 'signout', error: err2?.message || String(err2) });
             }
@@ -129,6 +143,7 @@ export default function StudentBiometrics(props) {
   };
 
   return (
+<<<<<<< HEAD
     <div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
         {academicSessionId ? (
@@ -161,6 +176,61 @@ export default function StudentBiometrics(props) {
         onCancel={onCancel}
         {...rest}
       />
+=======
+    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+      <div style={{ minWidth: 220, border: '1px solid #e5e7eb', padding: 10, borderRadius: 8, background: '#fff' }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <button className="submit-btn" onClick={() => { setShowBiometrics(true); }}>
+            Sign In
+          </button>
+          <button className="submit-btn" onClick={() => { setShowBiometrics(true); /* let BiometricsSignIn handle signout flow via UI */ }}>
+            Sign Out
+          </button>
+          <button className="submit-btn" onClick={() => { try { if (typeof onCancel === 'function') onCancel(); } catch (e) {} }}>
+            Cancel
+          </button>
+        </div>
+
+        <div style={{ fontSize: '0.9rem', color: '#374151', marginBottom: 8 }}>
+          <div>Time: {new Date().toLocaleTimeString()}</div>
+          <div>Participants: {participants.length}</div>
+        </div>
+
+        <div>
+          <button className="submit-btn" onClick={() => setShowParticipants((s) => !s)}>
+            {showParticipants ? 'Hide' : 'Show'} Signed In
+          </button>
+        </div>
+
+        {showParticipants && (
+          <div style={{ marginTop: 8, maxHeight: 220, overflow: 'auto' }}>
+            {participants.length === 0 && <div style={{ color: '#6b7280' }}>No participants yet</div>}
+            {participants.map((p, idx) => (
+              <div key={`${p.studentId}-${idx}`} style={{ padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
+                <div style={{ fontSize: '0.95rem' }}>{p.displayName || `Student ${p.studentId}`}</div>
+                <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>{p.signInTime ? new Date(p.signInTime).toLocaleTimeString() : '—'}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ flex: 1 }}>
+        {showBiometrics && (
+          <BiometricsSignIn
+            entityType="student"
+            bucketName={bucketName}
+            folderName={folderName}
+            studentId={studentId}
+            schoolId={schoolId}
+            academicSessionId={academicSessionId}
+            onCompleted={handleCompleted}
+            onCancel={onCancel}
+            {...rest}
+          />
+        )}
+      </div>
+>>>>>>> 195f278c4908401affd4f8ef9d8e1d2049cc0193
     </div>
   );
 }
