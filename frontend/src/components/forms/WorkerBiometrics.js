@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import BiometricsSignIn from './BiometricsSignIn';
 import useOfflineTable from '../../hooks/useOfflineTable';
 import api from '../../api/client';
@@ -19,6 +19,31 @@ export default function WorkerBiometrics(props) {
   const { addRow, updateRow, rows: workerRows = [] } = useOfflineTable('worker_attendance_records');
   const { user } = useAuth() || {};
 
+  // UI controls state (moved above handler so we can update UI from handler)
+  const [operation, setOperation] = useState(null);
+  const [startReq, setStartReq] = useState(0);
+  const [stopReq, setStopReq] = useState(0);
+
+  const startOp = (op) => {
+    setOperation(op);
+    // start continuous recording so multiple workers can be captured
+    setStartReq((c) => c + 1);
+  };
+
+  const stopOp = () => {
+    setStopReq((c) => c + 1);
+    setOperation(null);
+  };
+
+  // internal wrapper to capture completion and stop recording automatically
+  const handleInternalCompleted = async (res) => {
+    // stop recording when completed (for single-shot flows)
+    setStopReq((c) => c + 1);
+    setOperation(null);
+    // propagate to external handler
+    try { if (onCompleted) onCompleted(res); } catch (e) { /* ignore */ }
+  };
+
   const handleCompleted = useCallback(async (data) => {
     // Expect data to be { workerId, type: 'signin'|'signout', timestamp, attendanceId?, note }
     try {
@@ -34,8 +59,18 @@ export default function WorkerBiometrics(props) {
           continue;
         }
 
+        // Try to resolve a profile that references this worker (profiles.worker_id)
+        let profileId = null;
+        try {
+          const { data: profileRow, error: profileErr } = await api.from('profiles').select('id').eq('worker_id', Number(wid)).maybeSingle();
+          if (!profileErr && profileRow && profileRow.id) profileId = profileRow.id;
+        } catch (e) {
+          // ignore lookup failures; we'll proceed without a linked profile
+        }
+
         // Determine recorded_by: prefer explicit userId (uuid) or current auth user (auth uid)
-        const recordedBy = r.recorded_by || user?.id || user?.profile?.auth_uid || null;
+        // If we found a profile linked to this worker, prefer that profile id for linking
+        const recordedBy = profileId || r.recorded_by || user?.id || user?.profile?.auth_uid || null;
 
         if (r.type === 'signin') {
           // Call RPC to create signin row
@@ -46,6 +81,7 @@ export default function WorkerBiometrics(props) {
               p_timestamp: ts,
               p_attendance_id: null,
               p_recorded_by: recordedBy,
+              p_profile_id: profileId || null,
               p_note: r.note || null,
               p_sign_in_time: null,
             };
@@ -58,6 +94,7 @@ export default function WorkerBiometrics(props) {
             try {
               const payload = {
                 worker_id: Number(wid),
+                profile_id: profileId || null,
                 recorded_by: recordedBy,
                 date: ts.slice(0,10),
                 sign_in_time: ts,
@@ -80,6 +117,7 @@ export default function WorkerBiometrics(props) {
               p_timestamp: ts,
               p_attendance_id: r.attendanceId || null,
               p_recorded_by: recordedBy,
+              p_profile_id: profileId || null,
               p_note: r.note || null,
               p_sign_in_time: r.sign_in_time || null,
             };
@@ -115,6 +153,7 @@ export default function WorkerBiometrics(props) {
               // final fallback: offline insert sign_out-only
               const payload2 = {
                 worker_id: Number(wid),
+                profile_id: profileId || null,
                 recorded_by: recordedBy,
                 date: ts.slice(0,10),
                 sign_in_time: r.sign_in_time || null,
@@ -136,6 +175,8 @@ export default function WorkerBiometrics(props) {
       }
 
       if (onCompleted) onCompleted(results);
+      // notify internal handler to stop recording / reset UI
+      try { await handleInternalCompleted(results); } catch (e) { /* ignore */ }
       return results;
     } catch (err) {
       if (onCompleted) onCompleted({ error: err?.message || String(err) });
@@ -143,17 +184,28 @@ export default function WorkerBiometrics(props) {
     }
   }, [addRow, updateRow, api, onCompleted, user, userId, workerId]);
 
+  // UI rendered at bottom: Sign In / Sign Out controls and the hidden BiometricsSignIn
   return (
-    <BiometricsSignIn
-      entityType="user"
-      bucketName={bucketName}
-      folderName={folderName}
-      userId={userId}
-      workerId={workerId}
-      forceOperation={forceOperation}
-      onCompleted={handleCompleted}
-      onCancel={onCancel}
-      {...rest}
-    />
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <button className="btn btn-primary" onClick={() => startOp('signin')}>Sign In</button>
+        <button className="btn btn-secondary" onClick={() => startOp('signout')}>Sign Out</button>
+        <button className="btn btn-link" onClick={() => stopOp()}>Cancel</button>
+      </div>
+      <BiometricsSignIn
+        entityType="user"
+        bucketName={bucketName}
+        folderName={folderName}
+        userId={userId}
+        workerId={workerId}
+        forceOperation={operation}
+        startRecordingRequest={startReq}
+        stopRecordingRequest={stopReq}
+        hidePrimaryControls={true}
+        onCompleted={handleCompleted}
+        onCancel={onCancel}
+        {...rest}
+      />
+    </div>
   );
 }

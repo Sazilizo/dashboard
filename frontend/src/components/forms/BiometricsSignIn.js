@@ -62,6 +62,8 @@ const BiometricsSignIn = ({
   onRecordingStop = null, // optional callback fired when continuous recording stops
   // parent can request recording stop by incrementing this counter
   stopRecordingRequest = 0,
+  // parent can request recording start by incrementing this counter
+  startRecordingRequest = 0,
   // parent can request a cancel-stop (stop recording but do NOT commit attendance/participants)
   stopRecordingCancelRequest = 0,
   // storage customization (optional) - used when loading student images
@@ -1803,6 +1805,22 @@ useEffect(() => {
       if (DEBUG) console.warn('stopRecordingRequest effect failed', e);
     }
   }, [stopRecordingRequest]);
+
+  // Parent-driven start request: when `startRecordingRequest` increments, start continuous recording
+  const lastStartReqRef = useRef(0);
+  useEffect(() => {
+    try {
+      const v = Number(startRecordingRequest) || 0;
+      if (v && v !== lastStartReqRef.current) {
+        lastStartReqRef.current = v;
+        if (mode !== 'continuous') {
+          startContinuous();
+        }
+      }
+    } catch (e) {
+      if (DEBUG) console.warn('startRecordingRequest effect failed', e);
+    }
+  }, [startRecordingRequest]);
 
   // Parent-driven cancel-stop request: stop recording but do NOT commit attendance or session participants
   const lastCancelStopReqRef = useRef(0);

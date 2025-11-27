@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import BiometricsSignIn from './BiometricsSignIn';
 import useOfflineTable from '../../hooks/useOfflineTable';
 import api from '../../api/client';
@@ -103,17 +103,64 @@ export default function StudentBiometrics(props) {
     }
   }, [addRow, api, onCompleted, schoolId, studentId]);
 
+  // UI: if an academicSessionId is provided, expose Record Session / End Session buttons
+  // otherwise expose Sign In / Sign Out buttons (single or group)
+  const [operation, setOperation] = useState(null);
+  const [startReq, setStartReq] = useState(0);
+  const [stopReq, setStopReq] = useState(0);
+
+  const startSession = () => {
+    setOperation('session');
+    setStartReq(c => c + 1);
+  };
+  const endSession = () => {
+    setStopReq(c => c + 1);
+    setOperation(null);
+  };
+
+  const startSignOp = (op) => {
+    setOperation(op);
+    // start continuous so multiple students can be captured in a flow
+    setStartReq(c => c + 1);
+  };
+  const cancelOp = () => {
+    setStopReq(c => c + 1);
+    setOperation(null);
+  };
+
   return (
-    <BiometricsSignIn
-      entityType="student"
-      bucketName={bucketName}
-      folderName={folderName}
-      studentId={studentId}
-      schoolId={schoolId}
-      academicSessionId={academicSessionId}
-      onCompleted={handleCompleted}
-      onCancel={onCancel}
-      {...rest}
-    />
+    <div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        {academicSessionId ? (
+          <>
+            <button className="btn btn-primary" onClick={startSession}>Record Session</button>
+            <button className="btn btn-secondary" onClick={endSession}>End Session</button>
+            <button className="btn btn-link" onClick={cancelOp}>Cancel</button>
+          </>
+        ) : (
+          <>
+            <button className="btn btn-primary" onClick={() => startSignOp('signin')}>Sign In</button>
+            <button className="btn btn-secondary" onClick={() => startSignOp('signout')}>Sign Out</button>
+            <button className="btn btn-link" onClick={cancelOp}>Cancel</button>
+          </>
+        )}
+      </div>
+
+      <BiometricsSignIn
+        entityType="student"
+        bucketName={bucketName}
+        folderName={folderName}
+        studentId={studentId}
+        schoolId={schoolId}
+        academicSessionId={academicSessionId}
+        forceOperation={operation === 'session' ? null : operation}
+        startRecordingRequest={startReq}
+        stopRecordingRequest={stopReq}
+        hidePrimaryControls={true}
+        onCompleted={handleCompleted}
+        onCancel={onCancel}
+        {...rest}
+      />
+    </div>
   );
 }
