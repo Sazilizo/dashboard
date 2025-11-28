@@ -6,7 +6,7 @@ import SpecsRadarChartEnhanced from "../charts/SpecsRadarChartEnhanced";
 import AttendanceBarChart from "../charts/AttendanceBarChart";
 import Photos from "./Photos";
 import LearnerAttendance from "./LearnerAttendance";
-import BiometricsSignIn from "../forms/BiometricsSignIn";
+import BiometricsSignIn from "../forms/BiometricsSignIn.clean";
 import Card from "../widgets/Card";
 import ProfileInfoCard from "../widgets/ProfileInfoCard";
 import StatsDashboard from "../StatsDashboard";

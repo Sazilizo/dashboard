@@ -1,467 +1,1805 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
-import api from "../../api/client";
-import { getFaceApi } from "../../utils/faceApiShim";
-import descriptorDB from "../../utils/descriptorDB";
-import imageCache from "../../utils/imageCache";
-import { validateAuthToken } from "../../utils/authTokenGenerator";
-// worker path (webpack friendly) - descriptor worker runs face-api inside the worker
-let DescriptorWorker = null;
-try {
-  DescriptorWorker = new Worker(new URL("../../workers/descriptor.worker.js", import.meta.url), { type: "module" });
-} catch (err) {
-  console.warn("Descriptor worker not available, falling back to main-thread processing", err);
-  DescriptorWorker = null;
-}
-// models URL - force local public models for now to ensure local loading
-// This intentionally prefers the app-bundled `/models/` folder. If you
-// later want to allow remote hosted models, change this to read from
-// `process.env.REACT_APP_MODELS_URL` or a runtime flag.
-const MODELS_URL = '/models';
+// Minimal, match-only BiometricsSignIn component
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { preloadFaceApiModels } from '../../utils/FaceApiLoader';
+import { getFaceApi } from '../../utils/faceApiShim';
+import descriptorDB from '../../utils/descriptorDB';
 
-// Bucket/folder mapping for different entity types
-const STORAGE_PATHS = {
-  'student-uploads': (id) => `students/${id}/profile-picture`,
-  'worker-uploads': (id) => `workers/${id}/profile-picture`,
-  'profile-avatars': (id) => ''  // For users, files are directly in the bucket root
-};
-
-import {
-  preloadFaceApiModels,
-  areFaceApiModelsLoaded,
-} from "../../utils/FaceApiLoader";
-import { getSignedUrl } from "../../utils/signedUrlCache";
-import { getTable, cacheTable } from "../../utils/tableCache";
-import useOfflineTable from "../../hooks/useOfflineTable";
-import useOnlineStatus from "../../hooks/useOnlineStatus";
-import useToast from "../../hooks/useToast";
-import "../../styles/BiometricsSignIn.css";
-
-// Toggle verbose logs for debugging
-const DEBUG = false;
-// Lightweight in-app performance overlay for timing key steps
-const PERF_UI = false;
-
-// Component wrapper (was accidentally removed during edits) — recreate component and needed hooks/refs
-const BiometricsSignIn = ({
-  entityType = 'student',
-  studentId = null,
-  userId = null,
-  schoolId = null,
-  academicSessionId = null,
-  recordSessionParticipants = false,
-  // sessionType controls which participants table to write to (e.g. 'academic_session_participants' or 'pe_session_participants')
-  sessionType = 'academic_session_participants',
-  onCompleted = null,
-  onCancel = null,
-  forceOperation = null,
-  // initial mode: 'snapshot' or 'continuous'
-  mode: initialMode = 'snapshot',
-  // UI customization props
-  primaryActionLabel = null, // override main capture button label (e.g., 'Log In')
-  primaryRecordStartLabel = null, // override 'Record Session' label
-  primaryRecordEndLabel = null, // override 'End Session' label
-  closeOnStart = true, // whether to close/unmount the biometric UI when recording session starts
-  onRecordingStart = null, // optional callback fired when continuous recording starts
-  onRecordingStop = null, // optional callback fired when continuous recording stops
-  stopRecordingRequest = 0,
-  startRecordingRequest = 0,
-  stopRecordingCancelRequest = 0,
-  bucketName = null, // e.g. 'student-uploads' or 'worker-uploads'
-  // Optional hooks parents can pass to receive structured events
-  onSignIn = null, // (info) => {}
-  onSignOut = null, // (info) => {}
-  folderName = null,
-  // Hide internal primary controls (parent supplies its own buttons)
-  hidePrimaryControls = false,
-  // When true the component will scroll the video area into view and focus the video element on mount
-  scrollIntoViewOnMount = false,
-}) => {
-  // External control: parent or global events can request sign-in/sign-out operations.
-  const [externalForceOperation, setExternalForceOperation] = useState(null);
-  const effectiveForceOperation = externalForceOperation || forceOperation;
-  const [message, setMessage] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [captureDone, setCaptureDone] = useState(false);
-  const [referencesReady, setReferencesReady] = useState(false);
-  const [faceMatcher, setFaceMatcher] = useState(null);
-  const [studentNames, setStudentNames] = useState({});
-  const [loadingModels, setLoadingModels] = useState(true);
-  const [loadingReferences, setLoadingReferences] = useState(false);
-  const [loadingProgress, setLoadingProgress] = useState(null);
-  const [availableCameras, setAvailableCameras] = useState([]);
-  const [facingMode, setFacingMode] = useState('user');
-  const [webcamError, setWebcamError] = useState(false);
-  const [showTokenInput, setShowTokenInput] = useState(false);
-  const [tokenInput, setTokenInput] = useState('');
-  const [tokenError, setTokenError] = useState('');
-  const [showAttendancePrompt, setShowAttendancePrompt] = useState(false);
-  const [pendingAttendanceData, setPendingAttendanceData] = useState(null);
-  const [pendingSignIns, setPendingSignIns] = useState({});
-  // Recorded participants for the active session (local UI view)
-  const [recordedParticipants, setRecordedParticipants] = useState([]);
-  const [tick, setTick] = useState(0); // used to refresh elapsed times
-
-  // Guard to prevent rapid duplicate auto sign-ins per subject
-  const lastAutoSignInRef = useRef({});
-  const AUTO_SIGNIN_COOLDOWN_MS = 5000; // don't auto-sign-in same subject more than once per 5s
-
-  // Helper to add a participant to the recorded list (start)
-  const addRecordedParticipant = (student_id, displayName, signInTime, attendanceId = null, isWorker = false) => {
-    setRecordedParticipants((prev) => {
-      // avoid duplicates for same active student
-      const exists = prev.find(p => String(p.student_id) === String(student_id) && !p.signOutTime);
-      if (exists) return prev;
-      return [...prev, { student_id: String(student_id), displayName, signInTime, attendanceId, signOutTime: null, durationMinutes: null, isWorker }];
-    });
-  };
-
-  // Helper to mark a participant as completed (stop)
-  const completeRecordedParticipant = (student_id, signOutTime) => {
-    setRecordedParticipants((prev) => prev.map(p => {
-      if (String(p.student_id) === String(student_id) && !p.signOutTime) {
-        const start = new Date(p.signInTime).getTime();
-        const end = signOutTime ? new Date(signOutTime).getTime() : Date.now();
-        const minutes = start && end ? ((end - start) / (1000 * 60)) : null;
-        return { ...p, signOutTime, durationMinutes: minutes !== null ? Number(minutes.toFixed(2)) : null };
-      }
-      return p;
-    }));
-  };
-
-  // Live tick to refresh UI durations while recording
-  useEffect(() => {
-    let intv;
-    if (mode === 'continuous') {
-      intv = setInterval(() => setTick(t => t + 1), 5000);
-    }
-    return () => { if (intv) clearInterval(intv); };
-  }, [mode]);
-  
-  // Prevent repeated participant add attempts per student (rate-limit heavy network ops)
-  const lastParticipantAttemptRef = useRef({});
-  const MIN_PARTICIPANT_ATTEMPT_MS = 10 * 1000; // 10s
-  const [workerAvailable, setWorkerAvailable] = useState(false);
-  const [workerError, setWorkerError] = useState(null);
-  const [workerReloadKey, setWorkerReloadKey] = useState(0);
-  const [mode, setMode] = useState(initialMode);
-  
-  // Retry indicators for loading face references
-  const [retryAttempt, setRetryAttempt] = useState(0);
-  const [retryInSec, setRetryInSec] = useState(null);
-  const retryIntervalRef = useRef(null);
-  // small retry tuning
-  const maxRetries = 3;
-  const retryTimeouts = [2000, 4000, 8000];
-  // Recording start timestamp (ISO) when continuous recording begins
-  const recordingStartRef = useRef(null);
-  const threshold = 0.6;
-
-  const webcamRef = useRef(null);
-  const containerRef = useRef(null);
-  const canvasRef = useRef(null);
-  const captureCanvasRef = useRef(null);
+export default function BiometricsSignIn({
+  ids = [],
+  scoreThreshold = 0.6,
+  onResult = () => {},
+  onCompleted = () => {},
+  onCancel = () => {},
+  inputSize = 160,
+  debug = false,
+}) {
+  const videoRef = useRef(null);
   const streamRef = useRef(null);
-  const processIntervalRef = useRef(null);
-  const perfRef = useRef({});
-  const descriptorWorkerRef = useRef(null);
   const faceapiRef = useRef(null);
+  const matcherRef = useRef(null);
+  const intervalRef = useRef(null);
+  const [status, setStatus] = useState('loading');
+  const [lastMatch, setLastMatch] = useState(null);
+  const lastActionRef = useRef({ time: 0, id: null, type: null });
 
-  // small helpers / hooks
-  const isSmallScreen = window && window.innerWidth && window.innerWidth < 640;
-  const isOnline = useOnlineStatus();
-  const toast = useToast();
-  const navigate = useNavigate();
-
-  // Determine effective storage bucket to use when fetching images
-  const effectiveBucket = bucketName || (entityType === 'user' ? 'profile-avatars' : 'student-uploads');
-
-  // Listen for global signout/signin requests so overlays mounted anywhere can respond.
-  useEffect(() => {
-    const onRequest = (ev) => {
-      try {
-        const detail = ev?.detail || {};
-        if (detail?.operation === 'signout' || detail?.operation === 'signin') {
-          setExternalForceOperation(detail.operation);
-          // If a profile/entity id was provided, update local ids so the component can load references
-          if (detail.profileId || detail.entityId || detail.userId) {
-            // prefer userId for entityType 'user'
-            if (detail.userId) {
-              // update userId prop is not writable; instead, store requested IDs for immediate use
-              // set temporary ids to trigger reference loading
-              // Use refs to avoid re-rendering parent props
-              // Note: we rely on consumer to pass updated props when available; this is a best-effort notification
-            }
-          }
-          // also surface token input when applicable
-          if (detail && detail.forceShowToken) setShowTokenInput(true);
-        }
-      } catch (e) {
-        if (DEBUG) console.warn('app:request-signout handler failed', e);
-      }
-    };
-
-    window.addEventListener('app:request-signout', onRequest);
-    return () => window.removeEventListener('app:request-signout', onRequest);
-  }, []);
-
-  // Listen for completion events so we can clear external request state
-  useEffect(() => {
-    const onComplete = (ev) => {
-      try {
-        setExternalForceOperation(null);
-        // hide token input if it was shown for this operation
-        setShowTokenInput(false);
-      } catch (e) {
-        if (DEBUG) console.warn('app:request-signout-complete handler failed', e);
-      }
-    };
-    window.addEventListener('app:request-signout-complete', onComplete);
-    return () => window.removeEventListener('app:request-signout-complete', onComplete);
-  }, []);
-
-  // Offline table hooks for attendance and worker attendance
-  const { addRow, updateRow } = useOfflineTable('attendance_records');
-  const { addRow: addWorkerRow, updateRow: updateWorkerRow } = useOfflineTable('worker_attendance_records');
-  // offline hook for session participants (academic_session_participants)
-  const { addRow: addParticipantRow, updateRow: updateParticipantRow } = useOfflineTable(sessionType);
-
-  // cache for descriptors (module-level in original; keep per-instance here)
-  const faceDescriptorCache = {};
-
-
-  useEffect(() => {
-    let cancelled = false;
-    const ensureModelsReady = async () => {
-      perfRef.current.modelsStart = (performance.now ? performance.now() : Date.now());
-      if (areFaceApiModelsLoaded()) {
-        // ensure faceapi module is available
-        try {
-          faceapiRef.current = await getFaceApi();
-        } catch (e) {
-          if (DEBUG) console.warn('Failed to get faceapi module after models loaded', e);
-        }
-        setLoadingModels(false);
-        perfRef.current.modelsEnd = (performance.now ? performance.now() : Date.now());
-        if (PERF_UI) snapPerf();
-        return;
-      }
-      try {
-        await preloadFaceApiModels();
-        try {
-          faceapiRef.current = await getFaceApi();
-        } catch (e) {
-          if (DEBUG) console.warn('Failed to import faceapi after preloading models', e);
-        }
-        if (!cancelled) setLoadingModels(false);
-        perfRef.current.modelsEnd = (performance.now ? performance.now() : Date.now());
-        if (PERF_UI) snapPerf();
-      } catch (err) {
-        console.error("Failed to load face-api models:", err);
-        if (!cancelled) setMessage("Failed to load face detection models.");
-      }
-    };
-    ensureModelsReady();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Helper: make sure face-api models and the faceapi module are fully ready
-  const ensureModelsReadyForInference = async () => {
+  const stopCamera = useCallback(() => {
     try {
-      // Quick check using the shared loader flag
-      if (!areFaceApiModelsLoaded() || !faceapiRef.current) {
-        setMessage('Preparing face detection models...');
-        const ok = await preloadFaceApiModels();
-        if (!ok) {
-          setMessage('Failed to load face detection models. Please download models in Offline Settings.');
-          return false;
-        }
-        try {
-          faceapiRef.current = await getFaceApi();
-        } catch (e) {
-          console.warn('ensureModelsReadyForInference: failed to import faceapi after preload', e);
-        }
-      }
-
-      // Final defensive guard: ensure the expected detector network is present
-      const faceapi = faceapiRef.current;
-      if (!faceapi || !faceapi.nets) {
-        setMessage('Face detection runtime not available.');
-        return false;
-      }
-
-      // Accept either tinyFaceDetector or ssdMobilenetv1 depending on build
-      if (!faceapi.nets.tinyFaceDetector && !faceapi.nets.ssdMobilenetv1) {
-        setMessage('Face detection network not loaded.');
-        return false;
-      }
-
-      return true;
-    } catch (err) {
-      console.error('ensureModelsReadyForInference error', err);
-      setMessage('Failed to prepare face detection models.');
-      return false;
-    }
-  };
-
-  // ✅ Fetch subject names (student or user) for messages (offline fallback)
-  useEffect(() => {
-    const ids = entityType === 'user'
-      ? (Array.isArray(userId) ? userId : [userId]).filter(Boolean)
-      : (Array.isArray(studentId) ? studentId : [studentId]).filter(Boolean);
-    if (!ids.length) return;
-
-    let mounted = true;
-    (async () => {
-      try {
-        if (isOnline) {
-          if (entityType === 'user') {
-            // For users, we get profile names (username) or fallback to id
-            const { data, error } = await api
-              .from('profiles')
-              .select('id, username')
-              .in('id', ids);
-            if (!error && data) {
-              const map = {};
-              data.forEach((p) => (map[p.id] = p.username || `User ${p.id}`));
-              if (mounted) setStudentNames(map);
-              try { await cacheTable('profiles', data); } catch {}
-            }
-          } else {
-            const { data, error } = await api
-              .from("students")
-              .select("id, full_name")
-              .in("id", ids);
-            if (!error && data) {
-              const map = {};
-              data.forEach((s) => (map[s.id] = s.full_name));
-              if (mounted) setStudentNames(map);
-              try { await cacheTable("students", data); } catch {}
-            }
-          }
-        } else {
-          if (entityType === 'user') {
-            const cached = await getTable('profiles');
-            const map = {};
-            (cached || []).forEach((p) => {
-              if (ids.includes(p.id) || ids.includes(Number(p.id)))
-                map[p.id] = p.username || `User ${p.id}`;
-            });
-            if (mounted) setStudentNames(map);
-          } else {
-            const cached = await getTable("students");
-            const map = {};
-            (cached || []).forEach((s) => {
-              if (ids.includes(s.id) || ids.includes(Number(s.id)))
-                map[s.id] = s.full_name;
-            });
-            if (mounted) setStudentNames(map);
-          }
-        }
-      } catch (err) {
-        console.error("Failed to fetch subject names", err);
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
-  }, [studentId, userId, isOnline, entityType]);
-
-  // ✅ List available cameras
-  useEffect(() => {
-    (async () => {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter((d) => d.kind === "videoinput");
-        setAvailableCameras(videoDevices);
-        // If no cameras are present and this is a user signin/signout flow,
-        // show the token input immediately so the user can paste a code.
-        if ((effectiveForceOperation === 'signin' || effectiveForceOperation === 'signout') && entityType === 'user' && (!videoDevices || videoDevices.length === 0)) {
-          setWebcamError(true);
-          setShowTokenInput(true);
-          setMessage('No camera detected on this device. Use your backup authentication code.');
-        }
-      } catch (err) {
-        console.error(err);
-      }
-    })();
-  }, []);
-
-  // ✅ Webcam setup
-  const startWebcam = async (facing = "user") => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-    }
-    try {
-      perfRef.current.cameraStart = (performance.now ? performance.now() : Date.now());
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: facing,
-          width: { ideal: 320 },
-          height: { ideal: 240 },
-        },
-      });
-      streamRef.current = stream;
-
-      if (webcamRef.current) {
-        try {
-          webcamRef.current.srcObject = stream;
-          await new Promise((resolve) => {
-            let resolved = false;
-            const onMeta = () => {
-              if (!webcamRef.current) return resolve();
-              if ((webcamRef.current.videoWidth || webcamRef.current.videoHeight) && !resolved) {
-                resolved = true;
-                webcamRef.current.removeEventListener('loadedmetadata', onMeta);
-                resolve();
-              }
-            };
-            webcamRef.current.addEventListener('loadedmetadata', onMeta);
-            // fallback timeout in case loadedmetadata doesn't fire
-            setTimeout(() => {
-              try { webcamRef.current.removeEventListener('loadedmetadata', onMeta); } catch (e) {}
-              resolve();
-            }, 2000);
-          });
-          await webcamRef.current.play();
-        } catch (e) {
-          if (DEBUG) console.warn('startWebcam: waiting for metadata failed', e);
-        }
-      }
-
-      perfRef.current.cameraEnd = (performance.now ? performance.now() : Date.now());
-      if (PERF_UI) snapPerf();
-      setWebcamError(false);
-    } catch (err) {
-      console.error("Webcam access failed:", err);
-      setWebcamError(true);
-      
-      // Show token input for users in both signin and signout flows to support devices without webcams.
-      if (entityType === 'user' && (effectiveForceOperation === 'signin' || effectiveForceOperation === 'signout')) {
-        setMessage("No webcam detected. You can use your backup authentication code to proceed.");
-        setShowTokenInput(true);
-      } else if (effectiveForceOperation === 'signout') {
-        // For sign-out on non-user entities, enforce webcam
-        setMessage("⚠️ Webcam required for sign-out. Please use a device with a webcam to end your work day.");
-      } else {
-        setMessage("Could not access webcam. Check permissions or use a device with a webcam.");
-      }
-    }
-  };
-
-  useEffect(() => {
-    if (!captureDone) startWebcam(facingMode);
-    return () => {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
       }
+      if (videoRef.current) videoRef.current.srcObject = null;
+    } catch (e) {
+      if (debug) console.warn('stopCamera', e);
+    }
+  }, [debug]);
+
+  const buildMatcher = useCallback(async () => {
+    const faceapi = faceapiRef.current;
+    if (!faceapi) return null;
+    const labeled = [];
+    for (const id of ids) {
+      try {
+        const raw = await descriptorDB.getDescriptor(id);
+        if (!raw || !Array.isArray(raw) || raw.length === 0) continue;
+        const arrs = raw.map((r) => new Float32Array(r));
+        labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
+      } catch (e) {
+        if (debug) console.warn('descriptor load failed for', id, e);
+      }
+    }
+    if (!labeled.length) return null;
+    const fm = new faceapi.FaceMatcher(labeled, scoreThreshold);
+    matcherRef.current = fm;
+    return fm;
+  }, [ids, scoreThreshold, debug]);
+
+  const startCamera = useCallback(async () => {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      streamRef.current = s;
+      if (videoRef.current) {
+        videoRef.current.srcObject = s;
+        try { await videoRef.current.play(); } catch (_) {}
+      }
+      return true;
+    } catch (e) {
+      if (debug) console.error('startCamera failed', e);
+      return false;
+    }
+  }, [debug]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setStatus('loading');
+      try {
+        const ok = await preloadFaceApiModels({ variant: 'tiny' });
+        if (!ok) { setStatus('models-unavailable'); return; }
+        faceapiRef.current = await getFaceApi();
+        await buildMatcher();
+        const camOk = await startCamera();
+        if (!camOk) { setStatus('camera-error'); return; }
+        if (mounted) setStatus('ready');
+      } catch (err) {
+        if (debug) console.error('init error', err);
+        setStatus('error');
+      }
+    })();
+    return () => { mounted = false; stopCamera(); if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
+  }, [buildMatcher, startCamera, stopCamera, debug]);
+
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const faceapi = faceapiRef.current;
+    if (!faceapi || !matcherRef.current || !videoRef.current) return;
+    let running = true;
+    const detect = async () => {
+      try {
+        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
+        const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
+        const res = await faceapi.detectSingleFace(videoRef.current, options).withFaceLandmarks().withFaceDescriptor();
+        if (!res || !res.descriptor) return;
+        const match = matcherRef.current.findBestMatch(res.descriptor);
+        if (match && match.label && match.label !== 'unknown') {
+          const payload = { id: match.label, distance: match.distance };
+          setLastMatch(payload);
+          try { onResult(payload); } catch (e) { if (debug) console.error('onResult cb', e); }
+        }
+      } catch (e) { if (debug) console.warn('detect error', e); }
     };
-  }, [captureDone, facingMode]);
+    intervalRef.current = setInterval(detect, 350);
+    return () => { running = false; if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
+  }, [status, inputSize, onResult, scoreThreshold, debug]);
+
+  const captureSnapshot = useCallback(() => {
+    try {
+      const v = videoRef.current; if (!v) return null;
+      const w = v.videoWidth || 320; const h = v.videoHeight || 240;
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const ctx = c.getContext('2d'); ctx.drawImage(v, 0, 0, w, h);
+      return c.toDataURL('image/jpeg', 0.8);
+    } catch (e) { if (debug) console.warn('snapshot failed', e); return null; }
+  }, [debug]);
+
+  const handleAction = useCallback(async (type) => {
+    const now = Date.now(); const match = lastMatch; if (!match || !match.id) return;
+    const last = lastActionRef.current; if (last.id === match.id && last.type === type && now - last.time < 4000) { if (debug) return; }
+    lastActionRef.current = { time: now, id: match.id, type };
+    const snapshot = captureSnapshot();
+    try { onCompleted({ id: match.id, type, time: now, snapshot }); } catch (e) { if (debug) console.error('onCompleted cb', e); }
+    stopCamera();
+  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
+
+  const handleCancel = useCallback(() => { stopCamera(); try { onCancel(); } catch (e) { if (debug) console.error('onCancel', e); } }, [onCancel, stopCamera, debug]);
+
+  return (
+    React.createElement('div', { className: 'biometrics-signin' },
+      status === 'loading' && React.createElement('div', null, 'Loading models...'),
+      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
+      status === 'camera-error' && React.createElement('div', null, 'Camera access denied.'),
+      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
+      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
+        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
+        React.createElement('div', { style: { marginTop: 8 } },
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
+          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
+        ),
+        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
+      )
+    )
+  );
+}
+// BiometricsSignIn (single clean component)
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { preloadFaceApiModels } from '../../utils/FaceApiLoader';
+import { getFaceApi } from '../../utils/faceApiShim';
+import descriptorDB from '../../utils/descriptorDB';
+
+/**
+ * Minimal, match-only biometric component.
+ * - Loads models from local `/models/` via FaceApiLoader
+ * - Loads descriptors from `descriptorDB` for provided `ids`
+ * - Builds FaceMatcher and runs TinyFaceDetector on webcam
+ * - Emits `onResult({id,distance})` and `onCompleted({id,type,time,snapshot})`
+ * - Does NOT perform DB writes; parent must handle persistence
+ */
+export default function BiometricsSignIn({
+  ids = [],
+  scoreThreshold = 0.6,
+  onResult = () => {},
+  onCompleted = () => {},
+  onCancel = () => {},
+  inputSize = 160,
+  debug = false,
+}) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const faceapiRef = useRef(null);
+  const matcherRef = useRef(null);
+  const timerRef = useRef(null);
+  const [status, setStatus] = useState('loading');
+  const [lastMatch, setLastMatch] = useState(null);
+  const lastActionRef = useRef({ time: 0, id: null, type: null });
+
+  const stopCamera = useCallback(() => {
+    try {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) videoRef.current.srcObject = null;
+    } catch (e) {
+      if (debug) console.warn('stopCamera', e);
+    }
+  }, [debug]);
+
+  const buildMatcher = useCallback(async () => {
+    const faceapi = faceapiRef.current;
+    if (!faceapi) return null;
+    const labeled = [];
+    for (const id of ids) {
+      try {
+        const raw = await descriptorDB.getDescriptor(id);
+        if (!raw || !Array.isArray(raw) || raw.length === 0) continue;
+        const arrs = raw.map((r) => new Float32Array(r));
+        labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
+      } catch (e) {
+        if (debug) console.warn('descriptor load failed for', id, e);
+      }
+    }
+    if (!labeled.length) return null;
+    const fm = new faceapi.FaceMatcher(labeled, scoreThreshold);
+    matcherRef.current = fm;
+    return fm;
+  }, [ids, scoreThreshold, debug]);
+
+  const startCamera = useCallback(async () => {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      streamRef.current = s;
+      if (videoRef.current) {
+        videoRef.current.srcObject = s;
+        try { await videoRef.current.play(); } catch (_) {}
+      }
+      return true;
+    } catch (e) {
+      if (debug) console.error('startCamera failed', e);
+      return false;
+    }
+  }, [debug]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setStatus('loading');
+      try {
+        const ok = await preloadFaceApiModels({ variant: 'tiny' });
+        if (!ok) { setStatus('models-unavailable'); return; }
+        faceapiRef.current = await getFaceApi();
+        await buildMatcher();
+        const camOk = await startCamera();
+        if (!camOk) { setStatus('camera-error'); return; }
+        if (mounted) setStatus('ready');
+      } catch (err) {
+        if (debug) console.error('init error', err);
+        setStatus('error');
+      }
+    })();
+    return () => { mounted = false; stopCamera(); if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
+  }, [buildMatcher, startCamera, stopCamera, debug]);
+
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const faceapi = faceapiRef.current;
+    if (!faceapi || !matcherRef.current || !videoRef.current) return;
+    let running = true;
+    const detect = async () => {
+      try {
+        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
+        const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
+        const res = await faceapi.detectSingleFace(videoRef.current, options).withFaceLandmarks().withFaceDescriptor();
+        if (!res || !res.descriptor) return;
+        const match = matcherRef.current.findBestMatch(res.descriptor);
+        if (match && match.label && match.label !== 'unknown') {
+          const payload = { id: match.label, distance: match.distance };
+          setLastMatch(payload);
+          try { onResult(payload); } catch (e) { if (debug) console.error('onResult cb', e); }
+        }
+      } catch (e) { if (debug) console.warn('detect error', e); }
+    };
+    timerRef.current = setInterval(detect, 350);
+    return () => { running = false; if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
+  }, [status, inputSize, onResult, scoreThreshold, debug]);
+
+  const captureSnapshot = useCallback(() => {
+    try {
+      const v = videoRef.current; if (!v) return null;
+      const w = v.videoWidth || 320; const h = v.videoHeight || 240;
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const ctx = c.getContext('2d'); ctx.drawImage(v, 0, 0, w, h);
+      return c.toDataURL('image/jpeg', 0.8);
+    } catch (e) { if (debug) console.warn('snapshot failed', e); return null; }
+  }, [debug]);
+
+  const handleAction = useCallback(async (type) => {
+    const now = Date.now(); const match = lastMatch; if (!match || !match.id) return;
+    const last = lastActionRef.current; if (last.id === match.id && last.type === type && now - last.time < 4000) { if (debug) return; }
+    lastActionRef.current = { time: now, id: match.id, type };
+    const snapshot = captureSnapshot();
+    try { onCompleted({ id: match.id, type, time: now, snapshot }); } catch (e) { if (debug) console.error('onCompleted cb', e); }
+    stopCamera();
+  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
+
+  const handleCancel = useCallback(() => { stopCamera(); try { onCancel(); } catch (e) { if (debug) console.error('onCancel', e); } }, [onCancel, stopCamera, debug]);
+
+  return (
+    React.createElement('div', { className: 'biometrics-signin' },
+      status === 'loading' && React.createElement('div', null, 'Loading models...'),
+      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
+      status === 'camera-error' && React.createElement('div', null, 'Camera access denied.'),
+      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
+      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
+        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
+        React.createElement('div', { style: { marginTop: 8 } },
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
+          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
+        ),
+        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
+      )
+    )
+  );
+}
+// BiometricsSignIn — single clean match-only component
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { preloadFaceApiModels } from '../../utils/FaceApiLoader';
+import { getFaceApi } from '../../utils/faceApiShim';
+import descriptorDB from '../../utils/descriptorDB';
+
+export default function BiometricsSignIn({
+  ids = [], // array of IDs (strings or numbers) to match against
+  scoreThreshold = 0.6,
+  onResult = () => {}, // called with { id, distance }
+  onCompleted = () => {}, // called with { id, type, time, snapshot }
+  onCancel = () => {},
+  inputSize = 160,
+  debug = false,
+}) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const faceapiRef = useRef(null);
+  const matcherRef = useRef(null);
+  const detectTimerRef = useRef(null);
+  const [status, setStatus] = useState('loading');
+  const [lastMatch, setLastMatch] = useState(null);
+  const lastActionRef = useRef({ time: 0, id: null, type: null });
+
+  const stopCamera = useCallback(() => {
+    try {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) videoRef.current.srcObject = null;
+    } catch (e) {
+      if (debug) console.warn('stopCamera', e);
+    }
+  }, [debug]);
+
+  const buildMatcher = useCallback(async () => {
+    const faceapi = faceapiRef.current;
+    if (!faceapi) return null;
+    const labeled = [];
+    for (const id of ids) {
+      try {
+        const raw = await descriptorDB.getDescriptor(id);
+        if (!raw || !Array.isArray(raw) || raw.length === 0) continue;
+        const arrs = raw.map((r) => new Float32Array(r));
+        labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
+      } catch (e) {
+        if (debug) console.warn('descriptor load failed for', id, e);
+      }
+    }
+    if (!labeled.length) return null;
+    const fm = new faceapi.FaceMatcher(labeled, scoreThreshold);
+    matcherRef.current = fm;
+    return fm;
+  }, [ids, scoreThreshold, debug]);
+
+  const startCamera = useCallback(async () => {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      streamRef.current = s;
+      if (videoRef.current) {
+        videoRef.current.srcObject = s;
+        try { await videoRef.current.play(); } catch (_) {}
+      }
+      return true;
+    } catch (e) {
+      if (debug) console.error('startCamera failed', e);
+      return false;
+    }
+  }, [debug]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setStatus('loading');
+      try {
+        const ok = await preloadFaceApiModels({ variant: 'tiny' });
+        if (!ok) { setStatus('models-unavailable'); return; }
+        faceapiRef.current = await getFaceApi();
+        await buildMatcher();
+        const camOk = await startCamera();
+        if (!camOk) { setStatus('camera-error'); return; }
+        if (mounted) setStatus('ready');
+      } catch (err) {
+        if (debug) console.error('init error', err);
+        setStatus('error');
+      }
+    })();
+    return () => { mounted = false; stopCamera(); if (detectTimerRef.current) { clearInterval(detectTimerRef.current); detectTimerRef.current = null; } };
+  }, [buildMatcher, startCamera, stopCamera, debug]);
+
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const faceapi = faceapiRef.current;
+    if (!faceapi || !matcherRef.current || !videoRef.current) return;
+    let running = true;
+    const detect = async () => {
+      try {
+        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
+        const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
+        const res = await faceapi.detectSingleFace(videoRef.current, options).withFaceLandmarks().withFaceDescriptor();
+        if (!res || !res.descriptor) return;
+        const match = matcherRef.current.findBestMatch(res.descriptor);
+        if (match && match.label && match.label !== 'unknown') {
+          const payload = { id: match.label, distance: match.distance };
+          setLastMatch(payload);
+          try { onResult(payload); } catch (e) { if (debug) console.error('onResult cb', e); }
+        }
+      } catch (e) { if (debug) console.warn('detect error', e); }
+    };
+    detectTimerRef.current = setInterval(detect, 350);
+    return () => { running = false; if (detectTimerRef.current) { clearInterval(detectTimerRef.current); detectTimerRef.current = null; } };
+  }, [status, inputSize, onResult, scoreThreshold, debug]);
+
+  const captureSnapshot = useCallback(() => {
+    try {
+      const v = videoRef.current; if (!v) return null;
+      const w = v.videoWidth || 320; const h = v.videoHeight || 240;
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const ctx = c.getContext('2d'); ctx.drawImage(v, 0, 0, w, h);
+      return c.toDataURL('image/jpeg', 0.8);
+    } catch (e) { if (debug) console.warn('snapshot failed', e); return null; }
+  }, [debug]);
+
+  const handleAction = useCallback(async (type) => {
+    const now = Date.now(); const match = lastMatch; if (!match || !match.id) return;
+    const last = lastActionRef.current; if (last.id === match.id && last.type === type && now - last.time < 4000) { if (debug) return; }
+    lastActionRef.current = { time: now, id: match.id, type };
+    const snapshot = captureSnapshot();
+    try { onCompleted({ id: match.id, type, time: now, snapshot }); } catch (e) { if (debug) console.error('onCompleted cb', e); }
+    stopCamera();
+  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
+
+  const handleCancel = useCallback(() => { stopCamera(); try { onCancel(); } catch (e) { if (debug) console.error('onCancel', e); } }, [onCancel, stopCamera, debug]);
+
+  return (
+    React.createElement('div', { className: 'biometrics-signin' },
+      status === 'loading' && React.createElement('div', null, 'Loading models...'),
+      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
+      status === 'camera-error' && React.createElement('div', null, 'Camera access denied.'),
+      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
+      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
+        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
+        React.createElement('div', { style: { marginTop: 8 } },
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
+          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
+        ),
+        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
+      )
+    )
+  );
+}
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { preloadFaceApiModels } from '../../utils/FaceApiLoader';
+import { getFaceApi } from '../../utils/faceApiShim';
+import descriptorDB from '../../utils/descriptorDB';
+
+// Minimal, match-only biometric component.
+// - Loads models from the local `/models/` (FaceApiLoader prefers that by default)
+// - Reads descriptors from `descriptorDB` for the provided `ids` prop
+// - Runs tiny-face-detector on camera, matches with FaceMatcher
+// - Emits `onResult(match)` as matches are seen and `onCompleted(payload)` when user confirms Sign In/Out
+// - Shows simple controls: Sign In, Sign Out, Cancel
+
+export default function BiometricsSignIn({
+  ids = [],
+  scoreThreshold = 0.6,
+  onResult = () => {},
+  onCompleted = () => {},
+  onCancel = () => {},
+  inputSize = 160,
+  debug = false,
+}) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const faceapiRef = useRef(null);
+  const matcherRef = useRef(null);
+  const detectionTimerRef = useRef(null);
+  const [status, setStatus] = useState('loading');
+  const [lastMatch, setLastMatch] = useState(null);
+  const lastActionRef = useRef({ time: 0, id: null, type: null });
+
+  const stopCamera = useCallback(() => {
+    try {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) videoRef.current.srcObject = null;
+    } catch (e) {
+      if (debug) console.warn('stopCamera error', e);
+    }
+  }, [debug]);
+
+  const buildMatcher = useCallback(async () => {
+    try {
+      const faceapi = faceapiRef.current;
+      if (!faceapi) return null;
+      const labeled = [];
+      for (const id of ids) {
+        try {
+          const raw = await descriptorDB.getDescriptor(id);
+          if (!raw || !Array.isArray(raw) || raw.length === 0) continue;
+          const arrs = raw.map((r) => new Float32Array(r));
+          labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
+        } catch (e) {
+          if (debug) console.warn('failed to load descriptor for', id, e);
+        }
+      }
+      if (labeled.length === 0) return null;
+      const fm = new faceapi.FaceMatcher(labeled, scoreThreshold);
+      matcherRef.current = fm;
+      return fm;
+    } catch (e) {
+      if (debug) console.error('buildMatcher error', e);
+      return null;
+    }
+  }, [ids, scoreThreshold, debug]);
+
+  const startCamera = useCallback(async () => {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      streamRef.current = s;
+      if (videoRef.current) {
+        videoRef.current.srcObject = s;
+        try { await videoRef.current.play(); } catch (e) { /* ignore */ }
+      }
+      return true;
+    } catch (e) {
+      if (debug) console.error('startCamera failed', e);
+      return false;
+    }
+  }, [debug]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function init() {
+      setStatus('loading');
+      try {
+        const ok = await preloadFaceApiModels({ variant: 'tiny' });
+        if (!ok) {
+          setStatus('models-unavailable');
+          return;
+        }
+        const faceapi = await getFaceApi();
+        faceapiRef.current = faceapi;
+
+        await buildMatcher();
+
+        const camOk = await startCamera();
+        if (!camOk) {
+          setStatus('camera-error');
+          return;
+        }
+
+        setStatus('ready');
+      } catch (e) {
+        if (debug) console.error('BiometricsSignIn init error', e);
+        setStatus('error');
+      }
+    }
+
+    init();
+
+    return () => {
+      mounted = false;
+      stopCamera();
+      if (detectionTimerRef.current) {
+        clearInterval(detectionTimerRef.current);
+        detectionTimerRef.current = null;
+      }
+    };
+  }, [buildMatcher, startCamera, stopCamera, debug]);
+
+  useEffect(() => {
+    if (status !== 'ready') return undefined;
+    const faceapi = faceapiRef.current;
+    if (!faceapi || !matcherRef.current || !videoRef.current) return undefined;
+
+    let running = true;
+    const detect = async () => {
+      try {
+        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
+        const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
+        const result = await faceapi
+          .detectSingleFace(videoRef.current, options)
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+        if (!result || !result.descriptor) return;
+        const match = matcherRef.current.findBestMatch(result.descriptor);
+        if (match && match.label && match.label !== 'unknown') {
+          const payload = { id: match.label, distance: match.distance };
+          setLastMatch(payload);
+          try { onResult(payload); } catch (e) { if (debug) console.error('onResult handler error', e); }
+        }
+      } catch (e) {
+        if (debug) console.warn('detection error', e);
+      }
+    };
+
+    detectionTimerRef.current = setInterval(detect, 350);
+    return () => {
+      running = false;
+      if (detectionTimerRef.current) {
+        clearInterval(detectionTimerRef.current);
+        detectionTimerRef.current = null;
+      }
+    };
+  }, [status, inputSize, onResult, debug]);
+
+  const captureSnapshot = useCallback(() => {
+    try {
+      const v = videoRef.current;
+      if (!v) return null;
+      const w = v.videoWidth || 320;
+      const h = v.videoHeight || 240;
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(v, 0, 0, w, h);
+      return c.toDataURL('image/jpeg', 0.8);
+    } catch (e) {
+      if (debug) console.warn('captureSnapshot failed', e);
+      return null;
+    }
+  }, [debug]);
+
+  const handleAction = useCallback(async (type) => {
+    const now = Date.now();
+    const match = lastMatch;
+    if (!match || !match.id) return;
+
+    const last = lastActionRef.current;
+    if (last.id === match.id && last.type === type && now - last.time < 4000) {
+      if (debug) console.warn('duplicate rapid action ignored');
+      return;
+    }
+
+    lastActionRef.current = { time: now, id: match.id, type };
+    const snapshot = captureSnapshot();
+    try {
+      onCompleted({ id: match.id, type, time: now, snapshot });
+    } catch (e) {
+      if (debug) console.error('onCompleted handler error', e);
+    }
+    stopCamera();
+  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
+
+  const handleCancel = useCallback(() => {
+    stopCamera();
+    try { onCancel(); } catch (e) { if (debug) console.error('onCancel error', e); }
+  }, [onCancel, stopCamera, debug]);
+
+  return (
+    React.createElement('div', { className: 'biometrics-signin' },
+      status === 'loading' && React.createElement('div', null, 'Loading models...'),
+      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
+      status === 'camera-error' && React.createElement('div', null, 'Camera access denied or unavailable.'),
+      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
+      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
+        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
+        React.createElement('div', { style: { marginTop: 8 } },
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
+          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
+        ),
+        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
+      )
+    )
+  );
+}
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { preloadFaceApiModels } from '../../utils/FaceApiLoader';
+import { getFaceApi } from '../../utils/faceApiShim';
+import descriptorDB from '../../utils/descriptorDB';
+
+// Minimal, match-only biometric component.
+// - Loads models from the local `/models/` (FaceApiLoader prefers that by default)
+// - Reads descriptors from `descriptorDB` for the provided `ids` prop
+// - Runs tiny-face-detector on camera, matches with FaceMatcher
+// - Emits `onResult(match)` as matches are seen and `onCompleted(payload)` when user confirms Sign In/Out
+// - Shows simple controls: Sign In, Sign Out, Cancel
+
+export default function BiometricsSignIn({
+  ids = [], // array of participant ids (strings or numbers) to preload descriptors for
+  scoreThreshold = 0.6, // face matcher distance threshold
+  onResult = () => {}, // called with { id, distance, label } on each match
+  onCompleted = () => {}, // called when user confirms sign-in/out: { id, type, time, snapshot }
+  onCancel = () => {},
+  inputSize = 160,
+  debug = false,
+}) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const faceapiRef = useRef(null);
+  const matcherRef = useRef(null);
+  const detectionTimerRef = useRef(null);
+  const [status, setStatus] = useState('loading');
+  const [lastMatch, setLastMatch] = useState(null);
+  const lastActionRef = useRef({ time: 0, id: null, type: null });
+
+  const stopCamera = useCallback(() => {
+    try {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    } catch (e) {
+      if (debug) console.warn('stopCamera error', e);
+    }
+  }, [debug]);
+
+  const buildMatcher = useCallback(async () => {
+    try {
+      const faceapi = faceapiRef.current;
+      if (!faceapi) return null;
+
+      const labeled = [];
+      for (const id of ids) {
+        try {
+          const raw = await descriptorDB.getDescriptor(id);
+          if (!raw || !Array.isArray(raw) || raw.length === 0) continue;
+          // raw expected to be array-of-arrays (or flattened) matching previous storage
+          const arrs = raw.map((r) => new Float32Array(r));
+          labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
+        } catch (e) {
+          if (debug) console.warn('failed to load descriptor for', id, e);
+        }
+      }
+
+      if (labeled.length === 0) return null;
+      const fm = new faceapi.FaceMatcher(labeled, scoreThreshold);
+      matcherRef.current = fm;
+      return fm;
+    } catch (e) {
+      if (debug) console.error('buildMatcher error', e);
+      return null;
+    }
+  }, [ids, scoreThreshold, debug]);
+
+  const startCamera = useCallback(async () => {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      streamRef.current = s;
+      if (videoRef.current) {
+        videoRef.current.srcObject = s;
+        // autoplay/play promise
+        try { await videoRef.current.play(); } catch (e) { /* ignore */ }
+      }
+      return true;
+    } catch (e) {
+      if (debug) console.error('startCamera failed', e);
+      return false;
+    }
+  }, [debug]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function init() {
+      setStatus('loading');
+      try {
+        // Ensure local models are loaded (FaceApiLoader defaults to /models/)
+        const ok = await preloadFaceApiModels({ variant: 'tiny' });
+        if (!ok) {
+          setStatus('models-unavailable');
+          return;
+        }
+        const faceapi = await getFaceApi();
+        faceapiRef.current = faceapi;
+
+        // prepare matcher from provided ids
+        await buildMatcher();
+
+        const camOk = await startCamera();
+        if (!camOk) {
+          setStatus('camera-error');
+          return;
+        }
+
+        setStatus('ready');
+      } catch (e) {
+        if (debug) console.error('BiometricsSignIn init error', e);
+        setStatus('error');
+      }
+    }
+
+    init();
+
+    return () => {
+      mounted = false;
+      stopCamera();
+      if (detectionTimerRef.current) {
+        clearInterval(detectionTimerRef.current);
+        detectionTimerRef.current = null;
+      }
+    };
+  }, [buildMatcher, startCamera, stopCamera, debug]);
+
+  useEffect(() => {
+    // Start detection loop when ready and matcher present
+    if (status !== 'ready') return undefined;
+    const faceapi = faceapiRef.current;
+    if (!faceapi || !matcherRef.current || !videoRef.current) return undefined;
+
+    let running = true;
+
+    const detect = async () => {
+      try {
+        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
+        const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
+        const result = await faceapi
+          .detectSingleFace(videoRef.current, options)
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+        if (!result || !result.descriptor) return;
+        const match = matcherRef.current.findBestMatch(result.descriptor);
+        if (match && match.label && match.label !== 'unknown') {
+          const payload = { id: match.label, distance: match.distance };
+          setLastMatch(payload);
+          try { onResult(payload); } catch (e) { if (debug) console.error('onResult handler error', e); }
+        }
+      } catch (e) {
+        if (debug) console.warn('detection error', e);
+      }
+    };
+
+    detectionTimerRef.current = setInterval(detect, 350);
+
+    return () => {
+      running = false;
+      if (detectionTimerRef.current) {
+        clearInterval(detectionTimerRef.current);
+        detectionTimerRef.current = null;
+      }
+    };
+  }, [status, inputSize, onResult, debug]);
+
+  const captureSnapshot = useCallback(() => {
+    try {
+      const v = videoRef.current;
+      if (!v) return null;
+      const w = v.videoWidth || 320;
+      const h = v.videoHeight || 240;
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(v, 0, 0, w, h);
+      return c.toDataURL('image/jpeg', 0.8);
+    } catch (e) {
+      if (debug) console.warn('captureSnapshot failed', e);
+      return null;
+    }
+  }, [debug]);
+
+  const handleAction = useCallback(async (type) => {
+    // type: 'sign_in' | 'sign_out'
+    const now = Date.now();
+    const match = lastMatch;
+    if (!match || !match.id) return;
+
+    // prevent rapid duplicate actions
+    const last = lastActionRef.current;
+    if (last.id === match.id && last.type === type && now - last.time < 4000) {
+      if (debug) console.warn('duplicate rapid action ignored');
+      return;
+    }
+
+    lastActionRef.current = { time: now, id: match.id, type };
+
+    const snapshot = captureSnapshot();
+    try {
+      onCompleted({ id: match.id, type, time: now, snapshot });
+    } catch (e) {
+      if (debug) console.error('onCompleted handler error', e);
+    }
+    // after completing, stop camera to avoid multiple snapshots
+    stopCamera();
+  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
+
+  const handleCancel = useCallback(() => {
+    stopCamera();
+    try { onCancel(); } catch (e) { if (debug) console.error('onCancel error', e); }
+  }, [onCancel, stopCamera, debug]);
+
+  return (
+    React.createElement('div', { className: 'biometrics-signin' },
+      status === 'loading' && React.createElement('div', null, 'Loading models...'),
+      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
+      status === 'camera-error' && React.createElement('div', null, 'Camera access denied or unavailable.'),
+      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
+      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
+        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
+        React.createElement('div', { style: { marginTop: 8 } },
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
+          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
+        ),
+        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
+      )
+    )
+  );
+}
+
+
+export default function BiometricsSignIn({
+  ids = [], // array of participant ids (strings or numbers) to preload descriptors for
+  scoreThreshold = 0.6, // face matcher distance threshold
+  onResult = () => {}, // called with { id, distance, label } on each match
+  onCompleted = () => {}, // called when user confirms sign-in/out: { id, type, time, snapshot }
+  onCancel = () => {},
+  inputSize = 160,
+  debug = false,
+}) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const faceapiRef = useRef(null);
+  const matcherRef = useRef(null);
+  const detectionTimerRef = useRef(null);
+  const [status, setStatus] = useState('loading');
+  const [lastMatch, setLastMatch] = useState(null);
+  const lastActionRef = useRef({ time: 0, id: null, type: null });
+
+  const stopCamera = useCallback(() => {
+    try {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    } catch (e) {
+      if (debug) console.warn('stopCamera error', e);
+    }
+  }, [debug]);
+
+  const buildMatcher = useCallback(async () => {
+    try {
+      const faceapi = faceapiRef.current;
+      if (!faceapi) return null;
+
+      const labeled = [];
+      for (const id of ids) {
+        try {
+          const raw = await descriptorDB.getDescriptor(id);
+          if (!raw || !Array.isArray(raw) || raw.length === 0) continue;
+          // raw expected to be array-of-arrays (or flattened) matching previous storage
+          const arrs = raw.map((r) => new Float32Array(r));
+          labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
+        } catch (e) {
+          if (debug) console.warn('failed to load descriptor for', id, e);
+        }
+      }
+
+      if (labeled.length === 0) return null;
+      const fm = new faceapi.FaceMatcher(labeled, scoreThreshold);
+      matcherRef.current = fm;
+      return fm;
+    } catch (e) {
+      if (debug) console.error('buildMatcher error', e);
+      return null;
+    }
+  }, [ids, scoreThreshold, debug]);
+
+  const startCamera = useCallback(async () => {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      streamRef.current = s;
+      if (videoRef.current) {
+        videoRef.current.srcObject = s;
+        // autoplay/play promise
+        try { await videoRef.current.play(); } catch (e) { /* ignore */ }
+      }
+      return true;
+    } catch (e) {
+      if (debug) console.error('startCamera failed', e);
+      return false;
+    }
+  }, [debug]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function init() {
+      setStatus('loading');
+      try {
+        // Ensure local models are loaded (FaceApiLoader defaults to /models/)
+        const ok = await preloadFaceApiModels({ variant: 'tiny' });
+        if (!ok) {
+          setStatus('models-unavailable');
+          return;
+        }
+        const faceapi = await getFaceApi();
+        faceapiRef.current = faceapi;
+
+        // prepare matcher from provided ids
+        await buildMatcher();
+
+        const camOk = await startCamera();
+        if (!camOk) {
+          setStatus('camera-error');
+          return;
+        }
+
+        setStatus('ready');
+      } catch (e) {
+        if (debug) console.error('BiometricsSignIn init error', e);
+        setStatus('error');
+      }
+    }
+
+    init();
+
+    return () => {
+      mounted = false;
+      stopCamera();
+      if (detectionTimerRef.current) {
+        clearInterval(detectionTimerRef.current);
+        detectionTimerRef.current = null;
+      }
+    };
+  }, [buildMatcher, startCamera, stopCamera, debug]);
+
+  useEffect(() => {
+    // Start detection loop when ready and matcher present
+    if (status !== 'ready') return undefined;
+    const faceapi = faceapiRef.current;
+    if (!faceapi || !matcherRef.current || !videoRef.current) return undefined;
+
+    let running = true;
+
+    const detect = async () => {
+      try {
+        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
+        const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
+        const result = await faceapi
+          .detectSingleFace(videoRef.current, options)
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+        if (!result || !result.descriptor) return;
+        const match = matcherRef.current.findBestMatch(result.descriptor);
+        if (match && match.label && match.label !== 'unknown') {
+          const payload = { id: match.label, distance: match.distance };
+          setLastMatch(payload);
+          try { onResult(payload); } catch (e) { if (debug) console.error('onResult handler error', e); }
+        }
+      } catch (e) {
+        if (debug) console.warn('detection error', e);
+      }
+    };
+
+    detectionTimerRef.current = setInterval(detect, 350);
+
+    return () => {
+      running = false;
+      if (detectionTimerRef.current) {
+        clearInterval(detectionTimerRef.current);
+        detectionTimerRef.current = null;
+      }
+    };
+  }, [status, inputSize, onResult, debug]);
+
+  const captureSnapshot = useCallback(() => {
+    try {
+      const v = videoRef.current;
+      if (!v) return null;
+      const w = v.videoWidth || 320;
+      const h = v.videoHeight || 240;
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(v, 0, 0, w, h);
+      return c.toDataURL('image/jpeg', 0.8);
+    } catch (e) {
+      if (debug) console.warn('captureSnapshot failed', e);
+      return null;
+    }
+  }, [debug]);
+
+  const handleAction = useCallback(async (type) => {
+    // type: 'sign_in' | 'sign_out'
+    const now = Date.now();
+    const match = lastMatch;
+    if (!match || !match.id) return;
+
+    // prevent rapid duplicate actions
+    const last = lastActionRef.current;
+    if (last.id === match.id && last.type === type && now - last.time < 4000) {
+      if (debug) console.warn('duplicate rapid action ignored');
+      return;
+    }
+
+    lastActionRef.current = { time: now, id: match.id, type };
+
+    const snapshot = captureSnapshot();
+    try {
+      onCompleted({ id: match.id, type, time: now, snapshot });
+    } catch (e) {
+      if (debug) console.error('onCompleted handler error', e);
+    }
+    // after completing, stop camera to avoid multiple snapshots
+    stopCamera();
+  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
+
+  const handleCancel = useCallback(() => {
+    stopCamera();
+    try { onCancel(); } catch (e) { if (debug) console.error('onCancel error', e); }
+  }, [onCancel, stopCamera, debug]);
+
+  return (
+    React.createElement('div', { className: 'biometrics-signin' },
+      status === 'loading' && React.createElement('div', null, 'Loading models...'),
+      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
+      status === 'camera-error' && React.createElement('div', null, 'Camera access denied or unavailable.'),
+      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
+      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
+        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
+        React.createElement('div', { style: { marginTop: 8 } },
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
+          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
+        ),
+        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
+      )
+    )
+  );
+}
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { getFaceApi } from "../../utils/faceApiShim";
+import { preloadFaceApiModels } from "../../utils/FaceApiLoader";
+import descriptorDB from "../../utils/descriptorDB";
+
+const DEFAULT_DETECTOR_SIZE = 128;
+
+// Minimal, single-purpose biometrics component — match-only, no DB writes.
+export default function BiometricsSignIn({
+  entityType = "student",
+  studentId = null,
+  studentIds = null,
+  workerId = null,
+  workerIds = null,
+  startRecordingRequest = 0,
+  stopRecordingRequest = 0,
+  mode: initialMode = "snapshot",
+  scrollIntoViewOnMount = false,
+  onResult = null,
+  onCompleted = null,
+  onCancel = null,
+  ...rest
+}) {
+  const [mode] = useState(initialMode);
+  const containerRef = useRef(null);
+  const webcamRef = useRef(null);
+  const captureCanvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const processIntervalRef = useRef(null);
+  const faceapiRef = useRef(null);
+  const lastStartRef = useRef(0);
+  const lastStopRef = useRef(0);
+
+  const targets = (
+    import React, { useState, useRef, useEffect, useCallback } from "react";
+    import { getFaceApi } from "../../utils/faceApiShim";
+    import { preloadFaceApiModels } from "../../utils/FaceApiLoader";
+    import descriptorDB from "../../utils/descriptorDB";
+
+    // Clean minimal biometrics component (single export). Matches descriptors from `descriptorDB` and
+    // emits lightweight `onResult` / `onCompleted` events. Does not perform any DB writes.
+
+    // Clean minimal biometrics component (single export). Matches descriptors from `descriptorDB` and
+    // emits lightweight `onResult` / `onCompleted` events. Does not perform any DB writes.
+    export default function BiometricsSignIn({
+      entityType = "student",
+      studentId = null,
+      studentIds = null,
+      workerId = null,
+      workerIds = null,
+      startRecordingRequest = 0,
+      stopRecordingRequest = 0,
+      mode: initialMode = "snapshot",
+      scrollIntoViewOnMount = false,
+      onResult = null,
+      onCompleted = null,
+      onCancel = null,
+      ...rest
+    }) {
+      const [mode] = useState(initialMode);
+      const containerRef = useRef(null);
+      const webcamRef = useRef(null);
+      const captureCanvasRef = useRef(null);
+      const streamRef = useRef(null);
+      const processIntervalRef = useRef(null);
+      const faceapiRef = useRef(null);
+      const lastStartRef = useRef(0);
+      const lastStopRef = useRef(0);
+
+      const targets = (
+        (studentIds && Array.isArray(studentIds) ? studentIds : studentId ? [studentId] : [])
+          .concat(workerIds && Array.isArray(workerIds) ? workerIds : workerId ? [workerId] : [])
+          .filter(Boolean)
+      ).map(String);
+
+      const [loading, setLoading] = useState(true);
+      const [matcher, setMatcher] = useState(null);
+      const [results, setResults] = useState(() => ({}));
+
+      const ensureModels = useCallback(async () => {
+        if (!faceapiRef.current) {
+          try {
+            await preloadFaceApiModels();
+            faceapiRef.current = await getFaceApi();
+          } catch (err) {
+            console.warn("Failed to load face-api", err);
+            return false;
+          }
+        }
+        return true;
+      }, []);
+
+      const loadDescriptors = useCallback(async () => {
+        const faceapi = faceapiRef.current;
+        if (!faceapi) return false;
+        const labeled = [];
+        for (const id of targets) {
+          try {
+            const raw = await descriptorDB.getDescriptor(id);
+            if (raw && raw.length) {
+              const arrs = raw.map((a) => new Float32Array(a));
+              labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
+            } else {
+              setResults((r) => ({ ...r, [id]: { status: "failed", message: "No descriptors available (offline)." } }));
+            }
+          } catch (err) {
+            setResults((r) => ({ ...r, [id]: { status: "failed", message: "Descriptor load failed." } }));
+          }
+        }
+        if (labeled.length) {
+          setMatcher(new faceapi.FaceMatcher(labeled, 0.6));
+          return true;
+        }
+        return false;
+      }, [targets]);
+
+      const startCamera = useCallback(async () => {
+        if (streamRef.current) return true;
+        try {
+          const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+          streamRef.current = s;
+          if (webcamRef.current) webcamRef.current.srcObject = s;
+          try { await webcamRef.current.play(); } catch (e) {}
+          return true;
+        } catch (err) {
+          console.warn("startCamera failed", err);
+          return false;
+        }
+      }, []);
+
+      const stopCamera = useCallback(() => {
+        if (streamRef.current) {
+          try { streamRef.current.getTracks().forEach((t) => t.stop()); } catch (e) {}
+          streamRef.current = null;
+        }
+        if (webcamRef.current) {
+          try { webcamRef.current.pause(); webcamRef.current.srcObject = null; } catch (e) {}
+        }
+      }, []);
+
+      const captureAndMatch = useCallback(async () => {
+        if (!faceapiRef.current || !matcher || !webcamRef.current) return null;
+        const video = webcamRef.current;
+        if (video.videoWidth === 0 || video.videoHeight === 0) return null;
+        if (!captureCanvasRef.current) captureCanvasRef.current = document.createElement("canvas");
+        const canvas = captureCanvasRef.current;
+        const targetW = 320;
+        const targetH = Math.round((video.videoHeight / video.videoWidth) * targetW) || 240;
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0, targetW, targetH);
+        try {
+          const detections = await faceapiRef.current
+            .detectAllFaces(canvas, new faceapiRef.current.TinyFaceDetectorOptions({ inputSize: DEFAULT_DETECTOR_SIZE, scoreThreshold: 0.45 }))
+            .withFaceLandmarks()
+            .withFaceDescriptors();
+          if (!detections || !detections.length) return null;
+          const now = new Date().toISOString();
+          const newResults = {};
+          for (const det of detections) {
+            const best = matcher.findBestMatch(det.descriptor);
+            const label = String(best.label);
+            if (targets.includes(label)) {
+              newResults[label] = { status: "success", message: "Matched", timestamp: now };
+              try { if (typeof onResult === "function") onResult({ id: label, type: entityType === "student" ? "signin" : "signin", status: "success", timestamp: now }); } catch (e) {}
+            }
+          }
+          setResults((prev) => ({ ...prev, ...newResults }));
+          return newResults;
+        } catch (err) {
+          console.warn("captureAndMatch failed", err);
+          return null;
+        }
+      }, [matcher, onResult, entityType, targets]);
+
+      const startSession = useCallback(async () => {
+        const okModels = await ensureModels();
+        if (!okModels) return;
+        await loadDescriptors();
+        const camOk = await startCamera();
+        if (!camOk) return;
+        if (mode === "snapshot") {
+          await captureAndMatch();
+          try { if (typeof onCompleted === "function") onCompleted(Object.entries(results).map(([id, res]) => ({ id, ...res }))); } catch (e) {}
+          return;
+        }
+        if (processIntervalRef.current) return;
+        processIntervalRef.current = setInterval(() => { captureAndMatch(); }, 1500);
+      }, [ensureModels, loadDescriptors, startCamera, captureAndMatch, mode, onCompleted, results]);
+
+      const stopSession = useCallback(async () => {
+        if (processIntervalRef.current) { clearInterval(processIntervalRef.current); processIntervalRef.current = null; }
+        stopCamera();
+        try { if (typeof onCompleted === "function") onCompleted(Object.entries(results).map(([id, res]) => ({ id, ...res }))); } catch (e) {}
+      }, [stopCamera, onCompleted, results]);
+
+      useEffect(() => {
+        const v = Number(startRecordingRequest) || 0;
+        if (v && v !== lastStartRef.current) { lastStartRef.current = v; startSession().catch((e) => console.warn("startSession error", e)); }
+      }, [startRecordingRequest, startSession]);
+
+      useEffect(() => {
+        const v = Number(stopRecordingRequest) || 0;
+        if (v && v !== lastStopRef.current) { lastStopRef.current = v; stopSession().catch((e) => console.warn("stopSession error", e)); }
+      }, [stopRecordingRequest, stopSession]);
+
+      useEffect(() => {
+        let mounted = true;
+        (async () => {
+          const ok = await ensureModels();
+          if (!mounted) return;
+          if (ok) await loadDescriptors();
+          if (mounted) setLoading(false);
+        })();
+        return () => { mounted = false; if (processIntervalRef.current) { clearInterval(processIntervalRef.current); processIntervalRef.current = null; } stopCamera(); };
+      }, [ensureModels, loadDescriptors, stopCamera]);
+
+      useEffect(() => {
+        if (scrollIntoViewOnMount && containerRef.current) {
+          try { containerRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {}
+          try { const v = containerRef.current.querySelector('video'); if (v && typeof v.focus === 'function') v.focus(); } catch (e) {}
+        }
+      }, [scrollIntoViewOnMount]);
+
+      return (
+        <div ref={containerRef} style={{ width: "100%" }} {...rest}>
+          <div style={{ marginBottom: 8 }}>
+            <video ref={webcamRef} autoPlay playsInline muted style={{ width: "100%", borderRadius: 8 }} tabIndex={-1} />
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <button className="btn btn-primary" onClick={() => { startSession().catch((e) => console.warn(e)); }}>Start</button>
+            <button className="btn btn-secondary" onClick={() => { stopSession().catch((e) => console.warn(e)); }}>Stop</button>
+            <button className="btn btn-link" onClick={() => { try { if (onCancel) onCancel(); } catch (e) {} stopSession().catch(() => {}); }}>Cancel</button>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontWeight: 600 }}>Targets</div>
+            <ul>
+              {targets.map((id) => (
+                <li key={id} style={{ marginBottom: 6 }}>
+                  <span style={{ marginRight: 8 }}>{id}</span>
+                  <span style={{ color: results[id]?.status === "success" ? "#059669" : "#dc2626" }}>{results[id]?.status || "pending"}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          {loading ? <div style={{ marginTop: 8, color: "#6b7280" }}>Loading models / descriptors...</div> : null}
+        </div>
+      );
+    }
+    const containerRef = useRef(null);
+    const webcamRef = useRef(null);
+    const captureCanvasRef = useRef(null);
+    const streamRef = useRef(null);
+    const processIntervalRef = useRef(null);
+    const faceapiRef = useRef(null);
+    const lastStartRef = useRef(0);
+    const lastStopRef = useRef(0);
+
+    const targets = (
+      (studentIds && Array.isArray(studentIds) ? studentIds : studentId ? [studentId] : [])
+        .concat(workerIds && Array.isArray(workerIds) ? workerIds : workerId ? [workerId] : [])
+        .filter(Boolean)
+    ).map(String);
+
+    const [loading, setLoading] = useState(true);
+    const [matcher, setMatcher] = useState(null);
+    const [results, setResults] = useState(() => ({}));
+
+    const ensureModels = async () => {
+      if (!faceapiRef.current) {
+        try {
+          await preloadFaceApiModels();
+          faceapiRef.current = await getFaceApi();
+        } catch (err) {
+          console.warn("Failed to load face-api", err);
+          return false;
+        }
+      }
+      return true;
+    };
+
+    const loadDescriptors = async () => {
+      const faceapi = faceapiRef.current;
+      if (!faceapi) return false;
+      const labeled = [];
+      for (const id of targets) {
+        try {
+          const raw = await descriptorDB.getDescriptor(id);
+          if (raw && raw.length) {
+            const arrs = raw.map((a) => new Float32Array(a));
+            const labeledDesc = new faceapi.LabeledFaceDescriptors(String(id), arrs);
+            labeled.push(labeledDesc);
+          } else {
+            setResults((r) => ({ ...r, [id]: { status: "failed", message: "No descriptors available (offline)." } }));
+          }
+        } catch (err) {
+          setResults((r) => ({ ...r, [id]: { status: "failed", message: "Descriptor load failed." } }));
+        }
+      }
+      if (labeled.length) {
+        const fm = new faceapi.FaceMatcher(labeled, 0.6);
+        setMatcher(fm);
+        return true;
+      }
+      return false;
+    };
+
+    const startCamera = async () => {
+      if (streamRef.current) return true;
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+        streamRef.current = s;
+        if (webcamRef.current) webcamRef.current.srcObject = s;
+        try { await webcamRef.current.play(); } catch (e) {}
+        return true;
+      } catch (err) {
+        console.warn("startCamera failed", err);
+        return false;
+      }
+    };
+
+    const stopCamera = () => {
+      if (streamRef.current) {
+        try { streamRef.current.getTracks().forEach((t) => t.stop()); } catch (e) {}
+        streamRef.current = null;
+      }
+      if (webcamRef.current) {
+        try { webcamRef.current.pause(); webcamRef.current.srcObject = null; } catch (e) {}
+      }
+    };
+
+    const captureAndMatch = async () => {
+      if (!faceapiRef.current || !matcher || !webcamRef.current) return;
+      const video = webcamRef.current;
+      if (video.videoWidth === 0 || video.videoHeight === 0) return;
+      if (!captureCanvasRef.current) captureCanvasRef.current = document.createElement("canvas");
+      const canvas = captureCanvasRef.current;
+      const targetW = 320;
+      const targetH = Math.round((video.videoHeight / video.videoWidth) * targetW) || 240;
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, targetW, targetH);
+      try {
+        const detections = await faceapiRef.current
+          .detectAllFaces(canvas, new faceapiRef.current.TinyFaceDetectorOptions({ inputSize: DEFAULT_DETECTOR_SIZE, scoreThreshold: 0.45 }))
+          .withFaceLandmarks()
+          .withFaceDescriptors();
+        if (!detections || !detections.length) return;
+        const now = new Date().toISOString();
+        const newResults = {};
+        for (const det of detections) {
+          const best = matcher.findBestMatch(det.descriptor);
+          const label = String(best.label);
+          if (targets.includes(label)) {
+            newResults[label] = { status: "success", message: "Matched", timestamp: now };
+            if (typeof onResult === "function") onResult({ id: label, type: entityType === "student" ? "signin" : "signin", status: "success", timestamp: now });
+          }
+        }
+        setResults((prev) => ({ ...prev, ...newResults }));
+        return newResults;
+      } catch (err) {
+        console.warn("captureAndMatch failed", err);
+      }
+    };
+
+    const startSession = async () => {
+      const okModels = await ensureModels();
+      if (!okModels) return;
+      await loadDescriptors();
+      const camOk = await startCamera();
+      if (!camOk) return;
+      if (mode === "snapshot") {
+        await captureAndMatch();
+        if (typeof onCompleted === "function") onCompleted(Object.entries(results).map(([id, res]) => ({ id, ...res })));
+        return;
+      }
+      if (processIntervalRef.current) return;
+      processIntervalRef.current = setInterval(() => { captureAndMatch(); }, 1500);
+    };
+
+    const stopSession = async () => {
+      if (processIntervalRef.current) { clearInterval(processIntervalRef.current); processIntervalRef.current = null; }
+      stopCamera();
+      if (typeof onCompleted === "function") onCompleted(Object.entries(results).map(([id, res]) => ({ id, ...res })));
+    };
+
+    useEffect(() => {
+      const v = Number(startRecordingRequest) || 0;
+      if (v && v !== lastStartRef.current) { lastStartRef.current = v; startSession().catch((e) => console.warn("startSession error", e)); }
+    }, [startRecordingRequest]);
+
+    useEffect(() => {
+      const v = Number(stopRecordingRequest) || 0;
+      if (v && v !== lastStopRef.current) { lastStopRef.current = v; stopSession().catch((e) => console.warn("stopSession error", e)); }
+    }, [stopRecordingRequest]);
+
+    useEffect(() => {
+      let mounted = true;
+      (async () => {
+        const ok = await ensureModels();
+        if (!mounted) return;
+        if (ok) await loadDescriptors();
+        if (mounted) setLoading(false);
+      })();
+      return () => { mounted = false; if (processIntervalRef.current) { clearInterval(processIntervalRef.current); processIntervalRef.current = null; } stopCamera(); };
+    }, []);
+
+    useEffect(() => {
+      if (scrollIntoViewOnMount && containerRef.current) {
+        try { containerRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {}
+        try { const v = containerRef.current.querySelector('video'); if (v && typeof v.focus === 'function') v.focus(); } catch (e) {}
+      }
+    }, [scrollIntoViewOnMount]);
+
+    return (
+      <div ref={containerRef} style={{ width: "100%" }} {...rest}>
+        <div style={{ marginBottom: 8 }}>
+          <video ref={webcamRef} autoPlay playsInline muted style={{ width: "100%", borderRadius: 8 }} tabIndex={-1} />
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <button className="btn btn-primary" onClick={() => { startSession(); }}>Start</button>
+          <button className="btn btn-secondary" onClick={() => { stopSession(); }}>Stop</button>
+          <button className="btn btn-link" onClick={() => { try { if (onCancel) onCancel(); } catch (e) {} stopSession(); }}>Cancel</button>
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontWeight: 600 }}>Targets</div>
+          <ul>
+            {targets.map((id) => (
+              <li key={id} style={{ marginBottom: 6 }}>
+                <span style={{ marginRight: 8 }}>{id}</span>
+                <span style={{ color: results[id]?.status === "success" ? "#059669" : "#dc2626" }}>{results[id]?.status || "pending"}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    );
+  };
+
+  export default BiometricsSignIn;
+
+  entityType = "student",
+  studentId = null,
+  studentIds = null,
+  workerId = null,
+  workerIds = null,
+  startRecordingRequest = 0,
+  stopRecordingRequest = 0,
+  mode: initialMode = "snapshot",
+  scrollIntoViewOnMount = false,
+  onResult = null,
+  onCompleted = null,
+  onCancel = null,
+  ...rest
+}) => {
+  const [mode] = useState(initialMode);
+  const containerRef = useRef(null);
+  const webcamRef = useRef(null);
+  const captureCanvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const processIntervalRef = useRef(null);
+  const faceapiRef = useRef(null);
+  const lastStartRef = useRef(0);
+  const lastStopRef = useRef(0);
+
+  const targets = (
+    (studentIds && Array.isArray(studentIds) ? studentIds : studentId ? [studentId] : [])
+      .concat(workerIds && Array.isArray(workerIds) ? workerIds : workerId ? [workerId] : [])
+      .filter(Boolean)
+  ).map(String);
+
+  const [loading, setLoading] = useState(true);
+  const [matcher, setMatcher] = useState(null);
+  const [results, setResults] = useState(() => ({}));
+
+  const ensureModels = async () => {
+    if (!faceapiRef.current) {
+      try {
+        await preloadFaceApiModels();
+        faceapiRef.current = await getFaceApi();
+      } catch (err) {
+        console.warn("Failed to load face-api", err);
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const loadDescriptors = async () => {
+    const faceapi = faceapiRef.current;
+    if (!faceapi) return false;
+    const labeled = [];
+    for (const id of targets) {
+      try {
+        const raw = await descriptorDB.getDescriptor(id);
+        if (raw && raw.length) {
+          const arrs = raw.map((a) => new Float32Array(a));
+          const labeledDesc = new faceapi.LabeledFaceDescriptors(String(id), arrs);
+          labeled.push(labeledDesc);
+        } else {
+          setResults((r) => ({ ...r, [id]: { status: "failed", message: "No descriptors available (offline)." } }));
+        }
+      } catch (err) {
+        setResults((r) => ({ ...r, [id]: { status: "failed", message: "Descriptor load failed." } }));
+      }
+    }
+    if (labeled.length) {
+      const fm = new faceapi.FaceMatcher(labeled, 0.6);
+      setMatcher(fm);
+      return true;
+    }
+    return false;
+  };
+
+  const startCamera = async () => {
+    if (streamRef.current) return true;
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+      streamRef.current = s;
+      if (webcamRef.current) webcamRef.current.srcObject = s;
+      try { await webcamRef.current.play(); } catch (e) {}
+      return true;
+    } catch (err) {
+      console.warn("startCamera failed", err);
+      return false;
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      try { streamRef.current.getTracks().forEach((t) => t.stop()); } catch (e) {}
+      streamRef.current = null;
+    }
+    if (webcamRef.current) {
+      try { webcamRef.current.pause(); webcamRef.current.srcObject = null; } catch (e) {}
+    }
+  };
+
+  const captureAndMatch = async () => {
+    if (!faceapiRef.current || !matcher || !webcamRef.current) return;
+    const video = webcamRef.current;
+    if (video.videoWidth === 0 || video.videoHeight === 0) return;
+    if (!captureCanvasRef.current) captureCanvasRef.current = document.createElement("canvas");
+    const canvas = captureCanvasRef.current;
+    const targetW = 320;
+    const targetH = Math.round((video.videoHeight / video.videoWidth) * targetW) || 240;
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0, targetW, targetH);
+    try {
+      const detections = await faceapiRef.current
+        .detectAllFaces(canvas, new faceapiRef.current.TinyFaceDetectorOptions({ inputSize: DEFAULT_DETECTOR_SIZE, scoreThreshold: 0.45 }))
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+      if (!detections || !detections.length) return;
+      const now = new Date().toISOString();
+      const newResults = {};
+      for (const det of detections) {
+        const best = matcher.findBestMatch(det.descriptor);
+        const label = String(best.label);
+        if (targets.includes(label)) {
+          newResults[label] = { status: "success", message: "Matched", timestamp: now };
+          if (typeof onResult === "function") onResult({ id: label, type: entityType === "student" ? "signin" : "signin", status: "success", timestamp: now });
+        }
+      }
+      setResults((prev) => ({ ...prev, ...newResults }));
+      return newResults;
+    } catch (err) {
+      console.warn("captureAndMatch failed", err);
+    }
+  };
+
+  const startSession = async () => {
+    const okModels = await ensureModels();
+    if (!okModels) return;
+    await loadDescriptors();
+    const camOk = await startCamera();
+    if (!camOk) return;
+    if (mode === "snapshot") {
+      await captureAndMatch();
+      if (typeof onCompleted === "function") onCompleted(Object.entries(results).map(([id, res]) => ({ id, ...res })));
+      return;
+    }
+    if (processIntervalRef.current) return;
+    processIntervalRef.current = setInterval(() => { captureAndMatch(); }, 1500);
+  };
+
+  const stopSession = async () => {
+    if (processIntervalRef.current) { clearInterval(processIntervalRef.current); processIntervalRef.current = null; }
+    stopCamera();
+    if (typeof onCompleted === "function") onCompleted(Object.entries(results).map(([id, res]) => ({ id, ...res })));
+  };
+
+  useEffect(() => {
+    const v = Number(startRecordingRequest) || 0;
+    if (v && v !== lastStartRef.current) { lastStartRef.current = v; startSession().catch((e) => console.warn("startSession error", e)); }
+  }, [startRecordingRequest]);
+
+  useEffect(() => {
+    const v = Number(stopRecordingRequest) || 0;
+    if (v && v !== lastStopRef.current) { lastStopRef.current = v; stopSession().catch((e) => console.warn("stopSession error", e)); }
+  }, [stopRecordingRequest]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const ok = await ensureModels();
+      if (!mounted) return;
+      if (ok) await loadDescriptors();
+      if (mounted) setLoading(false);
+    })();
+    return () => { mounted = false; if (processIntervalRef.current) { clearInterval(processIntervalRef.current); processIntervalRef.current = null; } stopCamera(); };
+  }, []);
+
+  useEffect(() => {
+    if (scrollIntoViewOnMount && containerRef.current) {
+      try { containerRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {}
+      try { const v = containerRef.current.querySelector('video'); if (v && typeof v.focus === 'function') v.focus(); } catch (e) {}
+    }
+  }, [scrollIntoViewOnMount]);
+
+  return (
+    <div ref={containerRef} style={{ width: "100%" }} {...rest}>
+      <div style={{ marginBottom: 8 }}>
+        <video ref={webcamRef} autoPlay playsInline muted style={{ width: "100%", borderRadius: 8 }} tabIndex={-1} />
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <button className="btn btn-primary" onClick={() => { startSession(); }}>Start</button>
+        <button className="btn btn-secondary" onClick={() => { stopSession(); }}>Stop</button>
+        <button className="btn btn-link" onClick={() => { try { if (onCancel) onCancel(); } catch (e) {} stopSession(); }}>Cancel</button>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <div style={{ fontWeight: 600 }}>Targets</div>
+        <ul>
+          {targets.map((id) => (
+            <li key={id} style={{ marginBottom: 6 }}>
+              <span style={{ marginRight: 8 }}>{id}</span>
+              <span style={{ color: results[id]?.status === "success" ? "#059669" : "#dc2626" }}>{results[id]?.status || "pending"}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+};
+
+export default BiometricsSignIn;
+
+
 
   // Scroll and focus the video container when mounted if requested
   useEffect(() => {

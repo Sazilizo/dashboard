@@ -1,7 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import BiometricsSignIn from './BiometricsSignIn';
-import useOfflineTable from '../../hooks/useOfflineTable';
-import api from '../../api/client';
+import BiometricsSignIn from './BiometricsSignIn.clean';
 
 export default function StudentBiometrics(props) {
   const {
@@ -16,8 +14,6 @@ export default function StudentBiometrics(props) {
     ...rest
   } = props;
 
-  const { addRow, updateRow } = useOfflineTable('attendance_records');
-
   // Local UI state: control showing the biometric panel and signed-in participants
   const [showBiometrics, setShowBiometrics] = useState(false);
   const [participants, setParticipants] = useState([]);
@@ -29,98 +25,30 @@ export default function StudentBiometrics(props) {
   };
 
   const handleCompleted = useCallback(async (data) => {
-    // data: { studentId, type: 'signin'|'signout', timestamp, note }
+    // data: array of { id, status, message, timestamp }
     try {
       if (!data) return onCompleted && onCompleted(null);
       const rows = Array.isArray(data) ? data : [data];
-      const results = [];
-
-      for (const r of rows) {
-        const sid = r.studentId || studentId || null;
-        const ts = r.timestamp || new Date().toISOString();
-        if (!sid) {
-          results.push({ error: 'missing_student_id', input: r });
-          continue;
-        }
-
-        const payload = {
-          student_id: Number(sid),
-          school_id: schoolId || r.schoolId || null,
-          date: (ts || new Date().toISOString()).slice(0,10),
-          status: 'present',
-          note: r.note || sessionNote || null,
-          created_at: ts,
+      const mapped = rows.map((r) => {
+        const sid = String(r.id || studentId || '');
+        return {
+          studentId: sid,
+          type: operation || 'signin',
+          timestamp: r.timestamp || new Date().toISOString(),
+          status: r.status || 'failed',
+          message: r.message || null,
         };
-
-        if (r.type === 'signin') {
-          try {
-            const added = await addRow(payload);
-            results.push({ type: 'signin', result: added });
-            // Update small participant UI when sign-in succeeds (or queued)
-            try {
-              const pid = added?.id || added?.tempId || (added && added.id) || null;
-              setParticipants((p) => [...p, { studentId: sid, displayName: null, signInTime: (payload.created_at || new Date().toISOString()), attendanceId: pid }]);
-            } catch (e) {}
-          } catch (err) {
-            try {
-              const { data: inserted, error } = await api.from('attendance_records').insert(payload).select().maybeSingle();
-              if (error) throw error;
-              results.push({ type: 'signin', result: inserted });
-            } catch (err2) {
-              results.push({ type: 'signin', error: err2?.message || String(err2) });
-            }
-          }
-        } else if (r.type === 'signout') {
-          // Try to find open record on server and update, else insert sign_out_time only
-          const signOutTime = ts;
-          try {
-            const { data: openRows, error: qerr } = await api.from('attendance_records')
-              .select('id, sign_in_time')
-              .eq('student_id', Number(sid))
-              .eq('date', payload.date)
-              .order('id', { ascending: false });
-
-            if (!qerr && Array.isArray(openRows) && openRows.length) {
-              const open = openRows.find(x => !x.sign_out_time) || openRows[0];
-              if (open && !open.sign_out_time) {
-                const { data: upd, error: uerr } = await api.from('attendance_records').update({ sign_out_time: signOutTime }).eq('id', open.id).select().maybeSingle();
-                if (uerr) throw uerr;
-                results.push({ type: 'signout', result: upd });
-                // Remove from participants UI
-                try { setParticipants((p) => p.filter(x => Number(x.studentId) !== Number(sid))); } catch (e) {}
-                continue;
-              }
-            }
-
-            // No open record: insert sign_out-only record
-            const payload2 = { ...payload, sign_out_time: signOutTime };
-            const { data: inserted, error: ierr } = await api.from('attendance_records').insert(payload2).select().maybeSingle();
-            if (ierr) throw ierr;
-            results.push({ type: 'signout', result: inserted });
-            try { setParticipants((p) => p.filter(x => Number(x.studentId) !== Number(sid))); } catch (e) {}
-          } catch (err) {
-            // fallback to offline insert
-            try {
-              const payload3 = { ...payload, sign_out_time: signOutTime };
-              const added = await addRow(payload3);
-              results.push({ type: 'signout', result: added });
-              try { setParticipants((p) => p.filter(x => Number(x.studentId) !== Number(sid))); } catch (e) {}
-            } catch (err2) {
-              results.push({ type: 'signout', error: err2?.message || String(err2) });
-            }
-          }
-        } else {
-          results.push({ error: 'unsupported_type', input: r });
-        }
-      }
-
-      if (onCompleted) onCompleted(results);
-      return results;
+      });
+      // forward to parent to handle DB writes
+      if (onCompleted) onCompleted(mapped);
+      // hide biometric UI after completion
+      setShowBiometrics(false);
+      return mapped;
     } catch (err) {
       if (onCompleted) onCompleted({ error: err?.message || String(err) });
       return { error: err?.message || String(err) };
     }
-  }, [addRow, api, onCompleted, schoolId, studentId]);
+  }, [onCompleted, studentId, operation]);
 
   // UI: if an academicSessionId is provided, expose Record Session / End Session buttons
   // otherwise expose Sign In / Sign Out buttons (single or group)

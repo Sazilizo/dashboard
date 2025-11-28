@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api/client";
-import BiometricsSignIn from "../components/forms/BiometricsSignIn";
+import BiometricsSignIn from "../components/forms/BiometricsSignIn.clean";
 import useToast from "../hooks/useToast";
 import ToastContainer from "../components/ToastContainer";
 import ConfirmToast from "../components/ConfirmToast";

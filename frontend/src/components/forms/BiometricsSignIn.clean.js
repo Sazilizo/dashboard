@@ -1,0 +1,153 @@
+// Minimal, match-only BiometricsSignIn (clean copy)
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { preloadFaceApiModels } from '../../utils/FaceApiLoader';
+import { getFaceApi } from '../../utils/faceApiShim';
+import descriptorDB from '../../utils/descriptorDB';
+
+export default function BiometricsSignIn({
+  ids = [],
+  scoreThreshold = 0.6,
+  onResult = () => {},
+  onCompleted = () => {},
+  onCancel = () => {},
+  inputSize = 160,
+  debug = false,
+}) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const faceapiRef = useRef(null);
+  const matcherRef = useRef(null);
+  const intervalRef = useRef(null);
+  const [status, setStatus] = useState('loading');
+  const [lastMatch, setLastMatch] = useState(null);
+  const lastActionRef = useRef({ time: 0, id: null, type: null });
+
+  const stopCamera = useCallback(() => {
+    try {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) videoRef.current.srcObject = null;
+    } catch (e) {
+      if (debug) console.warn('stopCamera', e);
+    }
+  }, [debug]);
+
+  const buildMatcher = useCallback(async () => {
+    const faceapi = faceapiRef.current;
+    if (!faceapi) return null;
+    const labeled = [];
+    for (const id of ids) {
+      try {
+        const raw = await descriptorDB.getDescriptor(id);
+        if (!raw || !Array.isArray(raw) || raw.length === 0) continue;
+        const arrs = raw.map((r) => new Float32Array(r));
+        labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
+      } catch (e) {
+        if (debug) console.warn('descriptor load failed for', id, e);
+      }
+    }
+    if (!labeled.length) return null;
+    const fm = new faceapi.FaceMatcher(labeled, scoreThreshold);
+    matcherRef.current = fm;
+    return fm;
+  }, [ids, scoreThreshold, debug]);
+
+  const startCamera = useCallback(async () => {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      streamRef.current = s;
+      if (videoRef.current) {
+        videoRef.current.srcObject = s;
+        try { await videoRef.current.play(); } catch (_) {}
+      }
+      return true;
+    } catch (e) {
+      if (debug) console.error('startCamera failed', e);
+      return false;
+    }
+  }, [debug]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setStatus('loading');
+      try {
+        const ok = await preloadFaceApiModels({ variant: 'tiny' });
+        if (!ok) { setStatus('models-unavailable'); return; }
+        faceapiRef.current = await getFaceApi();
+        await buildMatcher();
+        const camOk = await startCamera();
+        if (!camOk) { setStatus('camera-error'); return; }
+        if (mounted) setStatus('ready');
+      } catch (err) {
+        if (debug) console.error('init error', err);
+        setStatus('error');
+      }
+    })();
+    return () => { mounted = false; stopCamera(); if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
+  }, [buildMatcher, startCamera, stopCamera, debug]);
+
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const faceapi = faceapiRef.current;
+    if (!faceapi || !matcherRef.current || !videoRef.current) return;
+    let running = true;
+    const detect = async () => {
+      try {
+        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
+        const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
+        const res = await faceapi.detectSingleFace(videoRef.current, options).withFaceLandmarks().withFaceDescriptor();
+        if (!res || !res.descriptor) return;
+        const match = matcherRef.current.findBestMatch(res.descriptor);
+        if (match && match.label && match.label !== 'unknown') {
+          const payload = { id: match.label, distance: match.distance };
+          setLastMatch(payload);
+          try { onResult(payload); } catch (e) { if (debug) console.error('onResult cb', e); }
+        }
+      } catch (e) { if (debug) console.warn('detect error', e); }
+    };
+    intervalRef.current = setInterval(detect, 350);
+    return () => { running = false; if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
+  }, [status, inputSize, onResult, scoreThreshold, debug]);
+
+  const captureSnapshot = useCallback(() => {
+    try {
+      const v = videoRef.current; if (!v) return null;
+      const w = v.videoWidth || 320; const h = v.videoHeight || 240;
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const ctx = c.getContext('2d'); ctx.drawImage(v, 0, 0, w, h);
+      return c.toDataURL('image/jpeg', 0.8);
+    } catch (e) { if (debug) console.warn('snapshot failed', e); return null; }
+  }, [debug]);
+
+  const handleAction = useCallback(async (type) => {
+    const now = Date.now(); const match = lastMatch; if (!match || !match.id) return;
+    const last = lastActionRef.current; if (last.id === match.id && last.type === type && now - last.time < 4000) { if (debug) return; }
+    lastActionRef.current = { time: now, id: match.id, type };
+    const snapshot = captureSnapshot();
+    try { onCompleted({ id: match.id, type, time: now, snapshot }); } catch (e) { if (debug) console.error('onCompleted cb', e); }
+    stopCamera();
+  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
+
+  const handleCancel = useCallback(() => { stopCamera(); try { onCancel(); } catch (e) { if (debug) console.error('onCancel', e); } }, [onCancel, stopCamera, debug]);
+
+  return (
+    React.createElement('div', { className: 'biometrics-signin' },
+      status === 'loading' && React.createElement('div', null, 'Loading models...'),
+      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
+      status === 'camera-error' && React.createElement('div', null, 'Camera access denied.'),
+      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
+      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
+        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
+        React.createElement('div', { style: { marginTop: 8 } },
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
+          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
+          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
+        ),
+        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
+      )
+    )
+  );
+}

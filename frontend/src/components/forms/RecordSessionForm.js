@@ -451,39 +451,100 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
           }
         }
         // If the biometric component already includes an attendance result, don't write a duplicate row.
+        // If the biometric component already includes an attendance result, don't write a duplicate row.
+        // We only create an attendance_records row for sign-in snapshots. For sign-outs we prefer to
+        // update the session participant's `sign_out_time` (if present) rather than insert attendance.
         if (r.attendance) {
           console.log('[RecordSessionForm] received attendance from biometric payload, skipping addAttendanceRow:', r.attendance);
           results.push(r.attendance);
         } else {
-          const payload = {
-            student_id: r.studentId,
-            school_id: studentById[String(r.studentId)]?.school_id || null,
-            date: r.timestamp?.slice(0,10) || new Date().toISOString().slice(0,10),
-            status: r.type === 'signout' ? 'present' : 'present',
-            note: r.note || `biometric ${r.type}`,
-            created_at: r.timestamp || new Date().toISOString(),
-          };
-          console.log('[RecordSessionForm] handleBiometricsCompleted payload:', payload);
-          const res = await addAttendanceRow(payload);
-          console.log('[RecordSessionForm] addAttendanceRow result:', res);
-          results.push(res);
+          // Determine whether to add an attendance row: only for sign-in
+          if (r.type === 'signin') {
+            // If the student already has a participant row with a sign_in_time, skip adding duplicate attendance
+            const existingParticipant = (participantsForSelected || []).find(p => String(p.student_id) === String(r.studentId));
+            const alreadySignedIn = existingParticipant && (existingParticipant.sign_in_time || existingParticipant.sign_in_time === 0);
+            if (alreadySignedIn) {
+              console.log('[RecordSessionForm] participant already has sign_in_time, skipping attendance row for', r.studentId);
+            } else {
+              const payload = {
+                student_id: r.studentId,
+                school_id: studentById[String(r.studentId)]?.school_id || null,
+                date: r.timestamp?.slice(0,10) || new Date().toISOString().slice(0,10),
+                status: 'present',
+                note: r.note || `biometric ${r.type}`,
+                created_at: r.timestamp || new Date().toISOString(),
+              };
+              console.log('[RecordSessionForm] handleBiometricsCompleted payload (attendance):', payload);
+              try {
+                const res = await addAttendanceRow(payload);
+                console.log('[RecordSessionForm] addAttendanceRow result:', res);
+                results.push(res);
+              } catch (err) {
+                console.warn('[RecordSessionForm] addAttendanceRow failed', err);
+                results.push({ __error: err });
+              }
+            }
+          } else {
+            // For signout, we do not create a new attendance_records row — we'll update participant sign_out_time instead.
+            console.log('[RecordSessionForm] signout detected - will update participant sign_out_time for', r.studentId);
+          }
         }
-        // If a session is selected, also assign this student to the session participants table
+
+        // If a session is selected, update or create participant rows with sign_in_time / sign_out_time accordingly
         try {
           if (selectedSession) {
-            const partPayload = {
-              session_id: selectedSession,
-              student_id: Number(r.studentId),
-              school_id: studentById[String(r.studentId)]?.school_id || null,
-            };
-            console.log('[RecordSessionForm] adding participant to table:', participantsTable, 'payload:', partPayload);
-            console.log('[RecordSessionForm] addParticipant payload (biometrics)', partPayload);
-            console.log('[RecordSessionForm] current user profile for RLS debug', user?.profile);
-            const partRes = await addParticipant(partPayload);
-            console.log('[RecordSessionForm] addParticipant result:', partRes);
+            const sid = Number(r.studentId);
+            const found = (participantsForSelected || []).find(p => Number(p.student_id) === sid);
+            if (r.type === 'signin') {
+              const partPayload = { session_id: selectedSession, student_id: sid, school_id: studentById[String(sid)]?.school_id || null };
+              if (found && found.id) {
+                // update sign_in_time if not already set
+                if (!found.sign_in_time) {
+                  try {
+                    await updateParticipant(found.id, { sign_in_time: r.timestamp || new Date().toISOString() });
+                    console.log('[RecordSessionForm] updated participant sign_in_time for', sid);
+                  } catch (uerr) {
+                    console.warn('[RecordSessionForm] updateParticipant failed (sign_in_time), falling back to addParticipant', uerr);
+                    try { await addParticipant({ ...partPayload, sign_in_time: r.timestamp || new Date().toISOString() }); } catch (e) { console.error('[RecordSessionForm] addParticipant fallback failed', e); }
+                  }
+                } else {
+                  console.log('[RecordSessionForm] participant already has sign_in_time, skipping update for', sid);
+                }
+              } else {
+                // create participant with sign_in_time
+                try {
+                  await addParticipant({ ...partPayload, sign_in_time: r.timestamp || new Date().toISOString() });
+                  console.log('[RecordSessionForm] added participant with sign_in_time for', sid);
+                } catch (perr) {
+                  console.warn('[RecordSessionForm] addParticipant failed (sign_in_time)', perr);
+                }
+              }
+            } else if (r.type === 'signout') {
+              if (found && found.id) {
+                if (!found.sign_out_time) {
+                  try {
+                    await updateParticipant(found.id, { sign_out_time: r.timestamp || new Date().toISOString() });
+                    console.log('[RecordSessionForm] updated participant sign_out_time for', sid);
+                  } catch (uerr) {
+                    console.warn('[RecordSessionForm] updateParticipant failed (sign_out_time), falling back to addParticipant', uerr);
+                    try { await addParticipant({ session_id: selectedSession, student_id: sid, school_id: studentById[String(sid)]?.school_id || null, sign_out_time: r.timestamp || new Date().toISOString() }); } catch (e) { console.error('[RecordSessionForm] addParticipant fallback failed', e); }
+                  }
+                } else {
+                  console.log('[RecordSessionForm] participant already has sign_out_time, skipping update for', sid);
+                }
+              } else {
+                // No existing participant — create one with sign_out_time only
+                try {
+                  await addParticipant({ session_id: selectedSession, student_id: sid, school_id: studentById[String(sid)]?.school_id || null, sign_out_time: r.timestamp || new Date().toISOString() });
+                  console.log('[RecordSessionForm] added participant with sign_out_time for', sid);
+                } catch (perr) {
+                  console.warn('[RecordSessionForm] addParticipant failed (sign_out_time)', perr);
+                }
+              }
+            }
           }
         } catch (err) {
-          console.warn('[RecordSessionForm] failed to add participant for biometrics completion', err);
+          console.warn('[RecordSessionForm] failed to add/update participant for biometrics completion', err);
         }
       }
       setLastActionResult({ attendanceRecorded: results });
