@@ -29,6 +29,7 @@ export default function BiometricsSignIn({
   const [isRecording, setIsRecording] = useState(false);
   const [status, setStatus] = useState('loading');
   const [lastMatch, setLastMatch] = useState(null);
+  const [videoReady, setVideoReady] = useState(false);
   const lastActionRef = useRef({ time: 0, id: null, type: null });
 
   const stopCamera = useCallback(() => {
@@ -70,7 +71,16 @@ export default function BiometricsSignIn({
       const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
       streamRef.current = s;
       if (videoRef.current) {
-        videoRef.current.srcObject = s;
+        // Avoid re-assigning the same stream (prevents extra reflows)
+        if (videoRef.current.srcObject !== s) {
+          videoRef.current.srcObject = s;
+        }
+        // Listen for playing to mark the video as ready and avoid flash
+        const onPlaying = () => {
+          setVideoReady(true);
+          videoRef.current && videoRef.current.removeEventListener('playing', onPlaying);
+        };
+        videoRef.current.addEventListener('playing', onPlaying);
         try { await videoRef.current.play(); } catch (_) {}
       }
       if (debug) console.debug('[BiometricsSignIn] startCamera success');
@@ -178,26 +188,24 @@ export default function BiometricsSignIn({
       try { videoRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { /* ignore */ }
     }
   }, [scrollIntoViewOnMount]);
-
-  // Only show textual status messages when the camera/video is not present; when
-  // the video is mounted we prefer to overlay status inline (avoid flicker and
-  // stray 'Loading models...' text under the video).
-  const videoMounted = !!(videoRef.current && (videoRef.current.srcObject || videoRef.current.src));
-
   return (
     React.createElement('div', { className: 'biometrics-signin' },
-      !videoMounted && status === 'loading' && React.createElement('div', null, 'Loading models...'),
-      !videoMounted && status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
-      !videoMounted && status === 'camera-error' && React.createElement('div', null, 'Camera access denied.'),
-      !videoMounted && status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
-      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
-        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
-        !hidePrimaryControls && React.createElement('div', { style: { marginTop: 8 } },
-          React.createElement('button', { type: 'button', onClick: () => { setIsRecording(true); handleAction('sign_in'); } }, 'Sign In'),
-          React.createElement('button', { type: 'button', onClick: () => { setIsRecording(true); handleAction('sign_out'); }, style: { marginLeft: 8 } }, 'Sign Out'),
-          React.createElement('button', { type: 'button', onClick: () => { setIsRecording(false); handleCancel(); }, style: { marginLeft: 8 } }, 'Cancel')
-        ),
-        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
+      React.createElement('div', { style: { width: 320, height: 240, position: 'relative' } },
+        // Always render the video element to avoid DOM mount/unmount flicker.
+        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000', objectFit: 'cover', willChange: 'transform' }, autoPlay: true, muted: true, playsInline: true }),
+        // Status overlay: show loading/error messages until the video is actually playing
+        !videoReady && status === 'loading' && React.createElement('div', { style: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', background: 'rgba(0,0,0,0.45)' } }, 'Loading models...'),
+        !videoReady && status === 'models-unavailable' && React.createElement('div', { style: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', background: 'rgba(0,0,0,0.45)' } }, 'Face models unavailable.'),
+        !videoReady && status === 'camera-error' && React.createElement('div', { style: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', background: 'rgba(0,0,0,0.45)' } }, 'Camera access denied.'),
+        !videoReady && status === 'error' && React.createElement('div', { style: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', background: 'rgba(0,0,0,0.45)' } }, 'Biometrics failed to initialize.'),
+        React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none', marginTop: 8 } },
+          !hidePrimaryControls && React.createElement('div', { style: { marginTop: 8 } },
+            React.createElement('button', { type: 'button', onClick: () => { setIsRecording(true); handleAction('sign_in'); } }, 'Sign In'),
+            React.createElement('button', { type: 'button', onClick: () => { setIsRecording(true); handleAction('sign_out'); }, style: { marginLeft: 8 } }, 'Sign Out'),
+            React.createElement('button', { type: 'button', onClick: () => { setIsRecording(false); handleCancel(); }, style: { marginLeft: 8 } }, 'Cancel')
+          ),
+          lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
+        )
       )
     )
   );
