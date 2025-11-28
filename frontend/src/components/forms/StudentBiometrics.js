@@ -23,6 +23,11 @@ export default function StudentBiometrics(props) {
   const [participants, setParticipants] = useState([]);
   const [showParticipants, setShowParticipants] = useState(false);
 
+  const openBiometrics = (mode = 'signin') => {
+    try { console.log('[StudentBiometrics] openBiometrics', mode); } catch (e) {}
+    setShowBiometrics(true);
+  };
+
   const handleCompleted = useCallback(async (data) => {
     // data: { studentId, type: 'signin'|'signout', timestamp, note }
     try {
@@ -144,18 +149,18 @@ export default function StudentBiometrics(props) {
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8, position: 'relative', zIndex: 9999, pointerEvents: 'auto' }}>
         {academicSessionId ? (
           <>
-            <button className="btn btn-primary" onClick={startSession}>Record Session</button>
-            <button className="btn btn-secondary" onClick={endSession}>End Session</button>
-            <button className="btn btn-link" onClick={cancelOp}>Cancel</button>
+            <button className="btn btn-primary" onClick={() => { console.log('[StudentBiometrics] Record Session clicked'); startSession(); }}>Record Session</button>
+            <button className="btn btn-secondary" onClick={() => { console.log('[StudentBiometrics] End Session clicked'); endSession(); }}>End Session</button>
+            <button className="btn btn-link" onClick={() => { console.log('[StudentBiometrics] Cancel clicked'); cancelOp(); }}>Cancel</button>
           </>
         ) : (
           <>
-            <button className="btn btn-primary" onClick={() => startSignOp('signin')}>Sign In</button>
-            <button className="btn btn-secondary" onClick={() => startSignOp('signout')}>Sign Out</button>
-            <button className="btn btn-link" onClick={cancelOp}>Cancel</button>
+            <button className="btn btn-primary" onClick={() => { console.log('[StudentBiometrics] Sign In clicked'); startSignOp('signin'); }}>Sign In</button>
+            <button className="btn btn-secondary" onClick={() => { console.log('[StudentBiometrics] Sign Out clicked'); startSignOp('signout'); }}>Sign Out</button>
+            <button className="btn btn-link" onClick={() => { console.log('[StudentBiometrics] Cancel clicked'); cancelOp(); }}>Cancel</button>
           </>
         )}
       </div>

@@ -63,13 +63,9 @@ const BiometricsSignIn = ({
   closeOnStart = true, // whether to close/unmount the biometric UI when recording session starts
   onRecordingStart = null, // optional callback fired when continuous recording starts
   onRecordingStop = null, // optional callback fired when continuous recording stops
-  // parent can request recording stop by incrementing this counter
   stopRecordingRequest = 0,
-  // parent can request recording start by incrementing this counter
   startRecordingRequest = 0,
-  // parent can request a cancel-stop (stop recording but do NOT commit attendance/participants)
   stopRecordingCancelRequest = 0,
-  // storage customization (optional) - used when loading student images
   bucketName = null, // e.g. 'student-uploads' or 'worker-uploads'
   // Optional hooks parents can pass to receive structured events
   onSignIn = null, // (info) => {}
@@ -81,7 +77,6 @@ const BiometricsSignIn = ({
   // External control: parent or global events can request sign-in/sign-out operations.
   const [externalForceOperation, setExternalForceOperation] = useState(null);
   const effectiveForceOperation = externalForceOperation || forceOperation;
-  // basic UI/state refs
   const [message, setMessage] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [captureDone, setCaptureDone] = useState(false);
@@ -103,6 +98,10 @@ const BiometricsSignIn = ({
   // Recorded participants for the active session (local UI view)
   const [recordedParticipants, setRecordedParticipants] = useState([]);
   const [tick, setTick] = useState(0); // used to refresh elapsed times
+
+  // Guard to prevent rapid duplicate auto sign-ins per subject
+  const lastAutoSignInRef = useRef({});
+  const AUTO_SIGNIN_COOLDOWN_MS = 5000; // don't auto-sign-in same subject more than once per 5s
 
   // Helper to add a participant to the recorded list (start)
   const addRecordedParticipant = (student_id, displayName, signInTime, attendanceId = null, isWorker = false) => {
@@ -153,7 +152,6 @@ const BiometricsSignIn = ({
   const retryTimeouts = [2000, 4000, 8000];
   // Recording start timestamp (ISO) when continuous recording begins
   const recordingStartRef = useRef(null);
-  // Face matcher distance threshold (lower = stricter). 0.6 is a common default for face-api
   const threshold = 0.6;
 
   const webcamRef = useRef(null);
@@ -1268,7 +1266,13 @@ useEffect(() => {
           setCaptureDone(true);
           const nowIso = new Date().toISOString();
           try {
-            if (!pendingSignIns[match.label]) {
+            // Prevent duplicate rapid sign-ins for same label
+            const last = lastAutoSignInRef.current[match.label] || 0;
+            const nowMs = Date.now();
+            if (nowMs - last < AUTO_SIGNIN_COOLDOWN_MS) {
+              if (DEBUG) console.log('[BiometricsSignIn] skipping rapid duplicate snapshot sign-in', match.label);
+            } else if (!pendingSignIns[match.label]) {
+              lastAutoSignInRef.current[match.label] = nowMs;
               // Sign in: record attendance immediately
               console.log('[BiometricsSignIn] student auto sign-in - recording attendance', { student_id: match.label, signInTime: nowIso });
               const res = await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign in' });
@@ -1489,6 +1493,14 @@ useEffect(() => {
 
       for (const match of results) {
         if (match.label === "unknown") continue;
+        // prevent duplicate attempts in quick succession
+        const last = lastAutoSignInRef.current[match.label] || 0;
+        const nowMs = Date.now();
+        if (nowMs - last < AUTO_SIGNIN_COOLDOWN_MS) {
+          if (DEBUG) console.log('[BiometricsSignIn] skipping rapid duplicate continuous sign-in', match.label);
+          continue;
+        }
+        lastAutoSignInRef.current[match.label] = nowMs;
         if (!pendingSignIns[match.label]) {
           const signInTime = new Date().toISOString();
           console.log('[BiometricsSignIn] continuous auto sign-in attempt', { student_id: match.label, signInTime });

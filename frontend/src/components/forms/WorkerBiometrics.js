@@ -203,10 +203,10 @@ export default function WorkerBiometrics(props) {
   // UI rendered at bottom: Sign In / Sign Out controls and the hidden BiometricsSignIn
   return (
     <div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-        <button className="btn btn-primary" onClick={() => startOp('signin')}>Sign In</button>
-        <button className="btn btn-secondary" onClick={() => startOp('signout')}>Sign Out</button>
-        <button className="btn btn-link" onClick={() => stopOp()}>Cancel</button>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8, position: 'relative', zIndex: 9999, pointerEvents: 'auto' }}>
+        <button className="btn btn-primary" onClick={() => { console.log('[WorkerBiometrics] Sign In clicked'); startOp('signin'); }}>Sign In</button>
+        <button className="btn btn-secondary" onClick={() => { console.log('[WorkerBiometrics] Sign Out clicked'); startOp('signout'); }}>Sign Out</button>
+        <button className="btn btn-link" onClick={() => { console.log('[WorkerBiometrics] Cancel clicked'); stopOp(); }}>Cancel</button>
       </div>
       <BiometricsSignIn
         entityType="user"
