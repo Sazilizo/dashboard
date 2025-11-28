@@ -32,12 +32,14 @@ export default function WorkerBiometrics(props) {
   const startOp = (op) => {
     setOperation(op);
     // start continuous recording so multiple workers can be captured
+    setShowBiometrics(true);
     setStartReq((c) => c + 1);
   };
 
   const stopOp = () => {
     setStopReq((c) => c + 1);
     setOperation(null);
+    setShowBiometrics(false);
   };
 
   // internal wrapper to capture completion and stop recording automatically
@@ -45,6 +47,7 @@ export default function WorkerBiometrics(props) {
     // stop recording when completed (for single-shot flows)
     setStopReq((c) => c + 1);
     setOperation(null);
+    setShowBiometrics(false);
     // propagate to external handler
     try { if (onCompleted) onCompleted(res); } catch (e) { /* ignore */ }
   };
@@ -208,20 +211,23 @@ export default function WorkerBiometrics(props) {
         <button className="btn btn-secondary" onClick={() => { console.log('[WorkerBiometrics] Sign Out clicked'); startOp('signout'); }}>Sign Out</button>
         <button className="btn btn-link" onClick={() => { console.log('[WorkerBiometrics] Cancel clicked'); stopOp(); }}>Cancel</button>
       </div>
-      <BiometricsSignIn
-        entityType="user"
-        bucketName={bucketName}
-        folderName={folderName}
-        userId={userId}
-        workerId={workerId}
-        forceOperation={operation}
-        startRecordingRequest={startReq}
-        stopRecordingRequest={stopReq}
-        hidePrimaryControls={true}
-        onCompleted={handleCompleted}
-        onCancel={onCancel}
-        {...rest}
-      />
+      {showBiometrics && (
+        <BiometricsSignIn
+          entityType="user"
+          bucketName={bucketName}
+          folderName={folderName}
+          userId={userId}
+          workerId={workerId}
+          forceOperation={operation}
+          startRecordingRequest={startReq}
+          stopRecordingRequest={stopReq}
+          hidePrimaryControls={true}
+          scrollIntoViewOnMount={true}
+          onCompleted={handleCompleted}
+          onCancel={onCancel}
+          {...rest}
+        />
+      )}
     </div>
   );
 }

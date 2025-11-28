@@ -130,21 +130,25 @@ export default function StudentBiometrics(props) {
 
   const startSession = () => {
     setOperation('session');
+    setShowBiometrics(true);
     setStartReq(c => c + 1);
   };
   const endSession = () => {
     setStopReq(c => c + 1);
     setOperation(null);
+    setShowBiometrics(false);
   };
 
   const startSignOp = (op) => {
     setOperation(op);
     // start continuous so multiple students can be captured in a flow
+    setShowBiometrics(true);
     setStartReq(c => c + 1);
   };
   const cancelOp = () => {
     setStopReq(c => c + 1);
     setOperation(null);
+    setShowBiometrics(false);
   };
 
   return (
@@ -165,21 +169,24 @@ export default function StudentBiometrics(props) {
         )}
       </div>
 
-      <BiometricsSignIn
-        entityType="student"
-        bucketName={bucketName}
-        folderName={folderName}
-        studentId={studentId}
-        schoolId={schoolId}
-        academicSessionId={academicSessionId}
-        forceOperation={operation === 'session' ? null : operation}
-        startRecordingRequest={startReq}
-        stopRecordingRequest={stopReq}
-        hidePrimaryControls={true}
-        onCompleted={handleCompleted}
-        onCancel={onCancel}
-        {...rest}
-      />
+      {showBiometrics && (
+        <BiometricsSignIn
+          entityType="student"
+          bucketName={bucketName}
+          folderName={folderName}
+          studentId={studentId}
+          schoolId={schoolId}
+          academicSessionId={academicSessionId}
+          forceOperation={operation === 'session' ? null : operation}
+          startRecordingRequest={startReq}
+          stopRecordingRequest={stopReq}
+          hidePrimaryControls={true}
+          scrollIntoViewOnMount={true}
+          onCompleted={handleCompleted}
+          onCancel={onCancel}
+          {...rest}
+        />
+      )}
     </div>
   );
 }

@@ -74,6 +74,8 @@ const BiometricsSignIn = ({
   folderName = null,
   // Hide internal primary controls (parent supplies its own buttons)
   hidePrimaryControls = false,
+  // When true the component will scroll the video area into view and focus the video element on mount
+  scrollIntoViewOnMount = false,
 }) => {
   // External control: parent or global events can request sign-in/sign-out operations.
   const [externalForceOperation, setExternalForceOperation] = useState(null);
@@ -156,6 +158,7 @@ const BiometricsSignIn = ({
   const threshold = 0.6;
 
   const webcamRef = useRef(null);
+  const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const captureCanvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -459,6 +462,40 @@ const BiometricsSignIn = ({
       }
     };
   }, [captureDone, facingMode]);
+
+  // Scroll and focus the video container when mounted if requested
+  useEffect(() => {
+    if (!scrollIntoViewOnMount) return;
+    // Run after a short delay to allow the DOM to render and webcam to attach
+    const id = setTimeout(() => {
+      try {
+        // Prefer focusing the actual video element
+        if (webcamRef.current) {
+          try {
+            webcamRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          } catch (e) {
+            // ignore scroll errors
+          }
+          try {
+            // Make sure the element is focusable
+            webcamRef.current.focus({ preventScroll: true });
+          } catch (e) {
+            try { webcamRef.current.focus(); } catch (e2) {}
+          }
+          return;
+        }
+
+        // Fallback: scroll the container if video not available yet
+        if (containerRef.current) {
+          try { containerRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+        }
+      } catch (err) {
+        // ignore
+      }
+    }, 120);
+
+    return () => clearTimeout(id);
+  }, [scrollIntoViewOnMount]);
 
   // create an offscreen canvas once for downscaled captures
   useEffect(() => {
@@ -1572,6 +1609,7 @@ useEffect(() => {
 
   // start/stop continuous processing
   const startContinuous = () => {
+    console.log('[BiometricsSignIn] startContinuous called');
     if (processIntervalRef.current) return;
     processIntervalRef.current = setInterval(() => {
       processFrame();
@@ -1601,6 +1639,7 @@ useEffect(() => {
   };
 
   const stopContinuous = async () => {
+    console.log('[BiometricsSignIn] stopContinuous called');
     if (processIntervalRef.current) {
       clearInterval(processIntervalRef.current);
       processIntervalRef.current = null;
@@ -1810,15 +1849,17 @@ useEffect(() => {
   useEffect(() => {
     try {
       const v = Number(stopRecordingRequest) || 0;
+      console.log('[BiometricsSignIn] stopRecordingRequest effect, value=', stopRecordingRequest, 'last=', lastStopReqRef.current);
       if (v && v !== lastStopReqRef.current) {
         lastStopReqRef.current = v;
+        console.log('[BiometricsSignIn] stopRecordingRequest triggered -> stopping continuous (if active)');
         // only attempt to stop if currently recording
         if (mode === 'continuous') {
-          stopContinuous().catch((e) => { if (DEBUG) console.warn('stopContinuous failed', e); });
+          stopContinuous().catch((e) => { console.warn('stopContinuous failed', e); });
         }
       }
     } catch (e) {
-      if (DEBUG) console.warn('stopRecordingRequest effect failed', e);
+      console.warn('stopRecordingRequest effect failed', e);
     }
   }, [stopRecordingRequest]);
 
@@ -1827,14 +1868,16 @@ useEffect(() => {
   useEffect(() => {
     try {
       const v = Number(startRecordingRequest) || 0;
+      console.log('[BiometricsSignIn] startRecordingRequest effect, value=', startRecordingRequest, 'last=', lastStartReqRef.current);
       if (v && v !== lastStartReqRef.current) {
         lastStartReqRef.current = v;
+        console.log('[BiometricsSignIn] startRecordingRequest triggered -> starting continuous (if not already)');
         if (mode !== 'continuous') {
           startContinuous();
         }
       }
     } catch (e) {
-      if (DEBUG) console.warn('startRecordingRequest effect failed', e);
+      console.warn('startRecordingRequest effect failed', e);
     }
   }, [startRecordingRequest]);
 
@@ -2365,16 +2408,17 @@ useEffect(() => {
             <>
               <div className="video-container">
             <video
-              ref={webcamRef}
-              autoPlay
-              playsInline
-              muted
-              style={{
-                display: captureDone ? "none" : "block",
-                width: "100%",
-                borderRadius: "8px",
-              }}
-            />
+                ref={webcamRef}
+                autoPlay
+                playsInline
+                muted
+                tabIndex={-1}
+                style={{
+                  display: captureDone ? "none" : "block",
+                  width: "100%",
+                  borderRadius: "8px",
+                }}
+              />
             <canvas
               ref={canvasRef}
               style={{
