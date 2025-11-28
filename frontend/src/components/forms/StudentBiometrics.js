@@ -41,8 +41,15 @@ export default function StudentBiometrics(props) {
       });
       // forward to parent to handle DB writes
       if (onCompleted) onCompleted(mapped);
-      // hide biometric UI after completion
-      setShowBiometrics(false);
+      // For session (continuous) mode keep the biometric UI open so multiple
+      // students can be captured without unmounting the camera (avoids flicker).
+      if (operation === 'session') {
+        // keep showing biometric panel; parent controls when to stop via endSession
+      } else {
+        // single-shot flows close the biometric UI
+        setShowBiometrics(false);
+        setStopReq(c => c + 1);
+      }
       return mapped;
     } catch (err) {
       if (onCompleted) onCompleted({ error: err?.message || String(err) });

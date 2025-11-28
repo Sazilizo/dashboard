@@ -64,7 +64,16 @@ export default function WorkerBiometrics(props) {
         };
       });
       if (onCompleted) onCompleted(mapped);
-      try { await handleInternalCompleted(mapped); } catch (e) {}
+      // Only auto-stop the biometric panel for single-shot flows.
+      // If `operation` is set (user started a continuous flow via the UI),
+      // keep the panel open so multiple workers can be captured without
+      // unmounting the camera. If `forceOperation` is provided (parent
+      // requested a forced single-shot), treat as single-shot and stop.
+      if (forceOperation || !operation) {
+        try { await handleInternalCompleted(mapped); } catch (e) {}
+      } else {
+        // continuous flow: keep showing biometric panel; parent will call stopOp
+      }
       return mapped;
     } catch (err) {
       if (onCompleted) onCompleted({ error: err?.message || String(err) });
