@@ -33,6 +33,7 @@ export default function BiometricsSignIn({
 
   const stopCamera = useCallback(() => {
     try {
+      if (debug) console.debug('[BiometricsSignIn] stopCamera called');
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
@@ -65,12 +66,14 @@ export default function BiometricsSignIn({
 
   const startCamera = useCallback(async () => {
     try {
+      if (debug) console.debug('[BiometricsSignIn] startCamera requested');
       const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
       streamRef.current = s;
       if (videoRef.current) {
         videoRef.current.srcObject = s;
         try { await videoRef.current.play(); } catch (_) {}
       }
+      if (debug) console.debug('[BiometricsSignIn] startCamera success');
       return true;
     } catch (e) {
       if (debug) console.error('startCamera failed', e);
@@ -80,6 +83,7 @@ export default function BiometricsSignIn({
 
   useEffect(() => {
     let mounted = true;
+    if (debug) console.debug('[BiometricsSignIn] mount/init');
     (async () => {
       setStatus('loading');
       try {
@@ -90,12 +94,13 @@ export default function BiometricsSignIn({
         const camOk = await startCamera();
         if (!camOk) { setStatus('camera-error'); return; }
         if (mounted) setStatus('ready');
+        if (debug) console.debug('[BiometricsSignIn] models loaded and camera ready');
       } catch (err) {
         if (debug) console.error('init error', err);
         setStatus('error');
       }
     })();
-    return () => { mounted = false; stopCamera(); if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
+    return () => { mounted = false; if (debug) console.debug('[BiometricsSignIn] unmount'); stopCamera(); if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
   }, [buildMatcher, startCamera, stopCamera, debug]);
 
   useEffect(() => {
@@ -174,12 +179,17 @@ export default function BiometricsSignIn({
     }
   }, [scrollIntoViewOnMount]);
 
+  // Only show textual status messages when the camera/video is not present; when
+  // the video is mounted we prefer to overlay status inline (avoid flicker and
+  // stray 'Loading models...' text under the video).
+  const videoMounted = !!(videoRef.current && (videoRef.current.srcObject || videoRef.current.src));
+
   return (
     React.createElement('div', { className: 'biometrics-signin' },
-      status === 'loading' && React.createElement('div', null, 'Loading models...'),
-      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
-      status === 'camera-error' && React.createElement('div', null, 'Camera access denied.'),
-      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
+      !videoMounted && status === 'loading' && React.createElement('div', null, 'Loading models...'),
+      !videoMounted && status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
+      !videoMounted && status === 'camera-error' && React.createElement('div', null, 'Camera access denied.'),
+      !videoMounted && status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
       React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
         React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
         !hidePrimaryControls && React.createElement('div', { style: { marginTop: 8 } },

@@ -99,6 +99,7 @@ export default function WorkerBiometrics(props) {
           forceOperation={operation}
           startRecordingRequest={startReq}
           stopRecordingRequest={stopReq}
+          debug={true}
           hidePrimaryControls={true}
           scrollIntoViewOnMount={true}
           onCompleted={handleCompleted}

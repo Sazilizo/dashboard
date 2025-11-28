@@ -375,6 +375,7 @@ export default function LoginForm() {
                 schoolId={userProfile.school_id}
                 workerId={userProfile.worker_id}
                 forceOperation="signin"
+                debug={true}
                 onCompleted={handleBiometricComplete}
                 primaryActionLabel="Sign In"
               />

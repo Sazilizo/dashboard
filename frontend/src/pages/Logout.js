@@ -486,6 +486,7 @@ const LogoutButton = () => {
                 schoolId={userProfile.school_id}
                 workerId={userProfile.worker_id}
                 forceOperation="signout"
+                debug={true}
                 onCompleted={handleBiometricComplete}
                 onCancel={handleBiometricCancel}
                 primaryActionLabel="Sign Out"

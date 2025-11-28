@@ -115,6 +115,7 @@ export default function StudentBiometrics(props) {
           forceOperation={operation === 'session' ? null : operation}
           startRecordingRequest={startReq}
           stopRecordingRequest={stopReq}
+          debug={true}
           hidePrimaryControls={true}
           scrollIntoViewOnMount={true}
           onCompleted={handleCompleted}

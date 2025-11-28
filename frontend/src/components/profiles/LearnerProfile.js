@@ -821,6 +821,7 @@ console.log("student academic sessions:", student?.academic_sessions)
                   schoolId={student.school_id}
                   bucketName="student-uploads"
                   folderName="students"
+                  debug={true}
                 />
               )}
             </div>
