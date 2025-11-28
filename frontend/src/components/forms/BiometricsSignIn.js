@@ -49,6 +49,7 @@ const BiometricsSignIn = ({
   userId = null,
   schoolId = null,
   academicSessionId = null,
+  recordSessionParticipants = false,
   // sessionType controls which participants table to write to (e.g. 'academic_session_participants' or 'pe_session_participants')
   sessionType = 'academic_session_participants',
   onCompleted = null,
@@ -1285,7 +1286,7 @@ useEffect(() => {
 
               // Add participant to session table if a session id was provided (students only)
               try {
-                if (academicSessionId) {
+                if (academicSessionId && recordSessionParticipants) {
                   const sid = Number(match.label);
                   const now = new Date().toISOString();
                   const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: now, sign_in_time: now };
@@ -1365,7 +1366,7 @@ useEffect(() => {
                 });
                 setMessage(`${displayName} signed out. Duration: ${durationHours} hrs`);
                 try {
-                  if (academicSessionId) {
+                  if (academicSessionId && recordSessionParticipants) {
                     console.log('[BiometricsSignIn] updating participant sign_out_time via API', { sessionType, sessionId: academicSessionId, student: match.label });
                     await api.from(sessionType)
                       .update({ sign_out_time: new Date().toISOString() })
@@ -1375,11 +1376,11 @@ useEffect(() => {
                   console.warn('Failed to update academic_session_participant sign_out_time', e);
                 }
               } else {
-                // No pending sign-in found — still record a sign-out attendance row
-                await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign out' });
+                // No pending sign-in found — still record a sign-out attendance row (only sign_out_time snapshot)
+                await recordAttendance({ entityId: match.label, signOutTime: nowIso, note: 'biometric sign out' });
                 setMessage(`${displayName} sign-out recorded.`);
                 try {
-                    if (academicSessionId) {
+                    if (academicSessionId && recordSessionParticipants) {
                       await api.from(sessionType)
                         .update({ sign_out_time: new Date().toISOString() })
                         .match({ session_id: academicSessionId, student_id: Number(match.label) });
@@ -1529,7 +1530,7 @@ useEffect(() => {
           }
           // Also ensure session participant entry exists and record sign_in_time for continuous mode
           try {
-            if (academicSessionId) {
+            if (academicSessionId && recordSessionParticipants) {
               const sid = Number(match.label);
               const partNow = signInTime;
               const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: partNow, sign_in_time: partNow };
@@ -1960,15 +1961,16 @@ useEffect(() => {
     try {
       const date = new Date().toISOString().split("T")[0];
       
-      // Build attendance record based on entity type
+      // Build attendance record based on entity type. Only attach snapshot timestamps provided.
       const record = {
         school_id: schoolId,
         status: "present",
-        note: attendanceData.note || "biometric sign in",
+        note: attendanceData.note || "biometric",
         date,
-        sign_in_time: attendanceData.signInTime,
-        method: "biometric"
+        method: "biometric",
       };
+      if (attendanceData.signInTime) record.sign_in_time = attendanceData.signInTime;
+      if (attendanceData.signOutTime) record.sign_out_time = attendanceData.signOutTime;
       
       // Add either student_id or user/profile mapping
       if (entityType === 'student') {
@@ -2094,7 +2096,7 @@ useEffect(() => {
             // Add academic session participant (for prompt-based sign-ins) if session id provided
             // Only add participants for students — do not insert profile/worker rows into student participants table
             try {
-              if (academicSessionId && entityType === 'student') {
+              if (academicSessionId && recordSessionParticipants && entityType === 'student') {
                 const sid = Number(entityId);
                 const now = new Date().toISOString();
                 const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: now, sign_in_time: now };
@@ -2184,9 +2186,9 @@ useEffect(() => {
                 return copy;
               });
               setMessage(`${displayName} signed out. Duration: ${durationHours.toFixed(2)} hrs`);
-              // update academic_session_participants record sign_out_time when available
+              // update academic_session_participants record sign_out_time when available (optional)
               try {
-                if (academicSessionId) {
+                if (academicSessionId && recordSessionParticipants) {
                   await api.from(sessionType)
                     .update({ sign_out_time: new Date().toISOString() })
                     .match({ session_id: academicSessionId, student_id: Number(entityId) });

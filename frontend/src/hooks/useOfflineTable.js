@@ -215,14 +215,19 @@ export default function useOfflineTable(
         return { tempId, mutationKey };
       }
     } catch (err) {
-      // Log detailed context for easier debugging (400 responses often include details)
+      // Log detailed context for easier debugging (400 responses often include details/hint)
       try {
-        console.error(`[useOfflineTable] addRow failed for ${tableName}`, { payload, message: err?.message || err, err });
+        console.error(`[useOfflineTable] addRow failed for ${tableName}`);
+        console.error({ payload });
+        console.error({ message: err?.message, details: err?.details, hint: err?.hint, code: err?.code, status: err?.status });
+        // Also dump the original error object to capture any extra properties
+        console.error({ rawError: err });
       } catch (logErr) {
         console.error(`[useOfflineTable] addRow logging failed`, logErr);
       }
+
       setError(err);
-      // Return object with error for callers to inspect
+      // Return object with error for callers to inspect and surface in UI/console
       return { __error: true, error: err };
     }
   }
@@ -252,8 +257,17 @@ export default function useOfflineTable(
         return { mutationKey };
       }
     } catch (err) {
-      setError(err);
-      return null;
+        try {
+          console.error(`[useOfflineTable] updateRow failed for ${tableName} id=${id}`);
+          console.error({ id, data });
+          console.error({ message: err?.message, details: err?.details, hint: err?.hint, code: err?.code, status: err?.status });
+          console.error({ rawError: err });
+        } catch (logErr) {
+          console.error(`[useOfflineTable] updateRow logging failed`, logErr);
+        }
+
+        setError(err);
+        return { __error: true, error: err };
     }
   }
 
@@ -271,8 +285,17 @@ export default function useOfflineTable(
         return { mutationKey };
       }
     } catch (err) {
-      setError(err);
-      return null;
+        try {
+          console.error(`[useOfflineTable] deleteRow failed for ${tableName} id=${id}`);
+          console.error({ id });
+          console.error({ message: err?.message, details: err?.details, hint: err?.hint, code: err?.code, status: err?.status });
+          console.error({ rawError: err });
+        } catch (logErr) {
+          console.error(`[useOfflineTable] deleteRow logging failed`, logErr);
+        }
+
+        setError(err);
+        return { __error: true, error: err };
     }
   }
 
