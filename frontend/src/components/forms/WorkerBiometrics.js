@@ -9,6 +9,7 @@ export default function WorkerBiometrics(props) {
     onCompleted = null,
     onCancel = null,
     forceOperation = null,
+    continuous = false,
     bucketName = 'worker-uploads',
     folderName = 'workers',
     ...rest
@@ -25,12 +26,25 @@ export default function WorkerBiometrics(props) {
   const [startReq, setStartReq] = useState(0);
   const [stopReq, setStopReq] = useState(0);
 
+  // If parent provided a `forceOperation` (e.g. GroupSignPerform), start recording automatically
+  React.useEffect(() => {
+    if (forceOperation) {
+      setOperation(forceOperation);
+      setShowBiometrics(true);
+      setStartReq((c) => c + 1);
+    }
+  }, [forceOperation]);
+
   const startOp = (op) => {
     setOperation(op);
     // start continuous recording so multiple workers can be captured
     setShowBiometrics(true);
     setStartReq((c) => c + 1);
   };
+
+  React.useEffect(() => {
+    try { console.debug('[WorkerBiometrics] showBiometrics ->', showBiometrics, 'operation ->', operation, 'forceOperation ->', forceOperation); } catch (e) {}
+  }, [showBiometrics, operation, forceOperation]);
 
   const stopOp = () => {
     setStopReq((c) => c + 1);
@@ -69,7 +83,9 @@ export default function WorkerBiometrics(props) {
       // keep the panel open so multiple workers can be captured without
       // unmounting the camera. If `forceOperation` is provided (parent
       // requested a forced single-shot), treat as single-shot and stop.
-      if (forceOperation || !operation) {
+      // Auto-stop only when not in continuous group mode. If `continuous` is true
+      // keep the panel open so multiple captures can be made.
+      if (!continuous && (forceOperation || !operation)) {
         try { await handleInternalCompleted(mapped); } catch (e) {}
       } else {
         // continuous flow: keep showing biometric panel; parent will call stopOp

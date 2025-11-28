@@ -9,6 +9,8 @@ export default function StudentBiometrics(props) {
     academicSessionId = null,
     onCompleted = null,
     onCancel = null,
+    forceOperation = null,
+    continuous = false,
     bucketName = 'student-uploads',
     folderName = 'faces',
     ...rest
@@ -23,6 +25,12 @@ export default function StudentBiometrics(props) {
     try { console.log('[StudentBiometrics] openBiometrics', mode); } catch (e) {}
     setShowBiometrics(true);
   };
+
+  React.useEffect(() => {
+    try {
+      console.debug('[StudentBiometrics] showBiometrics ->', showBiometrics, 'operation ->', operation, 'forceOperation ->', forceOperation);
+    } catch (e) {}
+  }, [showBiometrics, operation, forceOperation]);
 
   const handleCompleted = useCallback(async (data) => {
     // data: array of { id, status, message, timestamp }
@@ -41,9 +49,11 @@ export default function StudentBiometrics(props) {
       });
       // forward to parent to handle DB writes
       if (onCompleted) onCompleted(mapped);
-      // For session (continuous) mode keep the biometric UI open so multiple
-      // students can be captured without unmounting the camera (avoids flicker).
-      if (operation === 'session') {
+      // For continuous group-mode (parent indicates `continuous`), keep the
+      // biometric UI open so multiple students can be captured without
+      // unmounting the camera (avoids flicker). Otherwise close after a
+      // single-shot capture.
+      if (continuous || operation === 'session') {
         // keep showing biometric panel; parent controls when to stop via endSession
       } else {
         // single-shot flows close the biometric UI
@@ -62,6 +72,15 @@ export default function StudentBiometrics(props) {
   const [operation, setOperation] = useState(null);
   const [startReq, setStartReq] = useState(0);
   const [stopReq, setStopReq] = useState(0);
+
+  // If parent provided a `forceOperation` (e.g. StudentGroupSignPerform), start recording automatically
+  React.useEffect(() => {
+    if (forceOperation) {
+      setOperation(forceOperation === 'session' ? 'session' : forceOperation);
+      setShowBiometrics(true);
+      setStartReq(c => c + 1);
+    }
+  }, [forceOperation]);
 
   const startSession = () => {
     setOperation('session');

@@ -38,6 +38,7 @@ export default function GroupSignPerform() {
             <StudentBiometrics
               forceOperation={operation}
               hidePrimaryControls={true}
+              continuous={true}
               onCompleted={handleCompleted}
             />
           <div style={{ marginTop: 12 }}>

@@ -56,7 +56,8 @@ export default function GroupSignPerform() {
           <WorkerBiometrics
             forceOperation={operation}
             onCompleted={handleCompleted}
-             hidePrimaryControls={true}
+            hidePrimaryControls={true}
+            continuous={true}
           />
           <div style={{ marginTop: 12 }}>
             <button className="btn btn-secondary" onClick={() => setOperation(null)}>Cancel</button>
