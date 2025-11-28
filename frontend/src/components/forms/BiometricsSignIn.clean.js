@@ -12,12 +12,21 @@ export default function BiometricsSignIn({
   onCancel = () => {},
   inputSize = 160,
   debug = false,
+  // Controls for parents that orchestrate group sign-ins
+  startRecordingRequest = 0,
+  stopRecordingRequest = 0,
+  forceOperation = null,
+  hidePrimaryControls = false,
+  scrollIntoViewOnMount = false,
 }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const faceapiRef = useRef(null);
   const matcherRef = useRef(null);
   const intervalRef = useRef(null);
+  const startReqRef = useRef(startRecordingRequest);
+  const stopReqRef = useRef(stopRecordingRequest);
+  const [isRecording, setIsRecording] = useState(false);
   const [status, setStatus] = useState('loading');
   const [lastMatch, setLastMatch] = useState(null);
   const lastActionRef = useRef({ time: 0, id: null, type: null });
@@ -90,7 +99,7 @@ export default function BiometricsSignIn({
   }, [buildMatcher, startCamera, stopCamera, debug]);
 
   useEffect(() => {
-    if (status !== 'ready') return;
+    if (status !== 'ready' || !isRecording) return;
     const faceapi = faceapiRef.current;
     if (!faceapi || !matcherRef.current || !videoRef.current) return;
     let running = true;
@@ -112,6 +121,30 @@ export default function BiometricsSignIn({
     return () => { running = false; if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
   }, [status, inputSize, onResult, scoreThreshold, debug]);
 
+  // React to parent start/stop requests (incrementing counters)
+  useEffect(() => {
+    if (startRecordingRequest !== startReqRef.current) {
+      startReqRef.current = startRecordingRequest;
+      // start detection (keep camera running)
+      if (status === 'ready') setIsRecording(true);
+      else {
+        // if models/camera not ready yet, mark recording for when ready
+        const unlisten = () => setIsRecording(true);
+        // no direct subscription; rely on existing init flow — set flag now
+        setIsRecording(true);
+      }
+    }
+  }, [startRecordingRequest, status]);
+
+  useEffect(() => {
+    if (stopRecordingRequest !== stopReqRef.current) {
+      stopReqRef.current = stopRecordingRequest;
+      // stop detection but keep camera mounted if desired; parent decides
+      setIsRecording(false);
+      // optionally stop camera if not continuous (no future starts expected)
+    }
+  }, [stopRecordingRequest]);
+
   const captureSnapshot = useCallback(() => {
     try {
       const v = videoRef.current; if (!v) return null;
@@ -128,10 +161,18 @@ export default function BiometricsSignIn({
     lastActionRef.current = { time: now, id: match.id, type };
     const snapshot = captureSnapshot();
     try { onCompleted({ id: match.id, type, time: now, snapshot }); } catch (e) { if (debug) console.error('onCompleted cb', e); }
-    stopCamera();
-  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
+    // Do not automatically stop camera here — parent controls stopRecordingRequest.
+    if (!isRecording && !forceOperation) stopCamera();
+  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug, isRecording, forceOperation]);
 
   const handleCancel = useCallback(() => { stopCamera(); try { onCancel(); } catch (e) { if (debug) console.error('onCancel', e); } }, [onCancel, stopCamera, debug]);
+
+  // scroll into view if requested
+  useEffect(() => {
+    if (scrollIntoViewOnMount && videoRef.current && typeof videoRef.current.scrollIntoView === 'function') {
+      try { videoRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { /* ignore */ }
+    }
+  }, [scrollIntoViewOnMount]);
 
   return (
     React.createElement('div', { className: 'biometrics-signin' },
@@ -141,10 +182,10 @@ export default function BiometricsSignIn({
       status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
       React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
         React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
-        React.createElement('div', { style: { marginTop: 8 } },
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
-          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
+        !hidePrimaryControls && React.createElement('div', { style: { marginTop: 8 } },
+          React.createElement('button', { type: 'button', onClick: () => { setIsRecording(true); handleAction('sign_in'); } }, 'Sign In'),
+          React.createElement('button', { type: 'button', onClick: () => { setIsRecording(true); handleAction('sign_out'); }, style: { marginLeft: 8 } }, 'Sign Out'),
+          React.createElement('button', { type: 'button', onClick: () => { setIsRecording(false); handleCancel(); }, style: { marginLeft: 8 } }, 'Cancel')
         ),
         lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
       )
