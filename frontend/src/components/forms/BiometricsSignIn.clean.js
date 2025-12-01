@@ -39,7 +39,10 @@ export default function BiometricsSignIn({
         streamRef.current.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
       }
-      if (videoRef.current) videoRef.current.srcObject = null;
+      if (videoRef.current) {
+        try { videoRef.current.srcObject = null; } catch (e) { /* ignore */ }
+        setVideoReady(false);
+      }
     } catch (e) {
       if (debug) console.warn('stopCamera', e);
     }
@@ -73,13 +76,19 @@ export default function BiometricsSignIn({
       if (videoRef.current) {
         // Avoid re-assigning the same stream (prevents extra reflows)
         if (videoRef.current.srcObject !== s) {
+          if (debug) console.debug('[BiometricsSignIn] assigning srcObject to video');
           videoRef.current.srcObject = s;
+        } else {
+          if (debug) console.debug('[BiometricsSignIn] srcObject already set; skipping assignment');
         }
         // Listen for playing to mark the video as ready and avoid flash
         const onPlaying = () => {
+          if (debug) console.debug('[BiometricsSignIn] video playing event');
           setVideoReady(true);
-          videoRef.current && videoRef.current.removeEventListener('playing', onPlaying);
+          try { videoRef.current && videoRef.current.removeEventListener('playing', onPlaying); } catch (e) {}
         };
+        // remove any previous listener to avoid duplicates
+        try { videoRef.current && videoRef.current.removeEventListener('playing', onPlaying); } catch (e) {}
         videoRef.current.addEventListener('playing', onPlaying);
         try { await videoRef.current.play(); } catch (_) {}
       }
