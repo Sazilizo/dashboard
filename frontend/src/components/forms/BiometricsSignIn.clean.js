@@ -24,6 +24,7 @@ export default function BiometricsSignIn({
   const faceapiRef = useRef(null);
   const matcherRef = useRef(null);
   const intervalRef = useRef(null);
+  const idleTimerRef = useRef(null);
   const startReqRef = useRef(startRecordingRequest);
   const stopReqRef = useRef(stopRecordingRequest);
   const [isRecording, setIsRecording] = useState(false);
@@ -31,6 +32,7 @@ export default function BiometricsSignIn({
   const [lastMatch, setLastMatch] = useState(null);
   const [videoReady, setVideoReady] = useState(false);
   const lastActionRef = useRef({ time: 0, id: null, type: null });
+  const IDLE_TIMEOUT_MS = 10000; // stop camera after 10s idle by default
 
   const stopCamera = useCallback(() => {
     try {
@@ -43,10 +45,29 @@ export default function BiometricsSignIn({
         try { videoRef.current.srcObject = null; } catch (e) { /* ignore */ }
         setVideoReady(false);
       }
+      if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+      if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null; }
     } catch (e) {
       if (debug) console.warn('stopCamera', e);
     }
   }, [debug]);
+  
+  // Idle timer helpers (component scope)
+  const scheduleIdleStop = useCallback((ms = IDLE_TIMEOUT_MS) => {
+    try {
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = setTimeout(() => {
+        if (debug) console.debug('[BiometricsSignIn] idle timeout reached — stopping camera');
+        setIsRecording(false);
+        stopCamera();
+      }, ms);
+    } catch (e) { if (debug) console.warn('scheduleIdleStop failed', e); }
+  }, [stopCamera, debug]);
+
+  const cancelIdleStop = useCallback(() => {
+    try { if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null; } } catch (e) { }
+  }, []);
+
 
   const buildMatcher = useCallback(async () => {
     const faceapi = faceapiRef.current;
@@ -71,8 +92,23 @@ export default function BiometricsSignIn({
   const startCamera = useCallback(async () => {
     try {
       if (debug) console.debug('[BiometricsSignIn] startCamera requested');
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      // choose constraints based on device characteristics
+      const getPreferredConstraints = () => {
+        try {
+          const deviceMemory = navigator.deviceMemory || 4;
+          const threads = navigator.hardwareConcurrency || 4;
+          const lowEnd = (deviceMemory && deviceMemory < 2) || (threads && threads <= 2);
+          if (lowEnd) {
+            return { video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 10, max: 15 }, facingMode: 'user' }, audio: false };
+          }
+        } catch (e) { /* ignore */ }
+        return { video: { facingMode: 'user' }, audio: false };
+      };
+      const constraints = getPreferredConstraints();
+      const s = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = s;
+      // cancel any scheduled idle stop — we are actively starting
+      try { if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null; } } catch (e) {}
       if (videoRef.current) {
         // Avoid re-assigning the same stream (prevents extra reflows)
         if (videoRef.current.srcObject !== s) {
@@ -100,6 +136,7 @@ export default function BiometricsSignIn({
     }
   }, [debug]);
 
+
   useEffect(() => {
     let mounted = true;
     if (debug) console.debug('[BiometricsSignIn] mount/init');
@@ -121,6 +158,22 @@ export default function BiometricsSignIn({
     })();
     return () => { mounted = false; if (debug) console.debug('[BiometricsSignIn] unmount'); stopCamera(); if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
   }, [buildMatcher, startCamera, stopCamera, debug]);
+
+  // Hybrid idle behavior: ensure camera is started when recording begins,
+  // and schedule an idle stop when recording ends to conserve resources.
+  useEffect(() => {
+    if (isRecording) {
+      // cancel any pending idle stop and ensure camera is active
+      cancelIdleStop();
+      if (!streamRef.current) {
+        startCamera().catch((e) => { if (debug) console.warn('startCamera on resume failed', e); });
+      }
+    } else {
+      // schedule camera stop after idle timeout
+      scheduleIdleStop();
+    }
+    return () => { /* noop */ };
+  }, [isRecording, startCamera, scheduleIdleStop, cancelIdleStop, debug]);
 
   useEffect(() => {
     if (status !== 'ready' || !isRecording) return;
