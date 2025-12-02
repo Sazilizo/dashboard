@@ -24,6 +24,10 @@ export default function BiometricsSignIn({
   const faceapiRef = useRef(null);
   const matcherRef = useRef(null);
   const intervalRef = useRef(null);
+  const rafRef = useRef(null);
+  const detectingRef = useRef(false);
+  const lastDetectTimeRef = useRef(0);
+  const lastMatchRef = useRef(null);
   const idleTimerRef = useRef(null);
   const startReqRef = useRef(startRecordingRequest);
   const stopReqRef = useRef(stopRecordingRequest);
@@ -175,28 +179,66 @@ export default function BiometricsSignIn({
     return () => { /* noop */ };
   }, [isRecording, startCamera, scheduleIdleStop, cancelIdleStop, debug]);
 
+  // Detection loop: use requestAnimationFrame and throttle actual detections
   useEffect(() => {
     if (status !== 'ready' || !isRecording) return;
     const faceapi = faceapiRef.current;
     if (!faceapi || !matcherRef.current || !videoRef.current) return;
-    let running = true;
-    const detect = async () => {
+
+    const detectInterval = 350; // ms between detections
+    let mounted = true;
+
+    const runDetect = async () => {
+      if (!mounted) return;
+      if (detectingRef.current) return;
+      const v = videoRef.current;
+      if (!v || v.readyState < 2) return;
       try {
-        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
+        detectingRef.current = true;
         const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
-        const res = await faceapi.detectSingleFace(videoRef.current, options).withFaceLandmarks().withFaceDescriptor();
-        if (!res || !res.descriptor) return;
-        const match = matcherRef.current.findBestMatch(res.descriptor);
-        if (match && match.label && match.label !== 'unknown') {
-          const payload = { id: match.label, distance: match.distance };
-          setLastMatch(payload);
-          try { onResult(payload); } catch (e) { if (debug) console.error('onResult cb', e); }
+        const res = await faceapi.detectSingleFace(v, options).withFaceLandmarks().withFaceDescriptor();
+        if (res && res.descriptor) {
+          const match = matcherRef.current.findBestMatch(res.descriptor);
+          if (match && match.label && match.label !== 'unknown') {
+            const payload = { id: match.label, distance: match.distance };
+            // minimize state updates: only update when match changes meaningfully
+            const prev = lastMatchRef.current;
+            const changed = !prev || prev.id !== payload.id || Math.abs(prev.distance - payload.distance) > 0.001;
+            if (changed) {
+              lastMatchRef.current = payload;
+              setLastMatch(payload);
+              try { onResult(payload); } catch (e) { if (debug) console.error('onResult cb', e); }
+            }
+          }
         }
-      } catch (e) { if (debug) console.warn('detect error', e); }
+      } catch (e) {
+        if (debug) console.warn('detect error', e);
+      } finally {
+        detectingRef.current = false;
+      }
     };
-    intervalRef.current = setInterval(detect, 350);
-    return () => { running = false; if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
-  }, [status, inputSize, onResult, scoreThreshold, debug]);
+
+    const loop = (t) => {
+      if (!mounted) return;
+      try {
+        const now = Date.now();
+        if (!detectingRef.current && now - (lastDetectTimeRef.current || 0) >= detectInterval) {
+          lastDetectTimeRef.current = now;
+          runDetect();
+        }
+      } catch (e) { if (debug) console.warn('loop error', e); }
+      rafRef.current = requestAnimationFrame(loop);
+    };
+
+    rafRef.current = requestAnimationFrame(loop);
+
+    return () => {
+      mounted = false;
+      try { if (rafRef.current) cancelAnimationFrame(rafRef.current); } catch (e) {}
+      rafRef.current = null;
+      detectingRef.current = false;
+    };
+  }, [status, inputSize, onResult, scoreThreshold, debug, isRecording]);
 
   // React to parent start/stop requests (incrementing counters)
   useEffect(() => {
