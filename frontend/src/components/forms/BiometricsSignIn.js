@@ -1,1839 +1,322 @@
-// Minimal, match-only BiometricsSignIn component
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { preloadFaceApiModels } from '../../utils/FaceApiLoader';
-import { getFaceApi } from '../../utils/faceApiShim';
-import descriptorDB from '../../utils/descriptorDB';
-
-export default function BiometricsSignIn({
-  ids = [],
-  scoreThreshold = 0.6,
-  onResult = () => {},
-  onCompleted = () => {},
-  onCancel = () => {},
-  inputSize = 160,
-  debug = false,
-}) {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const faceapiRef = useRef(null);
-  const matcherRef = useRef(null);
-  const intervalRef = useRef(null);
-  const [status, setStatus] = useState('loading');
-  const [lastMatch, setLastMatch] = useState(null);
-  const lastActionRef = useRef({ time: 0, id: null, type: null });
-
-  const stopCamera = useCallback(() => {
-    try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
-      if (videoRef.current) videoRef.current.srcObject = null;
-    } catch (e) {
-      if (debug) console.warn('stopCamera', e);
-    }
-  }, [debug]);
-
-  const buildMatcher = useCallback(async () => {
-    const faceapi = faceapiRef.current;
-    if (!faceapi) return null;
-    const labeled = [];
-    for (const id of ids) {
-      try {
-        const raw = await descriptorDB.getDescriptor(id);
-        if (!raw || !Array.isArray(raw) || raw.length === 0) continue;
-        const arrs = raw.map((r) => new Float32Array(r));
-        labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
-      } catch (e) {
-        if (debug) console.warn('descriptor load failed for', id, e);
-      }
-    }
-    if (!labeled.length) return null;
-    const fm = new faceapi.FaceMatcher(labeled, scoreThreshold);
-    matcherRef.current = fm;
-    return fm;
-  }, [ids, scoreThreshold, debug]);
-
-  const startCamera = useCallback(async () => {
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-      streamRef.current = s;
-      if (videoRef.current) {
-        videoRef.current.srcObject = s;
-        try { await videoRef.current.play(); } catch (_) {}
-      }
-      return true;
-    } catch (e) {
-      if (debug) console.error('startCamera failed', e);
-      return false;
-    }
-  }, [debug]);
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      setStatus('loading');
-      try {
-        const ok = await preloadFaceApiModels({ variant: 'tiny' });
-        if (!ok) { setStatus('models-unavailable'); return; }
-        faceapiRef.current = await getFaceApi();
-        await buildMatcher();
-        const camOk = await startCamera();
-        if (!camOk) { setStatus('camera-error'); return; }
-        if (mounted) setStatus('ready');
-      } catch (err) {
-        if (debug) console.error('init error', err);
-        setStatus('error');
-      }
-    })();
-    return () => { mounted = false; stopCamera(); if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
-  }, [buildMatcher, startCamera, stopCamera, debug]);
-
-  useEffect(() => {
-    if (status !== 'ready') return;
-    const faceapi = faceapiRef.current;
-    if (!faceapi || !matcherRef.current || !videoRef.current) return;
-    let running = true;
-    const detect = async () => {
-      try {
-        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
-        const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
-        const res = await faceapi.detectSingleFace(videoRef.current, options).withFaceLandmarks().withFaceDescriptor();
-        if (!res || !res.descriptor) return;
-        const match = matcherRef.current.findBestMatch(res.descriptor);
-        if (match && match.label && match.label !== 'unknown') {
-          const payload = { id: match.label, distance: match.distance };
-          setLastMatch(payload);
-          try { onResult(payload); } catch (e) { if (debug) console.error('onResult cb', e); }
-        }
-      } catch (e) { if (debug) console.warn('detect error', e); }
-    };
-    intervalRef.current = setInterval(detect, 350);
-    return () => { running = false; if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; } };
-  }, [status, inputSize, onResult, scoreThreshold, debug]);
-
-  const captureSnapshot = useCallback(() => {
-    try {
-      const v = videoRef.current; if (!v) return null;
-      const w = v.videoWidth || 320; const h = v.videoHeight || 240;
-      const c = document.createElement('canvas'); c.width = w; c.height = h;
-      const ctx = c.getContext('2d'); ctx.drawImage(v, 0, 0, w, h);
-      return c.toDataURL('image/jpeg', 0.8);
-    } catch (e) { if (debug) console.warn('snapshot failed', e); return null; }
-  }, [debug]);
-
-  const handleAction = useCallback(async (type) => {
-    const now = Date.now(); const match = lastMatch; if (!match || !match.id) return;
-    const last = lastActionRef.current; if (last.id === match.id && last.type === type && now - last.time < 4000) { if (debug) return; }
-    lastActionRef.current = { time: now, id: match.id, type };
-    const snapshot = captureSnapshot();
-    try { onCompleted({ id: match.id, type, time: now, snapshot }); } catch (e) { if (debug) console.error('onCompleted cb', e); }
-    stopCamera();
-  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
-
-  const handleCancel = useCallback(() => { stopCamera(); try { onCancel(); } catch (e) { if (debug) console.error('onCancel', e); } }, [onCancel, stopCamera, debug]);
-
-  return (
-    React.createElement('div', { className: 'biometrics-signin' },
-      status === 'loading' && React.createElement('div', null, 'Loading models...'),
-      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
-      status === 'camera-error' && React.createElement('div', null, 'Camera access denied.'),
-      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
-      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
-        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
-        React.createElement('div', { style: { marginTop: 8 } },
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
-          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
-        ),
-        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
-      )
-    )
-  );
-}
-// BiometricsSignIn (single clean component)
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { preloadFaceApiModels } from '../../utils/FaceApiLoader';
-import { getFaceApi } from '../../utils/faceApiShim';
-import descriptorDB from '../../utils/descriptorDB';
-
-/**
- * Minimal, match-only biometric component.
- * - Loads models from local `/models/` via FaceApiLoader
- * - Loads descriptors from `descriptorDB` for provided `ids`
- * - Builds FaceMatcher and runs TinyFaceDetector on webcam
- * - Emits `onResult({id,distance})` and `onCompleted({id,type,time,snapshot})`
- * - Does NOT perform DB writes; parent must handle persistence
- */
-export default function BiometricsSignIn({
-  ids = [],
-  scoreThreshold = 0.6,
-  onResult = () => {},
-  onCompleted = () => {},
-  onCancel = () => {},
-  inputSize = 160,
-  debug = false,
-}) {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const faceapiRef = useRef(null);
-  const matcherRef = useRef(null);
-  const timerRef = useRef(null);
-  const [status, setStatus] = useState('loading');
-  const [lastMatch, setLastMatch] = useState(null);
-  const lastActionRef = useRef({ time: 0, id: null, type: null });
-
-  const stopCamera = useCallback(() => {
-    try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
-      if (videoRef.current) videoRef.current.srcObject = null;
-    } catch (e) {
-      if (debug) console.warn('stopCamera', e);
-    }
-  }, [debug]);
-
-  const buildMatcher = useCallback(async () => {
-    const faceapi = faceapiRef.current;
-    if (!faceapi) return null;
-    const labeled = [];
-    for (const id of ids) {
-      try {
-        const raw = await descriptorDB.getDescriptor(id);
-        if (!raw || !Array.isArray(raw) || raw.length === 0) continue;
-        const arrs = raw.map((r) => new Float32Array(r));
-        labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
-      } catch (e) {
-        if (debug) console.warn('descriptor load failed for', id, e);
-      }
-    }
-    if (!labeled.length) return null;
-    const fm = new faceapi.FaceMatcher(labeled, scoreThreshold);
-    matcherRef.current = fm;
-    return fm;
-  }, [ids, scoreThreshold, debug]);
-
-  const startCamera = useCallback(async () => {
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-      streamRef.current = s;
-      if (videoRef.current) {
-        videoRef.current.srcObject = s;
-        try { await videoRef.current.play(); } catch (_) {}
-      }
-      return true;
-    } catch (e) {
-      if (debug) console.error('startCamera failed', e);
-      return false;
-    }
-  }, [debug]);
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      setStatus('loading');
-      try {
-        const ok = await preloadFaceApiModels({ variant: 'tiny' });
-        if (!ok) { setStatus('models-unavailable'); return; }
-        faceapiRef.current = await getFaceApi();
-        await buildMatcher();
-        const camOk = await startCamera();
-        if (!camOk) { setStatus('camera-error'); return; }
-        if (mounted) setStatus('ready');
-      } catch (err) {
-        if (debug) console.error('init error', err);
-        setStatus('error');
-      }
-    })();
-    return () => { mounted = false; stopCamera(); if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
-  }, [buildMatcher, startCamera, stopCamera, debug]);
-
-  useEffect(() => {
-    if (status !== 'ready') return;
-    const faceapi = faceapiRef.current;
-    if (!faceapi || !matcherRef.current || !videoRef.current) return;
-    let running = true;
-    const detect = async () => {
-      try {
-        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
-        const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
-        const res = await faceapi.detectSingleFace(videoRef.current, options).withFaceLandmarks().withFaceDescriptor();
-        if (!res || !res.descriptor) return;
-        const match = matcherRef.current.findBestMatch(res.descriptor);
-        if (match && match.label && match.label !== 'unknown') {
-          const payload = { id: match.label, distance: match.distance };
-          setLastMatch(payload);
-          try { onResult(payload); } catch (e) { if (debug) console.error('onResult cb', e); }
-        }
-      } catch (e) { if (debug) console.warn('detect error', e); }
-    };
-    timerRef.current = setInterval(detect, 350);
-    return () => { running = false; if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; } };
-  }, [status, inputSize, onResult, scoreThreshold, debug]);
-
-  const captureSnapshot = useCallback(() => {
-    try {
-      const v = videoRef.current; if (!v) return null;
-      const w = v.videoWidth || 320; const h = v.videoHeight || 240;
-      const c = document.createElement('canvas'); c.width = w; c.height = h;
-      const ctx = c.getContext('2d'); ctx.drawImage(v, 0, 0, w, h);
-      return c.toDataURL('image/jpeg', 0.8);
-    } catch (e) { if (debug) console.warn('snapshot failed', e); return null; }
-  }, [debug]);
-
-  const handleAction = useCallback(async (type) => {
-    const now = Date.now(); const match = lastMatch; if (!match || !match.id) return;
-    const last = lastActionRef.current; if (last.id === match.id && last.type === type && now - last.time < 4000) { if (debug) return; }
-    lastActionRef.current = { time: now, id: match.id, type };
-    const snapshot = captureSnapshot();
-    try { onCompleted({ id: match.id, type, time: now, snapshot }); } catch (e) { if (debug) console.error('onCompleted cb', e); }
-    stopCamera();
-  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
-
-  const handleCancel = useCallback(() => { stopCamera(); try { onCancel(); } catch (e) { if (debug) console.error('onCancel', e); } }, [onCancel, stopCamera, debug]);
-
-  return (
-    React.createElement('div', { className: 'biometrics-signin' },
-      status === 'loading' && React.createElement('div', null, 'Loading models...'),
-      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
-      status === 'camera-error' && React.createElement('div', null, 'Camera access denied.'),
-      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
-      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
-        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
-        React.createElement('div', { style: { marginTop: 8 } },
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
-          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
-        ),
-        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
-      )
-    )
-  );
-}
-// BiometricsSignIn — single clean match-only component
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { preloadFaceApiModels } from '../../utils/FaceApiLoader';
-import { getFaceApi } from '../../utils/faceApiShim';
-import descriptorDB from '../../utils/descriptorDB';
-
-export default function BiometricsSignIn({
-  ids = [], // array of IDs (strings or numbers) to match against
-  scoreThreshold = 0.6,
-  onResult = () => {}, // called with { id, distance }
-  onCompleted = () => {}, // called with { id, type, time, snapshot }
-  onCancel = () => {},
-  inputSize = 160,
-  debug = false,
-}) {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const faceapiRef = useRef(null);
-  const matcherRef = useRef(null);
-  const detectTimerRef = useRef(null);
-  const [status, setStatus] = useState('loading');
-  const [lastMatch, setLastMatch] = useState(null);
-  const lastActionRef = useRef({ time: 0, id: null, type: null });
-
-  const stopCamera = useCallback(() => {
-    try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
-      if (videoRef.current) videoRef.current.srcObject = null;
-    } catch (e) {
-      if (debug) console.warn('stopCamera', e);
-    }
-  }, [debug]);
-
-  const buildMatcher = useCallback(async () => {
-    const faceapi = faceapiRef.current;
-    if (!faceapi) return null;
-    const labeled = [];
-    for (const id of ids) {
-      try {
-        const raw = await descriptorDB.getDescriptor(id);
-        if (!raw || !Array.isArray(raw) || raw.length === 0) continue;
-        const arrs = raw.map((r) => new Float32Array(r));
-        labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
-      } catch (e) {
-        if (debug) console.warn('descriptor load failed for', id, e);
-      }
-    }
-    if (!labeled.length) return null;
-    const fm = new faceapi.FaceMatcher(labeled, scoreThreshold);
-    matcherRef.current = fm;
-    return fm;
-  }, [ids, scoreThreshold, debug]);
-
-  const startCamera = useCallback(async () => {
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-      streamRef.current = s;
-      if (videoRef.current) {
-        videoRef.current.srcObject = s;
-        try { await videoRef.current.play(); } catch (_) {}
-      }
-      return true;
-    } catch (e) {
-      if (debug) console.error('startCamera failed', e);
-      return false;
-    }
-  }, [debug]);
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      setStatus('loading');
-      try {
-        const ok = await preloadFaceApiModels({ variant: 'tiny' });
-        if (!ok) { setStatus('models-unavailable'); return; }
-        faceapiRef.current = await getFaceApi();
-        await buildMatcher();
-        const camOk = await startCamera();
-        if (!camOk) { setStatus('camera-error'); return; }
-        if (mounted) setStatus('ready');
-      } catch (err) {
-        if (debug) console.error('init error', err);
-        setStatus('error');
-      }
-    })();
-    return () => { mounted = false; stopCamera(); if (detectTimerRef.current) { clearInterval(detectTimerRef.current); detectTimerRef.current = null; } };
-  }, [buildMatcher, startCamera, stopCamera, debug]);
-
-  useEffect(() => {
-    if (status !== 'ready') return;
-    const faceapi = faceapiRef.current;
-    if (!faceapi || !matcherRef.current || !videoRef.current) return;
-    let running = true;
-    const detect = async () => {
-      try {
-        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
-        const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
-        const res = await faceapi.detectSingleFace(videoRef.current, options).withFaceLandmarks().withFaceDescriptor();
-        if (!res || !res.descriptor) return;
-        const match = matcherRef.current.findBestMatch(res.descriptor);
-        if (match && match.label && match.label !== 'unknown') {
-          const payload = { id: match.label, distance: match.distance };
-          setLastMatch(payload);
-          try { onResult(payload); } catch (e) { if (debug) console.error('onResult cb', e); }
-        }
-      } catch (e) { if (debug) console.warn('detect error', e); }
-    };
-    detectTimerRef.current = setInterval(detect, 350);
-    return () => { running = false; if (detectTimerRef.current) { clearInterval(detectTimerRef.current); detectTimerRef.current = null; } };
-  }, [status, inputSize, onResult, scoreThreshold, debug]);
-
-  const captureSnapshot = useCallback(() => {
-    try {
-      const v = videoRef.current; if (!v) return null;
-      const w = v.videoWidth || 320; const h = v.videoHeight || 240;
-      const c = document.createElement('canvas'); c.width = w; c.height = h;
-      const ctx = c.getContext('2d'); ctx.drawImage(v, 0, 0, w, h);
-      return c.toDataURL('image/jpeg', 0.8);
-    } catch (e) { if (debug) console.warn('snapshot failed', e); return null; }
-  }, [debug]);
-
-  const handleAction = useCallback(async (type) => {
-    const now = Date.now(); const match = lastMatch; if (!match || !match.id) return;
-    const last = lastActionRef.current; if (last.id === match.id && last.type === type && now - last.time < 4000) { if (debug) return; }
-    lastActionRef.current = { time: now, id: match.id, type };
-    const snapshot = captureSnapshot();
-    try { onCompleted({ id: match.id, type, time: now, snapshot }); } catch (e) { if (debug) console.error('onCompleted cb', e); }
-    stopCamera();
-  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
-
-  const handleCancel = useCallback(() => { stopCamera(); try { onCancel(); } catch (e) { if (debug) console.error('onCancel', e); } }, [onCancel, stopCamera, debug]);
-
-  return (
-    React.createElement('div', { className: 'biometrics-signin' },
-      status === 'loading' && React.createElement('div', null, 'Loading models...'),
-      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
-      status === 'camera-error' && React.createElement('div', null, 'Camera access denied.'),
-      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
-      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
-        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
-        React.createElement('div', { style: { marginTop: 8 } },
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
-          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
-        ),
-        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
-      )
-    )
-  );
-}
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { preloadFaceApiModels } from '../../utils/FaceApiLoader';
-import { getFaceApi } from '../../utils/faceApiShim';
-import descriptorDB from '../../utils/descriptorDB';
-
-// Minimal, match-only biometric component.
-// - Loads models from the local `/models/` (FaceApiLoader prefers that by default)
-// - Reads descriptors from `descriptorDB` for the provided `ids` prop
-// - Runs tiny-face-detector on camera, matches with FaceMatcher
-// - Emits `onResult(match)` as matches are seen and `onCompleted(payload)` when user confirms Sign In/Out
-// - Shows simple controls: Sign In, Sign Out, Cancel
-
-export default function BiometricsSignIn({
-  ids = [],
-  scoreThreshold = 0.6,
-  onResult = () => {},
-  onCompleted = () => {},
-  onCancel = () => {},
-  inputSize = 160,
-  debug = false,
-}) {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const faceapiRef = useRef(null);
-  const matcherRef = useRef(null);
-  const detectionTimerRef = useRef(null);
-  const [status, setStatus] = useState('loading');
-  const [lastMatch, setLastMatch] = useState(null);
-  const lastActionRef = useRef({ time: 0, id: null, type: null });
-
-  const stopCamera = useCallback(() => {
-    try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
-      if (videoRef.current) videoRef.current.srcObject = null;
-    } catch (e) {
-      if (debug) console.warn('stopCamera error', e);
-    }
-  }, [debug]);
-
-  const buildMatcher = useCallback(async () => {
-    try {
-      const faceapi = faceapiRef.current;
-      if (!faceapi) return null;
-      const labeled = [];
-      for (const id of ids) {
-        try {
-          const raw = await descriptorDB.getDescriptor(id);
-          if (!raw || !Array.isArray(raw) || raw.length === 0) continue;
-          const arrs = raw.map((r) => new Float32Array(r));
-          labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
-        } catch (e) {
-          if (debug) console.warn('failed to load descriptor for', id, e);
-        }
-      }
-      if (labeled.length === 0) return null;
-      const fm = new faceapi.FaceMatcher(labeled, scoreThreshold);
-      matcherRef.current = fm;
-      return fm;
-    } catch (e) {
-      if (debug) console.error('buildMatcher error', e);
-      return null;
-    }
-  }, [ids, scoreThreshold, debug]);
-
-  const startCamera = useCallback(async () => {
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-      streamRef.current = s;
-      if (videoRef.current) {
-        videoRef.current.srcObject = s;
-        try { await videoRef.current.play(); } catch (e) { /* ignore */ }
-      }
-      return true;
-    } catch (e) {
-      if (debug) console.error('startCamera failed', e);
-      return false;
-    }
-  }, [debug]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function init() {
-      setStatus('loading');
-      try {
-        const ok = await preloadFaceApiModels({ variant: 'tiny' });
-        if (!ok) {
-          setStatus('models-unavailable');
-          return;
-        }
-        const faceapi = await getFaceApi();
-        faceapiRef.current = faceapi;
-
-        await buildMatcher();
-
-        const camOk = await startCamera();
-        if (!camOk) {
-          setStatus('camera-error');
-          return;
-        }
-
-        setStatus('ready');
-      } catch (e) {
-        if (debug) console.error('BiometricsSignIn init error', e);
-        setStatus('error');
-      }
-    }
-
-    init();
-
-    return () => {
-      mounted = false;
-      stopCamera();
-      if (detectionTimerRef.current) {
-        clearInterval(detectionTimerRef.current);
-        detectionTimerRef.current = null;
-      }
-    };
-  }, [buildMatcher, startCamera, stopCamera, debug]);
-
-  useEffect(() => {
-    if (status !== 'ready') return undefined;
-    const faceapi = faceapiRef.current;
-    if (!faceapi || !matcherRef.current || !videoRef.current) return undefined;
-
-    let running = true;
-    const detect = async () => {
-      try {
-        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
-        const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
-        const result = await faceapi
-          .detectSingleFace(videoRef.current, options)
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-        if (!result || !result.descriptor) return;
-        const match = matcherRef.current.findBestMatch(result.descriptor);
-        if (match && match.label && match.label !== 'unknown') {
-          const payload = { id: match.label, distance: match.distance };
-          setLastMatch(payload);
-          try { onResult(payload); } catch (e) { if (debug) console.error('onResult handler error', e); }
-        }
-      } catch (e) {
-        if (debug) console.warn('detection error', e);
-      }
-    };
-
-    detectionTimerRef.current = setInterval(detect, 350);
-    return () => {
-      running = false;
-      if (detectionTimerRef.current) {
-        clearInterval(detectionTimerRef.current);
-        detectionTimerRef.current = null;
-      }
-    };
-  }, [status, inputSize, onResult, debug]);
-
-  const captureSnapshot = useCallback(() => {
-    try {
-      const v = videoRef.current;
-      if (!v) return null;
-      const w = v.videoWidth || 320;
-      const h = v.videoHeight || 240;
-      const c = document.createElement('canvas');
-      c.width = w;
-      c.height = h;
-      const ctx = c.getContext('2d');
-      ctx.drawImage(v, 0, 0, w, h);
-      return c.toDataURL('image/jpeg', 0.8);
-    } catch (e) {
-      if (debug) console.warn('captureSnapshot failed', e);
-      return null;
-    }
-  }, [debug]);
-
-  const handleAction = useCallback(async (type) => {
-    const now = Date.now();
-    const match = lastMatch;
-    if (!match || !match.id) return;
-
-    const last = lastActionRef.current;
-    if (last.id === match.id && last.type === type && now - last.time < 4000) {
-      if (debug) console.warn('duplicate rapid action ignored');
-      return;
-    }
-
-    lastActionRef.current = { time: now, id: match.id, type };
-    const snapshot = captureSnapshot();
-    try {
-      onCompleted({ id: match.id, type, time: now, snapshot });
-    } catch (e) {
-      if (debug) console.error('onCompleted handler error', e);
-    }
-    stopCamera();
-  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
-
-  const handleCancel = useCallback(() => {
-    stopCamera();
-    try { onCancel(); } catch (e) { if (debug) console.error('onCancel error', e); }
-  }, [onCancel, stopCamera, debug]);
-
-  return (
-    React.createElement('div', { className: 'biometrics-signin' },
-      status === 'loading' && React.createElement('div', null, 'Loading models...'),
-      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
-      status === 'camera-error' && React.createElement('div', null, 'Camera access denied or unavailable.'),
-      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
-      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
-        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
-        React.createElement('div', { style: { marginTop: 8 } },
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
-          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
-        ),
-        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
-      )
-    )
-  );
-}
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { preloadFaceApiModels } from '../../utils/FaceApiLoader';
-import { getFaceApi } from '../../utils/faceApiShim';
-import descriptorDB from '../../utils/descriptorDB';
-
-// Minimal, match-only biometric component.
-// - Loads models from the local `/models/` (FaceApiLoader prefers that by default)
-// - Reads descriptors from `descriptorDB` for the provided `ids` prop
-// - Runs tiny-face-detector on camera, matches with FaceMatcher
-// - Emits `onResult(match)` as matches are seen and `onCompleted(payload)` when user confirms Sign In/Out
-// - Shows simple controls: Sign In, Sign Out, Cancel
-
-export default function BiometricsSignIn({
-  ids = [], // array of participant ids (strings or numbers) to preload descriptors for
-  scoreThreshold = 0.6, // face matcher distance threshold
-  onResult = () => {}, // called with { id, distance, label } on each match
-  onCompleted = () => {}, // called when user confirms sign-in/out: { id, type, time, snapshot }
-  onCancel = () => {},
-  inputSize = 160,
-  debug = false,
-}) {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const faceapiRef = useRef(null);
-  const matcherRef = useRef(null);
-  const detectionTimerRef = useRef(null);
-  const [status, setStatus] = useState('loading');
-  const [lastMatch, setLastMatch] = useState(null);
-  const lastActionRef = useRef({ time: 0, id: null, type: null });
-
-  const stopCamera = useCallback(() => {
-    try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
-    } catch (e) {
-      if (debug) console.warn('stopCamera error', e);
-    }
-  }, [debug]);
-
-  const buildMatcher = useCallback(async () => {
-    try {
-      const faceapi = faceapiRef.current;
-      if (!faceapi) return null;
-
-      const labeled = [];
-      for (const id of ids) {
-        try {
-          const raw = await descriptorDB.getDescriptor(id);
-          if (!raw || !Array.isArray(raw) || raw.length === 0) continue;
-          // raw expected to be array-of-arrays (or flattened) matching previous storage
-          const arrs = raw.map((r) => new Float32Array(r));
-          labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
-        } catch (e) {
-          if (debug) console.warn('failed to load descriptor for', id, e);
-        }
-      }
-
-      if (labeled.length === 0) return null;
-      const fm = new faceapi.FaceMatcher(labeled, scoreThreshold);
-      matcherRef.current = fm;
-      return fm;
-    } catch (e) {
-      if (debug) console.error('buildMatcher error', e);
-      return null;
-    }
-  }, [ids, scoreThreshold, debug]);
-
-  const startCamera = useCallback(async () => {
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-      streamRef.current = s;
-      if (videoRef.current) {
-        videoRef.current.srcObject = s;
-        // autoplay/play promise
-        try { await videoRef.current.play(); } catch (e) { /* ignore */ }
-      }
-      return true;
-    } catch (e) {
-      if (debug) console.error('startCamera failed', e);
-      return false;
-    }
-  }, [debug]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function init() {
-      setStatus('loading');
-      try {
-        // Ensure local models are loaded (FaceApiLoader defaults to /models/)
-        const ok = await preloadFaceApiModels({ variant: 'tiny' });
-        if (!ok) {
-          setStatus('models-unavailable');
-          return;
-        }
-        const faceapi = await getFaceApi();
-        faceapiRef.current = faceapi;
-
-        // prepare matcher from provided ids
-        await buildMatcher();
-
-        const camOk = await startCamera();
-        if (!camOk) {
-          setStatus('camera-error');
-          return;
-        }
-
-        setStatus('ready');
-      } catch (e) {
-        if (debug) console.error('BiometricsSignIn init error', e);
-        setStatus('error');
-      }
-    }
-
-    init();
-
-    return () => {
-      mounted = false;
-      stopCamera();
-      if (detectionTimerRef.current) {
-        clearInterval(detectionTimerRef.current);
-        detectionTimerRef.current = null;
-      }
-    };
-  }, [buildMatcher, startCamera, stopCamera, debug]);
-
-  useEffect(() => {
-    // Start detection loop when ready and matcher present
-    if (status !== 'ready') return undefined;
-    const faceapi = faceapiRef.current;
-    if (!faceapi || !matcherRef.current || !videoRef.current) return undefined;
-
-    let running = true;
-
-    const detect = async () => {
-      try {
-        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
-        const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
-        const result = await faceapi
-          .detectSingleFace(videoRef.current, options)
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-        if (!result || !result.descriptor) return;
-        const match = matcherRef.current.findBestMatch(result.descriptor);
-        if (match && match.label && match.label !== 'unknown') {
-          const payload = { id: match.label, distance: match.distance };
-          setLastMatch(payload);
-          try { onResult(payload); } catch (e) { if (debug) console.error('onResult handler error', e); }
-        }
-      } catch (e) {
-        if (debug) console.warn('detection error', e);
-      }
-    };
-
-    detectionTimerRef.current = setInterval(detect, 350);
-
-    return () => {
-      running = false;
-      if (detectionTimerRef.current) {
-        clearInterval(detectionTimerRef.current);
-        detectionTimerRef.current = null;
-      }
-    };
-  }, [status, inputSize, onResult, debug]);
-
-  const captureSnapshot = useCallback(() => {
-    try {
-      const v = videoRef.current;
-      if (!v) return null;
-      const w = v.videoWidth || 320;
-      const h = v.videoHeight || 240;
-      const c = document.createElement('canvas');
-      c.width = w;
-      c.height = h;
-      const ctx = c.getContext('2d');
-      ctx.drawImage(v, 0, 0, w, h);
-      return c.toDataURL('image/jpeg', 0.8);
-    } catch (e) {
-      if (debug) console.warn('captureSnapshot failed', e);
-      return null;
-    }
-  }, [debug]);
-
-  const handleAction = useCallback(async (type) => {
-    // type: 'sign_in' | 'sign_out'
-    const now = Date.now();
-    const match = lastMatch;
-    if (!match || !match.id) return;
-
-    // prevent rapid duplicate actions
-    const last = lastActionRef.current;
-    if (last.id === match.id && last.type === type && now - last.time < 4000) {
-      if (debug) console.warn('duplicate rapid action ignored');
-      return;
-    }
-
-    lastActionRef.current = { time: now, id: match.id, type };
-
-    const snapshot = captureSnapshot();
-    try {
-      onCompleted({ id: match.id, type, time: now, snapshot });
-    } catch (e) {
-      if (debug) console.error('onCompleted handler error', e);
-    }
-    // after completing, stop camera to avoid multiple snapshots
-    stopCamera();
-  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
-
-  const handleCancel = useCallback(() => {
-    stopCamera();
-    try { onCancel(); } catch (e) { if (debug) console.error('onCancel error', e); }
-  }, [onCancel, stopCamera, debug]);
-
-  return (
-    React.createElement('div', { className: 'biometrics-signin' },
-      status === 'loading' && React.createElement('div', null, 'Loading models...'),
-      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
-      status === 'camera-error' && React.createElement('div', null, 'Camera access denied or unavailable.'),
-      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
-      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
-        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
-        React.createElement('div', { style: { marginTop: 8 } },
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
-          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
-        ),
-        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
-      )
-    )
-  );
-}
-
-
-export default function BiometricsSignIn({
-  ids = [], // array of participant ids (strings or numbers) to preload descriptors for
-  scoreThreshold = 0.6, // face matcher distance threshold
-  onResult = () => {}, // called with { id, distance, label } on each match
-  onCompleted = () => {}, // called when user confirms sign-in/out: { id, type, time, snapshot }
-  onCancel = () => {},
-  inputSize = 160,
-  debug = false,
-}) {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const faceapiRef = useRef(null);
-  const matcherRef = useRef(null);
-  const detectionTimerRef = useRef(null);
-  const [status, setStatus] = useState('loading');
-  const [lastMatch, setLastMatch] = useState(null);
-  const lastActionRef = useRef({ time: 0, id: null, type: null });
-
-  const stopCamera = useCallback(() => {
-    try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
-    } catch (e) {
-      if (debug) console.warn('stopCamera error', e);
-    }
-  }, [debug]);
-
-  const buildMatcher = useCallback(async () => {
-    try {
-      const faceapi = faceapiRef.current;
-      if (!faceapi) return null;
-
-      const labeled = [];
-      for (const id of ids) {
-        try {
-          const raw = await descriptorDB.getDescriptor(id);
-          if (!raw || !Array.isArray(raw) || raw.length === 0) continue;
-          // raw expected to be array-of-arrays (or flattened) matching previous storage
-          const arrs = raw.map((r) => new Float32Array(r));
-          labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
-        } catch (e) {
-          if (debug) console.warn('failed to load descriptor for', id, e);
-        }
-      }
-
-      if (labeled.length === 0) return null;
-      const fm = new faceapi.FaceMatcher(labeled, scoreThreshold);
-      matcherRef.current = fm;
-      return fm;
-    } catch (e) {
-      if (debug) console.error('buildMatcher error', e);
-      return null;
-    }
-  }, [ids, scoreThreshold, debug]);
-
-  const startCamera = useCallback(async () => {
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-      streamRef.current = s;
-      if (videoRef.current) {
-        videoRef.current.srcObject = s;
-        // autoplay/play promise
-        try { await videoRef.current.play(); } catch (e) { /* ignore */ }
-      }
-      return true;
-    } catch (e) {
-      if (debug) console.error('startCamera failed', e);
-      return false;
-    }
-  }, [debug]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    async function init() {
-      setStatus('loading');
-      try {
-        // Ensure local models are loaded (FaceApiLoader defaults to /models/)
-        const ok = await preloadFaceApiModels({ variant: 'tiny' });
-        if (!ok) {
-          setStatus('models-unavailable');
-          return;
-        }
-        const faceapi = await getFaceApi();
-        faceapiRef.current = faceapi;
-
-        // prepare matcher from provided ids
-        await buildMatcher();
-
-        const camOk = await startCamera();
-        if (!camOk) {
-          setStatus('camera-error');
-          return;
-        }
-
-        setStatus('ready');
-      } catch (e) {
-        if (debug) console.error('BiometricsSignIn init error', e);
-        setStatus('error');
-      }
-    }
-
-    init();
-
-    return () => {
-      mounted = false;
-      stopCamera();
-      if (detectionTimerRef.current) {
-        clearInterval(detectionTimerRef.current);
-        detectionTimerRef.current = null;
-      }
-    };
-  }, [buildMatcher, startCamera, stopCamera, debug]);
-
-  useEffect(() => {
-    // Start detection loop when ready and matcher present
-    if (status !== 'ready') return undefined;
-    const faceapi = faceapiRef.current;
-    if (!faceapi || !matcherRef.current || !videoRef.current) return undefined;
-
-    let running = true;
-
-    const detect = async () => {
-      try {
-        if (!running || !videoRef.current || videoRef.current.readyState < 2) return;
-        const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
-        const result = await faceapi
-          .detectSingleFace(videoRef.current, options)
-          .withFaceLandmarks()
-          .withFaceDescriptor();
-        if (!result || !result.descriptor) return;
-        const match = matcherRef.current.findBestMatch(result.descriptor);
-        if (match && match.label && match.label !== 'unknown') {
-          const payload = { id: match.label, distance: match.distance };
-          setLastMatch(payload);
-          try { onResult(payload); } catch (e) { if (debug) console.error('onResult handler error', e); }
-        }
-      } catch (e) {
-        if (debug) console.warn('detection error', e);
-      }
-    };
-
-    detectionTimerRef.current = setInterval(detect, 350);
-
-    return () => {
-      running = false;
-      if (detectionTimerRef.current) {
-        clearInterval(detectionTimerRef.current);
-        detectionTimerRef.current = null;
-      }
-    };
-  }, [status, inputSize, onResult, debug]);
-
-  const captureSnapshot = useCallback(() => {
-    try {
-      const v = videoRef.current;
-      if (!v) return null;
-      const w = v.videoWidth || 320;
-      const h = v.videoHeight || 240;
-      const c = document.createElement('canvas');
-      c.width = w;
-      c.height = h;
-      const ctx = c.getContext('2d');
-      ctx.drawImage(v, 0, 0, w, h);
-      return c.toDataURL('image/jpeg', 0.8);
-    } catch (e) {
-      if (debug) console.warn('captureSnapshot failed', e);
-      return null;
-    }
-  }, [debug]);
-
-  const handleAction = useCallback(async (type) => {
-    // type: 'sign_in' | 'sign_out'
-    const now = Date.now();
-    const match = lastMatch;
-    if (!match || !match.id) return;
-
-    // prevent rapid duplicate actions
-    const last = lastActionRef.current;
-    if (last.id === match.id && last.type === type && now - last.time < 4000) {
-      if (debug) console.warn('duplicate rapid action ignored');
-      return;
-    }
-
-    lastActionRef.current = { time: now, id: match.id, type };
-
-    const snapshot = captureSnapshot();
-    try {
-      onCompleted({ id: match.id, type, time: now, snapshot });
-    } catch (e) {
-      if (debug) console.error('onCompleted handler error', e);
-    }
-    // after completing, stop camera to avoid multiple snapshots
-    stopCamera();
-  }, [captureSnapshot, lastMatch, onCompleted, stopCamera, debug]);
-
-  const handleCancel = useCallback(() => {
-    stopCamera();
-    try { onCancel(); } catch (e) { if (debug) console.error('onCancel error', e); }
-  }, [onCancel, stopCamera, debug]);
-
-  return (
-    React.createElement('div', { className: 'biometrics-signin' },
-      status === 'loading' && React.createElement('div', null, 'Loading models...'),
-      status === 'models-unavailable' && React.createElement('div', null, 'Face models unavailable.'),
-      status === 'camera-error' && React.createElement('div', null, 'Camera access denied or unavailable.'),
-      status === 'error' && React.createElement('div', null, 'Biometrics failed to initialize.'),
-      React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none' } },
-        React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000' }, autoPlay: true, muted: true }),
-        React.createElement('div', { style: { marginTop: 8 } },
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_in') }, 'Sign In'),
-          React.createElement('button', { type: 'button', onClick: () => handleAction('sign_out'), style: { marginLeft: 8 } }, 'Sign Out'),
-          React.createElement('button', { type: 'button', onClick: handleCancel, style: { marginLeft: 8 } }, 'Cancel')
-        ),
-        lastMatch && React.createElement('div', { style: { marginTop: 6 } }, `Match: ${lastMatch.id} (distance ${Number(lastMatch.distance).toFixed(3)})`)
-      )
-    )
-  );
-}
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import api from "../../api/client";
 import { getFaceApi } from "../../utils/faceApiShim";
-import { preloadFaceApiModels } from "../../utils/FaceApiLoader";
 import descriptorDB from "../../utils/descriptorDB";
+import imageCache from "../../utils/imageCache";
+import { validateAuthToken } from "../../utils/authTokenGenerator";
+// worker path (webpack friendly) - descriptor worker runs face-api inside the worker
+let DescriptorWorker = null;
+try {
+  DescriptorWorker = new Worker(new URL("../../workers/descriptor.worker.js", import.meta.url), { type: "module" });
+} catch (err) {
+  console.warn("Descriptor worker not available, falling back to main-thread processing", err);
+  DescriptorWorker = null;
+}
+// models URL (can be configured via env var REACT_APP_MODELS_URL)
+const MODELS_URL = process.env.REACT_APP_MODELS_URL || "/models";
 
-const DEFAULT_DETECTOR_SIZE = 128;
+// Bucket/folder mapping for different entity types
+const STORAGE_PATHS = {
+  'student-uploads': (id) => `students/${id}/profile-picture`,
+  'worker-uploads': (id) => `workers/${id}/profile-picture`,
+  'profile-avatars': (id) => ''  // For users, files are directly in the bucket root
+};
+import {
+  preloadFaceApiModels,
+  areFaceApiModelsLoaded,
+} from "../../utils/FaceApiLoader";
+import { getTable, cacheTable } from "../../utils/tableCache";
+import useOfflineTable from "../../hooks/useOfflineTable";
+import useOnlineStatus from "../../hooks/useOnlineStatus";
+import useToast from "../../hooks/useToast";
+import "../../styles/BiometricsSignIn.css";
 
-// Minimal, single-purpose biometrics component — match-only, no DB writes.
-export default function BiometricsSignIn({
-  entityType = "student",
+// Toggle verbose logs for debugging
+const DEBUG = false;
+// Lightweight in-app performance overlay for timing key steps
+const PERF_UI = false;
+
+// Component wrapper (was accidentally removed during edits) — recreate component and needed hooks/refs
+const BiometricsSignIn = ({
+  entityType = 'student',
   studentId = null,
-  studentIds = null,
-  workerId = null,
-  workerIds = null,
-  startRecordingRequest = 0,
-  stopRecordingRequest = 0,
-  mode: initialMode = "snapshot",
-  scrollIntoViewOnMount = false,
-  onResult = null,
+  userId = null,
+  schoolId = null,
+  academicSessionId = null,
   onCompleted = null,
   onCancel = null,
-  ...rest
-}) {
-  const [mode] = useState(initialMode);
-  const containerRef = useRef(null);
+  forceOperation = null,
+  // initial mode: 'snapshot' or 'continuous'
+  mode: initialMode = 'snapshot',
+  // UI customization props
+  primaryActionLabel = null, // override main capture button label (e.g., 'Log In')
+  primaryRecordStartLabel = null, // override 'Record Session' label
+  primaryRecordEndLabel = null, // override 'End Session' label
+  closeOnStart = true, // whether to close/unmount the biometric UI when recording session starts
+  onRecordingStart = null, // optional callback fired when continuous recording starts
+  onRecordingStop = null, // optional callback fired when continuous recording stops
+  // storage customization (optional) - used when loading student images
+  bucketName = null, // e.g. 'student-uploads' or 'worker-uploads'
+  folderName = null,
+}) => {
+  // basic UI/state refs
+  const [message, setMessage] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [captureDone, setCaptureDone] = useState(false);
+  const [referencesReady, setReferencesReady] = useState(false);
+  const [faceMatcher, setFaceMatcher] = useState(null);
+  const [studentNames, setStudentNames] = useState({});
+  const [loadingModels, setLoadingModels] = useState(true);
+  const [loadingReferences, setLoadingReferences] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(null);
+  const [availableCameras, setAvailableCameras] = useState([]);
+  const [facingMode, setFacingMode] = useState('user');
+  const [webcamError, setWebcamError] = useState(false);
+  const [showTokenInput, setShowTokenInput] = useState(false);
+  const [tokenInput, setTokenInput] = useState('');
+  const [tokenError, setTokenError] = useState('');
+  const [showAttendancePrompt, setShowAttendancePrompt] = useState(false);
+  const [pendingAttendanceData, setPendingAttendanceData] = useState(null);
+  const [pendingSignIns, setPendingSignIns] = useState({});
+  const [workerAvailable, setWorkerAvailable] = useState(false);
+  const [workerError, setWorkerError] = useState(null);
+  const [workerReloadKey, setWorkerReloadKey] = useState(0);
+  const [mode, setMode] = useState(initialMode);
+  
+  // Retry indicators for loading face references
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const [retryInSec, setRetryInSec] = useState(null);
+  const retryIntervalRef = useRef(null);
+  // small retry tuning
+  const maxRetries = 3;
+  const retryTimeouts = [2000, 4000, 8000];
+  // Recording start timestamp (ISO) when continuous recording begins
+  const recordingStartRef = useRef(null);
+  // Face matcher distance threshold (lower = stricter). 0.6 is a common default for face-api
+  const threshold = 0.6;
+
   const webcamRef = useRef(null);
+  const canvasRef = useRef(null);
   const captureCanvasRef = useRef(null);
   const streamRef = useRef(null);
   const processIntervalRef = useRef(null);
+  const perfRef = useRef({});
+  const descriptorWorkerRef = useRef(null);
   const faceapiRef = useRef(null);
-  const lastStartRef = useRef(0);
-  const lastStopRef = useRef(0);
 
-  const targets = (
-    import React, { useState, useRef, useEffect, useCallback } from "react";
-    import { getFaceApi } from "../../utils/faceApiShim";
-    import { preloadFaceApiModels } from "../../utils/FaceApiLoader";
-    import descriptorDB from "../../utils/descriptorDB";
+  // small helpers / hooks
+  const isSmallScreen = window && window.innerWidth && window.innerWidth < 640;
+  const isOnline = useOnlineStatus();
+  const toast = useToast();
+  const navigate = useNavigate();
 
-    // Clean minimal biometrics component (single export). Matches descriptors from `descriptorDB` and
-    // emits lightweight `onResult` / `onCompleted` events. Does not perform any DB writes.
+  // Determine effective storage bucket to use when fetching images
+  const effectiveBucket = bucketName || (entityType === 'user' ? 'profile-avatars' : 'student-uploads');
 
-    // Clean minimal biometrics component (single export). Matches descriptors from `descriptorDB` and
-    // emits lightweight `onResult` / `onCompleted` events. Does not perform any DB writes.
-    export default function BiometricsSignIn({
-      entityType = "student",
-      studentId = null,
-      studentIds = null,
-      workerId = null,
-      workerIds = null,
-      startRecordingRequest = 0,
-      stopRecordingRequest = 0,
-      mode: initialMode = "snapshot",
-      scrollIntoViewOnMount = false,
-      onResult = null,
-      onCompleted = null,
-      onCancel = null,
-      ...rest
-    }) {
-      const [mode] = useState(initialMode);
-      const containerRef = useRef(null);
-      const webcamRef = useRef(null);
-      const captureCanvasRef = useRef(null);
-      const streamRef = useRef(null);
-      const processIntervalRef = useRef(null);
-      const faceapiRef = useRef(null);
-      const lastStartRef = useRef(0);
-      const lastStopRef = useRef(0);
+  // Offline table hooks for attendance and worker attendance
+  const { addRow, updateRow } = useOfflineTable('attendance_records');
+  const { addRow: addWorkerRow, updateRow: updateWorkerRow } = useOfflineTable('worker_attendance_records');
+  // offline hook for session participants (academic_session_participants)
+  const { addRow: addParticipantRow, updateRow: updateParticipantRow } = useOfflineTable('academic_session_participants');
 
-      const targets = (
-        (studentIds && Array.isArray(studentIds) ? studentIds : studentId ? [studentId] : [])
-          .concat(workerIds && Array.isArray(workerIds) ? workerIds : workerId ? [workerId] : [])
-          .filter(Boolean)
-      ).map(String);
+  // cache for descriptors (module-level in original; keep per-instance here)
+  const faceDescriptorCache = {};
 
-      const [loading, setLoading] = useState(true);
-      const [matcher, setMatcher] = useState(null);
-      const [results, setResults] = useState(() => ({}));
 
-      const ensureModels = useCallback(async () => {
-        if (!faceapiRef.current) {
-          try {
-            await preloadFaceApiModels();
-            faceapiRef.current = await getFaceApi();
-          } catch (err) {
-            console.warn("Failed to load face-api", err);
-            return false;
-          }
-        }
-        return true;
-      }, []);
-
-      const loadDescriptors = useCallback(async () => {
-        const faceapi = faceapiRef.current;
-        if (!faceapi) return false;
-        const labeled = [];
-        for (const id of targets) {
-          try {
-            const raw = await descriptorDB.getDescriptor(id);
-            if (raw && raw.length) {
-              const arrs = raw.map((a) => new Float32Array(a));
-              labeled.push(new faceapi.LabeledFaceDescriptors(String(id), arrs));
-            } else {
-              setResults((r) => ({ ...r, [id]: { status: "failed", message: "No descriptors available (offline)." } }));
-            }
-          } catch (err) {
-            setResults((r) => ({ ...r, [id]: { status: "failed", message: "Descriptor load failed." } }));
-          }
-        }
-        if (labeled.length) {
-          setMatcher(new faceapi.FaceMatcher(labeled, 0.6));
-          return true;
-        }
-        return false;
-      }, [targets]);
-
-      const startCamera = useCallback(async () => {
-        if (streamRef.current) return true;
+  useEffect(() => {
+    let cancelled = false;
+    const ensureModelsReady = async () => {
+      perfRef.current.modelsStart = (performance.now ? performance.now() : Date.now());
+      if (areFaceApiModelsLoaded()) {
+        // ensure faceapi module is available
         try {
-          const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
-          streamRef.current = s;
-          if (webcamRef.current) webcamRef.current.srcObject = s;
-          try { await webcamRef.current.play(); } catch (e) {}
-          return true;
-        } catch (err) {
-          console.warn("startCamera failed", err);
-          return false;
-        }
-      }, []);
-
-      const stopCamera = useCallback(() => {
-        if (streamRef.current) {
-          try { streamRef.current.getTracks().forEach((t) => t.stop()); } catch (e) {}
-          streamRef.current = null;
-        }
-        if (webcamRef.current) {
-          try { webcamRef.current.pause(); webcamRef.current.srcObject = null; } catch (e) {}
-        }
-      }, []);
-
-      const captureAndMatch = useCallback(async () => {
-        if (!faceapiRef.current || !matcher || !webcamRef.current) return null;
-        const video = webcamRef.current;
-        if (video.videoWidth === 0 || video.videoHeight === 0) return null;
-        if (!captureCanvasRef.current) captureCanvasRef.current = document.createElement("canvas");
-        const canvas = captureCanvasRef.current;
-        const targetW = 320;
-        const targetH = Math.round((video.videoHeight / video.videoWidth) * targetW) || 240;
-        canvas.width = targetW;
-        canvas.height = targetH;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(video, 0, 0, targetW, targetH);
-        try {
-          const detections = await faceapiRef.current
-            .detectAllFaces(canvas, new faceapiRef.current.TinyFaceDetectorOptions({ inputSize: DEFAULT_DETECTOR_SIZE, scoreThreshold: 0.45 }))
-            .withFaceLandmarks()
-            .withFaceDescriptors();
-          if (!detections || !detections.length) return null;
-          const now = new Date().toISOString();
-          const newResults = {};
-          for (const det of detections) {
-            const best = matcher.findBestMatch(det.descriptor);
-            const label = String(best.label);
-            if (targets.includes(label)) {
-              newResults[label] = { status: "success", message: "Matched", timestamp: now };
-              try { if (typeof onResult === "function") onResult({ id: label, type: entityType === "student" ? "signin" : "signin", status: "success", timestamp: now }); } catch (e) {}
-            }
-          }
-          setResults((prev) => ({ ...prev, ...newResults }));
-          return newResults;
-        } catch (err) {
-          console.warn("captureAndMatch failed", err);
-          return null;
-        }
-      }, [matcher, onResult, entityType, targets]);
-
-      const startSession = useCallback(async () => {
-        const okModels = await ensureModels();
-        if (!okModels) return;
-        await loadDescriptors();
-        const camOk = await startCamera();
-        if (!camOk) return;
-        if (mode === "snapshot") {
-          await captureAndMatch();
-          try { if (typeof onCompleted === "function") onCompleted(Object.entries(results).map(([id, res]) => ({ id, ...res }))); } catch (e) {}
-          return;
-        }
-        if (processIntervalRef.current) return;
-        processIntervalRef.current = setInterval(() => { captureAndMatch(); }, 1500);
-      }, [ensureModels, loadDescriptors, startCamera, captureAndMatch, mode, onCompleted, results]);
-
-      const stopSession = useCallback(async () => {
-        if (processIntervalRef.current) { clearInterval(processIntervalRef.current); processIntervalRef.current = null; }
-        stopCamera();
-        try { if (typeof onCompleted === "function") onCompleted(Object.entries(results).map(([id, res]) => ({ id, ...res }))); } catch (e) {}
-      }, [stopCamera, onCompleted, results]);
-
-      useEffect(() => {
-        const v = Number(startRecordingRequest) || 0;
-        if (v && v !== lastStartRef.current) { lastStartRef.current = v; startSession().catch((e) => console.warn("startSession error", e)); }
-      }, [startRecordingRequest, startSession]);
-
-      useEffect(() => {
-        const v = Number(stopRecordingRequest) || 0;
-        if (v && v !== lastStopRef.current) { lastStopRef.current = v; stopSession().catch((e) => console.warn("stopSession error", e)); }
-      }, [stopRecordingRequest, stopSession]);
-
-      useEffect(() => {
-        let mounted = true;
-        (async () => {
-          const ok = await ensureModels();
-          if (!mounted) return;
-          if (ok) await loadDescriptors();
-          if (mounted) setLoading(false);
-        })();
-        return () => { mounted = false; if (processIntervalRef.current) { clearInterval(processIntervalRef.current); processIntervalRef.current = null; } stopCamera(); };
-      }, [ensureModels, loadDescriptors, stopCamera]);
-
-      useEffect(() => {
-        if (scrollIntoViewOnMount && containerRef.current) {
-          try { containerRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {}
-          try { const v = containerRef.current.querySelector('video'); if (v && typeof v.focus === 'function') v.focus(); } catch (e) {}
-        }
-      }, [scrollIntoViewOnMount]);
-
-      return (
-        <div ref={containerRef} style={{ width: "100%" }} {...rest}>
-          <div style={{ marginBottom: 8 }}>
-            <video ref={webcamRef} autoPlay playsInline muted style={{ width: "100%", borderRadius: 8 }} tabIndex={-1} />
-          </div>
-          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-            <button className="btn btn-primary" onClick={() => { startSession().catch((e) => console.warn(e)); }}>Start</button>
-            <button className="btn btn-secondary" onClick={() => { stopSession().catch((e) => console.warn(e)); }}>Stop</button>
-            <button className="btn btn-link" onClick={() => { try { if (onCancel) onCancel(); } catch (e) {} stopSession().catch(() => {}); }}>Cancel</button>
-          </div>
-          <div style={{ marginTop: 8 }}>
-            <div style={{ fontWeight: 600 }}>Targets</div>
-            <ul>
-              {targets.map((id) => (
-                <li key={id} style={{ marginBottom: 6 }}>
-                  <span style={{ marginRight: 8 }}>{id}</span>
-                  <span style={{ color: results[id]?.status === "success" ? "#059669" : "#dc2626" }}>{results[id]?.status || "pending"}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          {loading ? <div style={{ marginTop: 8, color: "#6b7280" }}>Loading models / descriptors...</div> : null}
-        </div>
-      );
-    }
-    const containerRef = useRef(null);
-    const webcamRef = useRef(null);
-    const captureCanvasRef = useRef(null);
-    const streamRef = useRef(null);
-    const processIntervalRef = useRef(null);
-    const faceapiRef = useRef(null);
-    const lastStartRef = useRef(0);
-    const lastStopRef = useRef(0);
-
-    const targets = (
-      (studentIds && Array.isArray(studentIds) ? studentIds : studentId ? [studentId] : [])
-        .concat(workerIds && Array.isArray(workerIds) ? workerIds : workerId ? [workerId] : [])
-        .filter(Boolean)
-    ).map(String);
-
-    const [loading, setLoading] = useState(true);
-    const [matcher, setMatcher] = useState(null);
-    const [results, setResults] = useState(() => ({}));
-
-    const ensureModels = async () => {
-      if (!faceapiRef.current) {
-        try {
-          await preloadFaceApiModels();
           faceapiRef.current = await getFaceApi();
-        } catch (err) {
-          console.warn("Failed to load face-api", err);
-          return false;
+        } catch (e) {
+          if (DEBUG) console.warn('Failed to get faceapi module after models loaded', e);
         }
-      }
-      return true;
-    };
-
-    const loadDescriptors = async () => {
-      const faceapi = faceapiRef.current;
-      if (!faceapi) return false;
-      const labeled = [];
-      for (const id of targets) {
-        try {
-          const raw = await descriptorDB.getDescriptor(id);
-          if (raw && raw.length) {
-            const arrs = raw.map((a) => new Float32Array(a));
-            const labeledDesc = new faceapi.LabeledFaceDescriptors(String(id), arrs);
-            labeled.push(labeledDesc);
-          } else {
-            setResults((r) => ({ ...r, [id]: { status: "failed", message: "No descriptors available (offline)." } }));
-          }
-        } catch (err) {
-          setResults((r) => ({ ...r, [id]: { status: "failed", message: "Descriptor load failed." } }));
-        }
-      }
-      if (labeled.length) {
-        const fm = new faceapi.FaceMatcher(labeled, 0.6);
-        setMatcher(fm);
-        return true;
-      }
-      return false;
-    };
-
-    const startCamera = async () => {
-      if (streamRef.current) return true;
-      try {
-        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
-        streamRef.current = s;
-        if (webcamRef.current) webcamRef.current.srcObject = s;
-        try { await webcamRef.current.play(); } catch (e) {}
-        return true;
-      } catch (err) {
-        console.warn("startCamera failed", err);
-        return false;
-      }
-    };
-
-    const stopCamera = () => {
-      if (streamRef.current) {
-        try { streamRef.current.getTracks().forEach((t) => t.stop()); } catch (e) {}
-        streamRef.current = null;
-      }
-      if (webcamRef.current) {
-        try { webcamRef.current.pause(); webcamRef.current.srcObject = null; } catch (e) {}
-      }
-    };
-
-    const captureAndMatch = async () => {
-      if (!faceapiRef.current || !matcher || !webcamRef.current) return;
-      const video = webcamRef.current;
-      if (video.videoWidth === 0 || video.videoHeight === 0) return;
-      if (!captureCanvasRef.current) captureCanvasRef.current = document.createElement("canvas");
-      const canvas = captureCanvasRef.current;
-      const targetW = 320;
-      const targetH = Math.round((video.videoHeight / video.videoWidth) * targetW) || 240;
-      canvas.width = targetW;
-      canvas.height = targetH;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0, targetW, targetH);
-      try {
-        const detections = await faceapiRef.current
-          .detectAllFaces(canvas, new faceapiRef.current.TinyFaceDetectorOptions({ inputSize: DEFAULT_DETECTOR_SIZE, scoreThreshold: 0.45 }))
-          .withFaceLandmarks()
-          .withFaceDescriptors();
-        if (!detections || !detections.length) return;
-        const now = new Date().toISOString();
-        const newResults = {};
-        for (const det of detections) {
-          const best = matcher.findBestMatch(det.descriptor);
-          const label = String(best.label);
-          if (targets.includes(label)) {
-            newResults[label] = { status: "success", message: "Matched", timestamp: now };
-            if (typeof onResult === "function") onResult({ id: label, type: entityType === "student" ? "signin" : "signin", status: "success", timestamp: now });
-          }
-        }
-        setResults((prev) => ({ ...prev, ...newResults }));
-        return newResults;
-      } catch (err) {
-        console.warn("captureAndMatch failed", err);
-      }
-    };
-
-    const startSession = async () => {
-      const okModels = await ensureModels();
-      if (!okModels) return;
-      await loadDescriptors();
-      const camOk = await startCamera();
-      if (!camOk) return;
-      if (mode === "snapshot") {
-        await captureAndMatch();
-        if (typeof onCompleted === "function") onCompleted(Object.entries(results).map(([id, res]) => ({ id, ...res })));
+        setLoadingModels(false);
+        perfRef.current.modelsEnd = (performance.now ? performance.now() : Date.now());
+        if (PERF_UI) snapPerf();
         return;
       }
-      if (processIntervalRef.current) return;
-      processIntervalRef.current = setInterval(() => { captureAndMatch(); }, 1500);
-    };
-
-    const stopSession = async () => {
-      if (processIntervalRef.current) { clearInterval(processIntervalRef.current); processIntervalRef.current = null; }
-      stopCamera();
-      if (typeof onCompleted === "function") onCompleted(Object.entries(results).map(([id, res]) => ({ id, ...res })));
-    };
-
-    useEffect(() => {
-      const v = Number(startRecordingRequest) || 0;
-      if (v && v !== lastStartRef.current) { lastStartRef.current = v; startSession().catch((e) => console.warn("startSession error", e)); }
-    }, [startRecordingRequest]);
-
-    useEffect(() => {
-      const v = Number(stopRecordingRequest) || 0;
-      if (v && v !== lastStopRef.current) { lastStopRef.current = v; stopSession().catch((e) => console.warn("stopSession error", e)); }
-    }, [stopRecordingRequest]);
-
-    useEffect(() => {
-      let mounted = true;
-      (async () => {
-        const ok = await ensureModels();
-        if (!mounted) return;
-        if (ok) await loadDescriptors();
-        if (mounted) setLoading(false);
-      })();
-      return () => { mounted = false; if (processIntervalRef.current) { clearInterval(processIntervalRef.current); processIntervalRef.current = null; } stopCamera(); };
-    }, []);
-
-    useEffect(() => {
-      if (scrollIntoViewOnMount && containerRef.current) {
-        try { containerRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {}
-        try { const v = containerRef.current.querySelector('video'); if (v && typeof v.focus === 'function') v.focus(); } catch (e) {}
-      }
-    }, [scrollIntoViewOnMount]);
-
-    return (
-      <div ref={containerRef} style={{ width: "100%" }} {...rest}>
-        <div style={{ marginBottom: 8 }}>
-          <video ref={webcamRef} autoPlay playsInline muted style={{ width: "100%", borderRadius: 8 }} tabIndex={-1} />
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-          <button className="btn btn-primary" onClick={() => { startSession(); }}>Start</button>
-          <button className="btn btn-secondary" onClick={() => { stopSession(); }}>Stop</button>
-          <button className="btn btn-link" onClick={() => { try { if (onCancel) onCancel(); } catch (e) {} stopSession(); }}>Cancel</button>
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <div style={{ fontWeight: 600 }}>Targets</div>
-          <ul>
-            {targets.map((id) => (
-              <li key={id} style={{ marginBottom: 6 }}>
-                <span style={{ marginRight: 8 }}>{id}</span>
-                <span style={{ color: results[id]?.status === "success" ? "#059669" : "#dc2626" }}>{results[id]?.status || "pending"}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    );
-  };
-
-  export default BiometricsSignIn;
-
-  entityType = "student",
-  studentId = null,
-  studentIds = null,
-  workerId = null,
-  workerIds = null,
-  startRecordingRequest = 0,
-  stopRecordingRequest = 0,
-  mode: initialMode = "snapshot",
-  scrollIntoViewOnMount = false,
-  onResult = null,
-  onCompleted = null,
-  onCancel = null,
-  ...rest
-}) => {
-  const [mode] = useState(initialMode);
-  const containerRef = useRef(null);
-  const webcamRef = useRef(null);
-  const captureCanvasRef = useRef(null);
-  const streamRef = useRef(null);
-  const processIntervalRef = useRef(null);
-  const faceapiRef = useRef(null);
-  const lastStartRef = useRef(0);
-  const lastStopRef = useRef(0);
-
-  const targets = (
-    (studentIds && Array.isArray(studentIds) ? studentIds : studentId ? [studentId] : [])
-      .concat(workerIds && Array.isArray(workerIds) ? workerIds : workerId ? [workerId] : [])
-      .filter(Boolean)
-  ).map(String);
-
-  const [loading, setLoading] = useState(true);
-  const [matcher, setMatcher] = useState(null);
-  const [results, setResults] = useState(() => ({}));
-
-  const ensureModels = async () => {
-    if (!faceapiRef.current) {
       try {
         await preloadFaceApiModels();
-        faceapiRef.current = await getFaceApi();
-      } catch (err) {
-        console.warn("Failed to load face-api", err);
-        return false;
-      }
-    }
-    return true;
-  };
-
-  const loadDescriptors = async () => {
-    const faceapi = faceapiRef.current;
-    if (!faceapi) return false;
-    const labeled = [];
-    for (const id of targets) {
-      try {
-        const raw = await descriptorDB.getDescriptor(id);
-        if (raw && raw.length) {
-          const arrs = raw.map((a) => new Float32Array(a));
-          const labeledDesc = new faceapi.LabeledFaceDescriptors(String(id), arrs);
-          labeled.push(labeledDesc);
-        } else {
-          setResults((r) => ({ ...r, [id]: { status: "failed", message: "No descriptors available (offline)." } }));
+        try {
+          faceapiRef.current = await getFaceApi();
+        } catch (e) {
+          if (DEBUG) console.warn('Failed to import faceapi after preloading models', e);
         }
+        if (!cancelled) setLoadingModels(false);
+        perfRef.current.modelsEnd = (performance.now ? performance.now() : Date.now());
+        if (PERF_UI) snapPerf();
       } catch (err) {
-        setResults((r) => ({ ...r, [id]: { status: "failed", message: "Descriptor load failed." } }));
+        console.error("Failed to load face-api models:", err);
+        if (!cancelled) setMessage("Failed to load face detection models.");
       }
-    }
-    if (labeled.length) {
-      const fm = new faceapi.FaceMatcher(labeled, 0.6);
-      setMatcher(fm);
-      return true;
-    }
-    return false;
-  };
-
-  const startCamera = async () => {
-    if (streamRef.current) return true;
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
-      streamRef.current = s;
-      if (webcamRef.current) webcamRef.current.srcObject = s;
-      try { await webcamRef.current.play(); } catch (e) {}
-      return true;
-    } catch (err) {
-      console.warn("startCamera failed", err);
-      return false;
-    }
-  };
-
-  const stopCamera = () => {
-    if (streamRef.current) {
-      try { streamRef.current.getTracks().forEach((t) => t.stop()); } catch (e) {}
-      streamRef.current = null;
-    }
-    if (webcamRef.current) {
-      try { webcamRef.current.pause(); webcamRef.current.srcObject = null; } catch (e) {}
-    }
-  };
-
-  const captureAndMatch = async () => {
-    if (!faceapiRef.current || !matcher || !webcamRef.current) return;
-    const video = webcamRef.current;
-    if (video.videoWidth === 0 || video.videoHeight === 0) return;
-    if (!captureCanvasRef.current) captureCanvasRef.current = document.createElement("canvas");
-    const canvas = captureCanvasRef.current;
-    const targetW = 320;
-    const targetH = Math.round((video.videoHeight / video.videoWidth) * targetW) || 240;
-    canvas.width = targetW;
-    canvas.height = targetH;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(video, 0, 0, targetW, targetH);
-    try {
-      const detections = await faceapiRef.current
-        .detectAllFaces(canvas, new faceapiRef.current.TinyFaceDetectorOptions({ inputSize: DEFAULT_DETECTOR_SIZE, scoreThreshold: 0.45 }))
-        .withFaceLandmarks()
-        .withFaceDescriptors();
-      if (!detections || !detections.length) return;
-      const now = new Date().toISOString();
-      const newResults = {};
-      for (const det of detections) {
-        const best = matcher.findBestMatch(det.descriptor);
-        const label = String(best.label);
-        if (targets.includes(label)) {
-          newResults[label] = { status: "success", message: "Matched", timestamp: now };
-          if (typeof onResult === "function") onResult({ id: label, type: entityType === "student" ? "signin" : "signin", status: "success", timestamp: now });
-        }
-      }
-      setResults((prev) => ({ ...prev, ...newResults }));
-      return newResults;
-    } catch (err) {
-      console.warn("captureAndMatch failed", err);
-    }
-  };
-
-  const startSession = async () => {
-    const okModels = await ensureModels();
-    if (!okModels) return;
-    await loadDescriptors();
-    const camOk = await startCamera();
-    if (!camOk) return;
-    if (mode === "snapshot") {
-      await captureAndMatch();
-      if (typeof onCompleted === "function") onCompleted(Object.entries(results).map(([id, res]) => ({ id, ...res })));
-      return;
-    }
-    if (processIntervalRef.current) return;
-    processIntervalRef.current = setInterval(() => { captureAndMatch(); }, 1500);
-  };
-
-  const stopSession = async () => {
-    if (processIntervalRef.current) { clearInterval(processIntervalRef.current); processIntervalRef.current = null; }
-    stopCamera();
-    if (typeof onCompleted === "function") onCompleted(Object.entries(results).map(([id, res]) => ({ id, ...res })));
-  };
-
-  useEffect(() => {
-    const v = Number(startRecordingRequest) || 0;
-    if (v && v !== lastStartRef.current) { lastStartRef.current = v; startSession().catch((e) => console.warn("startSession error", e)); }
-  }, [startRecordingRequest]);
-
-  useEffect(() => {
-    const v = Number(stopRecordingRequest) || 0;
-    if (v && v !== lastStopRef.current) { lastStopRef.current = v; stopSession().catch((e) => console.warn("stopSession error", e)); }
-  }, [stopRecordingRequest]);
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const ok = await ensureModels();
-      if (!mounted) return;
-      if (ok) await loadDescriptors();
-      if (mounted) setLoading(false);
-    })();
-    return () => { mounted = false; if (processIntervalRef.current) { clearInterval(processIntervalRef.current); processIntervalRef.current = null; } stopCamera(); };
+    };
+    ensureModelsReady();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  // ✅ Fetch subject names (student or user) for messages (offline fallback)
   useEffect(() => {
-    if (scrollIntoViewOnMount && containerRef.current) {
-      try { containerRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) {}
-      try { const v = containerRef.current.querySelector('video'); if (v && typeof v.focus === 'function') v.focus(); } catch (e) {}
-    }
-  }, [scrollIntoViewOnMount]);
+    const ids = entityType === 'user'
+      ? (Array.isArray(userId) ? userId : [userId]).filter(Boolean)
+      : (Array.isArray(studentId) ? studentId : [studentId]).filter(Boolean);
+    if (!ids.length) return;
 
-  return (
-    <div ref={containerRef} style={{ width: "100%" }} {...rest}>
-      <div style={{ marginBottom: 8 }}>
-        <video ref={webcamRef} autoPlay playsInline muted style={{ width: "100%", borderRadius: 8 }} tabIndex={-1} />
-      </div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <button className="btn btn-primary" onClick={() => { startSession(); }}>Start</button>
-        <button className="btn btn-secondary" onClick={() => { stopSession(); }}>Stop</button>
-        <button className="btn btn-link" onClick={() => { try { if (onCancel) onCancel(); } catch (e) {} stopSession(); }}>Cancel</button>
-      </div>
-      <div style={{ marginTop: 8 }}>
-        <div style={{ fontWeight: 600 }}>Targets</div>
-        <ul>
-          {targets.map((id) => (
-            <li key={id} style={{ marginBottom: 6 }}>
-              <span style={{ marginRight: 8 }}>{id}</span>
-              <span style={{ color: results[id]?.status === "success" ? "#059669" : "#dc2626" }}>{results[id]?.status || "pending"}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
-  );
-};
-
-export default BiometricsSignIn;
-
-
-
-  // Scroll and focus the video container when mounted if requested
-  useEffect(() => {
-    if (!scrollIntoViewOnMount) return;
-    // Run after a short delay to allow the DOM to render and webcam to attach
-    const id = setTimeout(() => {
+    let mounted = true;
+    (async () => {
       try {
-        // Prefer focusing the actual video element
-        if (webcamRef.current) {
-          try {
-            webcamRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          } catch (e) {
-            // ignore scroll errors
+        if (isOnline) {
+          if (entityType === 'user') {
+            // For users, we get profile names (username) or fallback to id
+            const { data, error } = await api
+              .from('profiles')
+              .select('id, username')
+              .in('id', ids);
+            if (!error && data) {
+              const map = {};
+              data.forEach((p) => (map[p.id] = p.username || `User ${p.id}`));
+              if (mounted) setStudentNames(map);
+              try { await cacheTable('profiles', data); } catch {}
+            }
+          } else {
+            const { data, error } = await api
+              .from("students")
+              .select("id, full_name")
+              .in("id", ids);
+            if (!error && data) {
+              const map = {};
+              data.forEach((s) => (map[s.id] = s.full_name));
+              if (mounted) setStudentNames(map);
+              try { await cacheTable("students", data); } catch {}
+            }
           }
-          try {
-            // Make sure the element is focusable
-            webcamRef.current.focus({ preventScroll: true });
-          } catch (e) {
-            try { webcamRef.current.focus(); } catch (e2) {}
+        } else {
+          if (entityType === 'user') {
+            const cached = await getTable('profiles');
+            const map = {};
+            (cached || []).forEach((p) => {
+              if (ids.includes(p.id) || ids.includes(Number(p.id)))
+                map[p.id] = p.username || `User ${p.id}`;
+            });
+            if (mounted) setStudentNames(map);
+          } else {
+            const cached = await getTable("students");
+            const map = {};
+            (cached || []).forEach((s) => {
+              if (ids.includes(s.id) || ids.includes(Number(s.id)))
+                map[s.id] = s.full_name;
+            });
+            if (mounted) setStudentNames(map);
           }
-          return;
-        }
-
-        // Fallback: scroll the container if video not available yet
-        if (containerRef.current) {
-          try { containerRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
         }
       } catch (err) {
-        // ignore
+        console.error("Failed to fetch subject names", err);
       }
-    }, 120);
+    })();
 
-    return () => clearTimeout(id);
-  }, [scrollIntoViewOnMount]);
+    return () => {
+      mounted = false;
+    };
+  }, [studentId, userId, isOnline, entityType]);
+
+  // ✅ List available cameras
+  useEffect(() => {
+    (async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter((d) => d.kind === "videoinput");
+        setAvailableCameras(videoDevices);
+        // If no cameras are present and this is a user signin/signout flow,
+        // show the token input immediately so the user can paste a code.
+        if ((forceOperation === 'signin' || forceOperation === 'signout') && entityType === 'user' && (!videoDevices || videoDevices.length === 0)) {
+          setWebcamError(true);
+          setShowTokenInput(true);
+          setMessage('No camera detected on this device. Use your backup authentication code.');
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    })();
+  }, []);
+
+  // ✅ Webcam setup
+  const startWebcam = async (facing = "user") => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+    }
+    try {
+      perfRef.current.cameraStart = (performance.now ? performance.now() : Date.now());
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: facing,
+          width: { ideal: 320 },
+          height: { ideal: 240 },
+        },
+      });
+      streamRef.current = stream;
+
+      if (webcamRef.current) {
+        try {
+          webcamRef.current.srcObject = stream;
+          await new Promise((resolve) => {
+            let resolved = false;
+            const onMeta = () => {
+              if (!webcamRef.current) return resolve();
+              if ((webcamRef.current.videoWidth || webcamRef.current.videoHeight) && !resolved) {
+                resolved = true;
+                webcamRef.current.removeEventListener('loadedmetadata', onMeta);
+                resolve();
+              }
+            };
+            webcamRef.current.addEventListener('loadedmetadata', onMeta);
+            // fallback timeout in case loadedmetadata doesn't fire
+            setTimeout(() => {
+              try { webcamRef.current.removeEventListener('loadedmetadata', onMeta); } catch (e) {}
+              resolve();
+            }, 2000);
+          });
+          await webcamRef.current.play();
+        } catch (e) {
+          if (DEBUG) console.warn('startWebcam: waiting for metadata failed', e);
+        }
+      }
+
+      perfRef.current.cameraEnd = (performance.now ? performance.now() : Date.now());
+      if (PERF_UI) snapPerf();
+      setWebcamError(false);
+    } catch (err) {
+      console.error("Webcam access failed:", err);
+      setWebcamError(true);
+      
+      // Show token input for users in both signin and signout flows to support devices without webcams.
+      if (entityType === 'user' && (forceOperation === 'signin' || forceOperation === 'signout')) {
+        setMessage("No webcam detected. You can use your backup authentication code to proceed.");
+        setShowTokenInput(true);
+      } else if (forceOperation === 'signout') {
+        // For sign-out on non-user entities, enforce webcam
+        setMessage("⚠️ Webcam required for sign-out. Please use a device with a webcam to end your work day.");
+      } else {
+        setMessage("Could not access webcam. Check permissions or use a device with a webcam.");
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!captureDone) startWebcam(facingMode);
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+      }
+    };
+  }, [captureDone, facingMode]);
 
   // create an offscreen canvas once for downscaled captures
   useEffect(() => {
@@ -2092,9 +575,6 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
         if (DEBUG) console.log(`[BiometricsSignIn] Attempting to load face references for ID ${id} from:`, 
           sourcesToTry.map(s => `${s.label} (${s.bucket}/${s.path || '(root)'})`).join(', '));
 
-        // Fetch cached images once per id (avoid repeated IndexedDB reads)
-        const cachedImages = await imageCache.getCachedImagesByEntity(id);
-
         // Try each source until we get descriptors
         for (const source of sourcesToTry) {
           if (descriptors.length > 0) break; // Already got descriptors, skip remaining sources
@@ -2102,7 +582,8 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
           if (DEBUG) console.log(`[BiometricsSignIn] Trying ${source.label}: ${source.bucket}/${source.path || '(root)'}`);
 
           // Check cache first for offline support
-          const cachedForSource = (cachedImages || []).filter(img => img.bucket === source.bucket);
+          const cachedImages = await imageCache.getCachedImagesByEntity(id);
+          const cachedForSource = cachedImages.filter(img => img.bucket === source.bucket);
           
           let imageFiles = [];
           let paths = [];
@@ -2127,65 +608,49 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
             
             // Optimize: For profile-avatars with ID filter, try direct file access instead of listing entire bucket
             if (source.useIdFilter && source.bucket === 'profile-avatars') {
-              // Try common extensions directly and request signed URLs instead of listing
-              // This avoids relying on storage.list search behavior which may vary by provider or CORS.
+              // Try common extensions directly instead of listing all files
               const extensions = ['jpg', 'jpeg', 'png', 'webp'];
               const foundFiles = [];
-              const signedCandidates = [];
-
+              
               for (const ext of extensions) {
                 const filename = `${id}.${ext}`;
                 try {
-                  const url = await getSignedUrl(source.bucket, filename, 240);
-                  if (url) {
-                    // Found a signed URL for this exact id-based filename
-                    signedCandidates.push({ name: filename, signedUrl: url });
-                    // stop after first found
-                    break;
+                  // Check if file exists by attempting to get its metadata
+                  const { data: fileData, error: checkErr } = await api.storage
+                    .from(source.bucket)
+                    .list('', { 
+                      limit: 1,
+                      search: filename
+                    });
+                  
+                  if (!checkErr && fileData && fileData.length > 0) {
+                    foundFiles.push(...fileData);
+                    break; // Found the file, stop searching
                   }
                 } catch (e) {
-                  if (DEBUG) console.warn('[BiometricsSignIn] getSignedUrl failed for', filename, e);
+                  // File doesn't exist with this extension, try next
+                  continue;
                 }
               }
-
-              if (signedCandidates.length) {
-                // Construct files array to mimic storage.list output (minimal)
-                files = signedCandidates.map((s) => ({ name: s.name }));
-                // Populate urlsData directly with the signed URLs we found
-                urlsData = signedCandidates.map((s) => s.signedUrl);
-                if (DEBUG) console.log(`[BiometricsSignIn] Direct signed URL search found ${files.length} file(s) for ID ${id}`);
-              } else {
-                files = [];
-              }
+              
+              files = foundFiles;
+              if (DEBUG) console.log(`[BiometricsSignIn] Direct search found ${files.length} file(s) for ID ${id}`);
             } else {
               // Standard list for other buckets or non-filtered queries
               // CRITICAL: Ensure we're listing a specific path, not the entire bucket
-              try {
-                const listResult = await api.storage
-                  .from(source.bucket)
-                  .list(listPath, {
-                    limit: 10, // Only need a few images per student for face descriptors
-                    sortBy: { column: 'name', order: 'asc' },
-                  });
-
-                files = listResult.data;
-                listErr = listResult.error;
-                if (DEBUG) console.log(`[BiometricsSignIn] Listed ${source.bucket}/${listPath} - found ${files?.length || 0} files`);
-              } catch (listException) {
-                // Some storage backends or network conditions may cause list(...) to throw or fail (CORS, network).
-                // Retry with a simplified call (no sort) to increase compatibility.
-                if (DEBUG) console.warn('[BiometricsSignIn] storage.list threw, retrying with simpler call', listException);
-                try {
-                  const listResult = await api.storage.from(source.bucket).list(listPath, { limit: 10 });
-                  files = listResult.data;
-                  listErr = listResult.error;
-                } catch (simpleListErr) {
-                  if (DEBUG) console.warn('[BiometricsSignIn] simplified storage.list also failed', simpleListErr);
-                  files = [];
-                  listErr = simpleListErr;
-                }
-              }
+              const listResult = await api.storage
+                .from(source.bucket)
+                .list(listPath, { 
+                  limit: 10,  // Only need a few images per student for face descriptors
+                  sortBy: { column: 'name', order: 'asc' }
+                });
+              
+              files = listResult.data;
+              listErr = listResult.error;
+              
+              if (DEBUG) console.log(`[BiometricsSignIn] Listed ${source.bucket}/${listPath} - found ${files?.length || 0} files`);
             }
+            
             if (DEBUG && files) console.log(`[BiometricsSignIn] Found ${files.length} total files in ${source.bucket}`, files);
             
             if (listErr) {
@@ -2242,18 +707,18 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
                 return source.path ? `${source.path}/${f.name}` : f.name;
               });
 
-              // batch create signed URLs (use cached helper to reduce repeated network calls)
+              // batch create signed URLs
               const signedResults = await Promise.all(
-                paths.map((p) => getSignedUrl(source.bucket, p, 240))
+                paths.map((p) => api.storage.from(source.bucket).createSignedUrl(p, 300))
               );
-
+              
               let urlErr = null;
               for (const r of signedResults) {
-                if (!r) {
-                  urlErr = true;
+                if (r.error) {
+                  urlErr = r.error;
                   urlsData.push(null);
                 } else {
-                  urlsData.push(r);
+                  urlsData.push(r.data?.signedUrl || null);
                 }
               }
               
@@ -2440,12 +905,8 @@ const loadFaceReferences = async (attempt = 0, isManualRetry = false) => {
       
       try {
         // Trigger global cache refresh if available
-        if (typeof window !== 'undefined') {
-          if (typeof window.softRefresh === 'function') {
-            await window.softRefresh();
-          } else if (typeof window.refreshCache === 'function') {
-            await window.refreshCache();
-          }
+        if (typeof window !== 'undefined' && typeof window.refreshCache === 'function') {
+          await window.refreshCache();
           setMessage(m => `${m}\n✅ Cache refreshed - retrying...`);
           // Retry loading after cache refresh
           setTimeout(() => loadFaceReferences(0, true), 2000);
@@ -2519,15 +980,18 @@ useEffect(() => {
 
     // Ensure face-api models are loaded before attempting detection
     try {
-      const ready = await ensureModelsReadyForInference();
-      if (!ready) {
-        setIsProcessing(false);
-        return;
+      if (!areFaceApiModelsLoaded()) {
+        setMessage('Face models not loaded — preparing now...');
+        await preloadFaceApiModels();
+        try {
+          faceapiRef.current = await getFaceApi();
+        } catch (e) {
+          if (DEBUG) console.warn('Failed to import faceapi after preloading models', e);
+        }
       }
     } catch (err) {
       console.error('Failed to ensure models loaded before capture', err);
       setMessage('Face detection models are unavailable. Please download models in Offline Settings.');
-      setIsProcessing(false);
       return;
     }
 
@@ -2592,7 +1056,7 @@ useEffect(() => {
         matchFound = true;
         const displayName = studentNames[match.label] || `${entityType === 'user' ? 'User' : 'Student'} ${match.label}`;
 
-            // For user authentication mode (entityType='user')
+        // For user authentication mode (entityType='user')
         if (entityType === 'user') {
           // Check if this is the correct user
           const expectedId = userId || (Array.isArray(userId) ? userId[0] : null);
@@ -2601,16 +1065,22 @@ useEffect(() => {
             
             // Prompt for attendance recording instead of auto-recording
             promptAttendanceRecording(match.label, displayName, false);
-            // Do NOT add session participants for user/profile entities here.
-            // Session participants should represent students only.
+            // Add participant to academic_session_participants if a session id was provided
+            try {
+              if (academicSessionId) {
+                await api.from('academic_session_participants').insert({
+                  session_id: academicSessionId,
+                  student_id: Number(match.label),
+                  school_id: schoolId
+                });
+              }
+            } catch (e) {
+              console.warn('Failed to insert academic_session_participant', e);
+            }
 
             // Hide/unmount the biometric UI so the user can re-open later for sign-out
             if (typeof onCompleted === 'function') {
-              try {
-                const payload = { entityId: match.label, type: 'auth', timestamp: new Date().toISOString() };
-                console.log('[BiometricsSignIn] onCompleted payload (user auth):', payload);
-                try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
-              } catch (e) {}
+              try { onCompleted(match.label); } catch (e) { }
             }
             
             // Draw captured frame to canvas
@@ -2642,64 +1112,22 @@ useEffect(() => {
           setCaptureDone(true);
           const nowIso = new Date().toISOString();
           try {
-            // Prevent duplicate rapid sign-ins for same label
-            const last = lastAutoSignInRef.current[match.label] || 0;
-            const nowMs = Date.now();
-            if (nowMs - last < AUTO_SIGNIN_COOLDOWN_MS) {
-              if (DEBUG) console.log('[BiometricsSignIn] skipping rapid duplicate snapshot sign-in', match.label);
-            } else if (!pendingSignIns[match.label]) {
-              lastAutoSignInRef.current[match.label] = nowMs;
+            if (!pendingSignIns[match.label]) {
               // Sign in: record attendance immediately
-              console.log('[BiometricsSignIn] student auto sign-in - recording attendance', { student_id: match.label, signInTime: nowIso });
               const res = await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign in' });
-              console.log('[BiometricsSignIn] recordAttendance result:', res);
               // addRow may return the inserted row (online) or an object with tempId (offline)
               const pendingId = res?.id || res?.tempId || (res?.result && (res.result.id || res.result.tempId)) || null;
               setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime: nowIso } }));
-              try { addRecordedParticipant(match.label, displayName, nowIso, pendingId, false); } catch (e) { if (DEBUG) console.warn('addRecordedParticipant failed', e); }
               setMessage(`${displayName} authenticated and attendance recorded.`);
 
-              // Add participant to session table if a session id was provided (students only)
+              // Add participant to academic_session_participants if a session id was provided
               try {
-                if (academicSessionId && recordSessionParticipants) {
-                  const sid = Number(match.label);
-                  const now = new Date().toISOString();
-                  const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: now, sign_in_time: now };
-                  console.log('[BiometricsSignIn] ensuring participant (snapshot) payload:', partPayload, 'table:', sessionType);
-                  try {
-                    // Try local cache first to avoid duplicates
-                    const cached = await getTable(sessionType);
-                    const found = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid);
-                    if (found && found.id) {
-                      // update sign_in_time if missing
-                      if (!found.sign_in_time) {
-                        try {
-                          await updateParticipantRow(found.id, { sign_in_time: now });
-                          console.log('[BiometricsSignIn] updated participant sign_in_time via updateParticipantRow for', sid);
-                        } catch (uerr) {
-                          console.warn('[BiometricsSignIn] updateParticipantRow failed, falling back to API update', uerr);
-                          try { await api.from(sessionType).update({ sign_in_time: now }).eq('id', found.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant failed', e2); }
-                        }
-                      }
-                    } else {
-                      // Insert via offline-aware hook so it queues when offline
-                      try {
-                        const last = lastParticipantAttemptRef.current[sid] || 0;
-                        if (Date.now() - last < MIN_PARTICIPANT_ATTEMPT_MS) {
-                          if (DEBUG) console.log('[BiometricsSignIn] skipping participant add (recent attempt)', sid);
-                        } else {
-                          lastParticipantAttemptRef.current[sid] = Date.now();
-                          const addRes = await addParticipantRow(partPayload);
-                          console.log('[BiometricsSignIn] addParticipantRow (snapshot) result:', addRes);
-                        }
-                      } catch (err) {
-                        console.warn('[BiometricsSignIn] addParticipantRow failed (snapshot), falling back to API insert', err);
-                        try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (snapshot)'); } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (snapshot)', e2); }
-                      }
-                    }
-                  } catch (err) {
-                    console.warn('Failed to ensure academic_session_participant (snapshot)', err);
-                  }
+                if (academicSessionId) {
+                  await api.from('academic_session_participants').insert({
+                    session_id: academicSessionId,
+                    student_id: Number(match.label),
+                    school_id: schoolId
+                  });
                 }
               } catch (e) {
                 console.warn('Failed to insert academic_session_participant', e);
@@ -2707,17 +1135,7 @@ useEffect(() => {
 
               // Hide/unmount the biometric UI so teacher can re-open for sign-out
               if (typeof onCompleted === 'function') {
-                try {
-                  const payload = {
-                    studentId: match.label,
-                    type: 'signin',
-                    timestamp: nowIso,
-                    attendance: res,
-                    participant: academicSessionId ? { session_id: academicSessionId, table: sessionType } : null
-                  };
-                  console.log('[BiometricsSignIn] onCompleted payload (student snapshot):', payload);
-                  try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
-                } catch (e) {}
+                try { onCompleted(match.label); } catch (e) { }
               }
             } else {
               // Sign out: update existing pending sign-in record if available
@@ -2733,7 +1151,6 @@ useEffect(() => {
                   // Fallback to previous behaviour if updateRow fails
                   await addRow({ id: pending.id, sign_out_time: signOutTime, _update: true });
                 }
-                try { completeRecordedParticipant(match.label, signOutTime); } catch (e) { if (DEBUG) console.warn('completeRecordedParticipant failed', e); }
                 setPendingSignIns((prev) => {
                   const copy = { ...prev };
                   delete copy[match.label];
@@ -2741,9 +1158,8 @@ useEffect(() => {
                 });
                 setMessage(`${displayName} signed out. Duration: ${durationHours} hrs`);
                 try {
-                  if (academicSessionId && recordSessionParticipants) {
-                    console.log('[BiometricsSignIn] updating participant sign_out_time via API', { sessionType, sessionId: academicSessionId, student: match.label });
-                    await api.from(sessionType)
+                  if (academicSessionId) {
+                    await api.from('academic_session_participants')
                       .update({ sign_out_time: new Date().toISOString() })
                       .match({ session_id: academicSessionId, student_id: Number(match.label) });
                   }
@@ -2751,15 +1167,15 @@ useEffect(() => {
                   console.warn('Failed to update academic_session_participant sign_out_time', e);
                 }
               } else {
-                // No pending sign-in found — still record a sign-out attendance row (only sign_out_time snapshot)
-                await recordAttendance({ entityId: match.label, signOutTime: nowIso, note: 'biometric sign out' });
+                // No pending sign-in found — still record a sign-out attendance row
+                await recordAttendance({ entityId: match.label, signInTime: nowIso, note: 'biometric sign out' });
                 setMessage(`${displayName} sign-out recorded.`);
                 try {
-                    if (academicSessionId && recordSessionParticipants) {
-                      await api.from(sessionType)
-                        .update({ sign_out_time: new Date().toISOString() })
-                        .match({ session_id: academicSessionId, student_id: Number(match.label) });
-                    }
+                  if (academicSessionId) {
+                    await api.from('academic_session_participants')
+                      .update({ sign_out_time: new Date().toISOString() })
+                      .match({ session_id: academicSessionId, student_id: Number(match.label) });
+                  }
                 } catch (e) {
                   console.warn('Failed to update academic_session_participant sign_out_time', e);
                 }
@@ -2835,8 +1251,10 @@ useEffect(() => {
     if (!ready) return; // skip this frame if video not ready
     try {
       // Ensure face-api models are loaded before attempting detection
-      const ready = await ensureModelsReadyForInference();
-      if (!ready) return;
+      if (!areFaceApiModelsLoaded()) {
+        if (DEBUG) console.warn('Skipping frame: models not loaded');
+        return;
+      }
       setIsProcessing(true);
       // draw downscaled frame
       const canvas = captureCanvasRef.current || document.createElement("canvas");
@@ -2869,17 +1287,8 @@ useEffect(() => {
 
       for (const match of results) {
         if (match.label === "unknown") continue;
-        // prevent duplicate attempts in quick succession
-        const last = lastAutoSignInRef.current[match.label] || 0;
-        const nowMs = Date.now();
-        if (nowMs - last < AUTO_SIGNIN_COOLDOWN_MS) {
-          if (DEBUG) console.log('[BiometricsSignIn] skipping rapid duplicate continuous sign-in', match.label);
-          continue;
-        }
-        lastAutoSignInRef.current[match.label] = nowMs;
         if (!pendingSignIns[match.label]) {
           const signInTime = new Date().toISOString();
-          console.log('[BiometricsSignIn] continuous auto sign-in attempt', { student_id: match.label, signInTime });
           const res = await addRow({
             student_id: match.label,
             school_id: schoolId,
@@ -2888,53 +1297,10 @@ useEffect(() => {
             date,
             sign_in_time: signInTime,
           });
-          console.log('[BiometricsSignIn] addRow (attendance_records) result:', res);
           const pendingId = res?.id || res?.tempId || null;
           setPendingSignIns((prev) => ({ ...prev, [match.label]: { id: pendingId, signInTime } }));
-          try { addRecordedParticipant(match.label, studentNames[match.label] || `Student ${match.label}`, signInTime, pendingId, false); } catch (e) { if (DEBUG) console.warn('addRecordedParticipant failed', e); }
           const displayName = studentNames[match.label] || `Student ${match.label}`;
           setMessage(`${displayName} authenticated successfully.`);
-          try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'student', entityId: match.label, attendance: res, signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
-          // Notify parent with structured payload for this sign-in so parent can record attendance/participants if desired
-          if (typeof onCompleted === 'function') {
-            try {
-              const payload = { studentId: match.label, type: 'signin', timestamp: signInTime, attendance: res };
-              console.log('[BiometricsSignIn] onCompleted payload (continuous sign-in):', payload);
-              try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
-            } catch (e) {}
-          }
-          // Also ensure session participant entry exists and record sign_in_time for continuous mode
-          try {
-            if (academicSessionId && recordSessionParticipants) {
-              const sid = Number(match.label);
-              const partNow = signInTime;
-              const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: partNow, sign_in_time: partNow };
-              console.log('[BiometricsSignIn] ensuring participant (continuous) payload:', partPayload, 'table:', sessionType);
-              const cached = await getTable(sessionType);
-              const found = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid);
-              if (found && found.id) {
-                if (!found.sign_in_time) {
-                  try {
-                    await updateParticipantRow(found.id, { sign_in_time: partNow });
-                    console.log('[BiometricsSignIn] updated participant sign_in_time via updateParticipantRow for', sid);
-                  } catch (uerr) {
-                    console.warn('[BiometricsSignIn] updateParticipantRow failed (continuous), falling back to API update', uerr);
-                    try { await api.from(sessionType).update({ sign_in_time: partNow }).eq('id', found.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant failed (continuous)', e2); }
-                  }
-                }
-              } else {
-                try {
-                  const addRes = await addParticipantRow(partPayload);
-                  console.log('[BiometricsSignIn] addParticipantRow (continuous) result:', addRes);
-                } catch (err) {
-                  console.warn('[BiometricsSignIn] addParticipantRow failed (continuous), falling back to API insert', err);
-                  try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (continuous)'); } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (continuous)', e2); }
-                }
-              }
-            }
-          } catch (err) {
-            console.warn('Failed to ensure academic_session_participant (continuous)', err);
-          }
         }
       }
     } catch (err) {
@@ -2947,11 +1313,10 @@ useEffect(() => {
 
   // start/stop continuous processing
   const startContinuous = () => {
-    console.log('[BiometricsSignIn] startContinuous called');
     if (processIntervalRef.current) return;
     processIntervalRef.current = setInterval(() => {
       processFrame();
-    }, 1500); // ~0.66 FPS - reduced frequency to lower CPU/network load
+    }, 800); // ~1.25 FPS - tuneable for performance vs responsiveness
     setMode("continuous");
 
     // notify parent that recording started
@@ -2970,14 +1335,9 @@ useEffect(() => {
     }
     // record start timestamp for duration calculation
     try { recordingStartRef.current = new Date().toISOString(); } catch (e) { recordingStartRef.current = null; }
-    // clear any previous recorded participants when starting a new continuous session
-    setRecordedParticipants([]);
-    // start tick so elapsed times update in UI
-    setTick((t) => t + 1);
   };
 
   const stopContinuous = async () => {
-    console.log('[BiometricsSignIn] stopContinuous called');
     if (processIntervalRef.current) {
       clearInterval(processIntervalRef.current);
       processIntervalRef.current = null;
@@ -3040,84 +1400,48 @@ useEffect(() => {
         setMessage('Ended recording. Some sign-outs may have failed.');
       }
 
-      // mark recorded participants as completed (UI) and clear pending sign-ins locally so UI reflects end of recording
-      try {
-        (participants || []).forEach(p => {
-          try { completeRecordedParticipant(p.student_id, stopTime); } catch (e) { if (DEBUG) console.warn('completeRecordedParticipant failed in stopContinuous', e); }
-        });
-      } catch (e) {
-        if (DEBUG) console.warn('Error completing recorded participants', e);
-      }
+      // clear pending sign-ins locally so UI reflects end of recording
       setPendingSignIns({});
     }
 
-      // Ensure participants are recorded in academic_session_participants (students only)
-      const studentParticipants = (participants || []).filter(p => !p.isWorker);
-      if (academicSessionId && studentParticipants.length) {
+      // Ensure participants are recorded in academic_session_participants
+      if (academicSessionId && participants.length) {
         setMessage((m) => `${m}\nRecording session participants...`);
         try {
-          // Ensure each participant row exists and includes sign_in_time when available
-          const ensured = await Promise.all(studentParticipants.map(async (p) => {
+          const ensured = await Promise.all(participants.map(async (p) => {
             try {
               const sid = Number(p.student_id);
-              const signInTime = p.signInTime || null;
-              // Try to find existing participant (online first)
-              let foundRow = null;
+              // If online, check remote first to avoid duplicates
               if (isOnline) {
                 try {
                   const { data: existing, error: existingErr } = await api
-                    .from(sessionType)
-                    .select('*')
+                    .from('academic_session_participants')
+                    .select('id')
                     .match({ session_id: academicSessionId, student_id: sid })
                     .limit(1);
                   if (!existingErr && existing && existing.length) {
-                    foundRow = existing[0];
+                    return { student_id: sid, added: false, reason: 'exists' };
                   }
                 } catch (e) {
                   // ignore and fallback to cache
                 }
               }
 
-              // Fallback to local cache
-              if (!foundRow) {
-                try {
-                  const cached = await getTable(sessionType);
-                  foundRow = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid) || null;
-                } catch (e) {
-                  // ignore cache errors
-                }
-              }
-
-              if (foundRow && foundRow.id) {
-                // If sign_in_time missing and we have one, update
-                if (signInTime && !foundRow.sign_in_time) {
-                  try {
-                    await updateParticipantRow(foundRow.id, { sign_in_time: signInTime });
-                    console.log('[BiometricsSignIn] updated participant sign_in_time for', sid);
-                  } catch (uerr) {
-                    console.warn('[BiometricsSignIn] updateParticipantRow failed (ensure), falling back to API update', uerr);
-                    try { await api.from(sessionType).update({ sign_in_time: signInTime }).eq('id', foundRow.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant failed (ensure)', e2); }
-                  }
-                }
-                return { student_id: sid, added: false, existing: foundRow };
-              }
-
-              // Insert new participant row with sign_in_time if available
-              const now = signInTime || new Date().toISOString();
-              const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: now, sign_in_time: signInTime || now };
+              // Check local cache to avoid duplicate offline inserts
               try {
-                const last = lastParticipantAttemptRef.current[sid] || 0;
-                if (Date.now() - last < MIN_PARTICIPANT_ATTEMPT_MS) {
-                  if (DEBUG) console.log('[BiometricsSignIn] ensure: skipping addParticipantRow due to rate-limit for', sid);
-                  return { student_id: sid, added: false, reason: 'rate-limited' };
-                }
-                lastParticipantAttemptRef.current[sid] = Date.now();
-                const addRes = await addParticipantRow(partPayload);
-                console.log('[BiometricsSignIn] addParticipantRow (ensure) result:', addRes);
-                return { student_id: sid, added: true, result: addRes };
+                const cached = await getTable('academic_session_participants');
+                const found = (cached || []).some(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === Number(p.student_id));
+                if (found) return { student_id: Number(p.student_id), added: false, reason: 'cached' };
+              } catch (e) {
+                // ignore cache errors
+              }
+
+              // Finally insert via offline-aware addRow so it queues when offline
+              try {
+                await addParticipantRow({ session_id: academicSessionId, student_id: Number(p.student_id), school_id: schoolId });
+                return { student_id: Number(p.student_id), added: true };
               } catch (err) {
-                console.warn('[BiometricsSignIn] addParticipantRow failed (ensure), falling back to API insert', err);
-                try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (ensure)'); return { student_id: sid, added: true }; } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (ensure)', e2); return { student_id: sid, added: false, reason: String(e2) }; }
+                return { student_id: Number(p.student_id), added: false, reason: String(err) };
               }
             } catch (err) {
               return { student_id: p.student_id, added: false, reason: String(err) };
@@ -3126,38 +1450,6 @@ useEffect(() => {
 
           const addedCount = ensured.filter(r => r.added).length;
           setMessage((m) => `${m}\nParticipants added to session: ${addedCount}/${ensured.length}`);
-
-          // After ensuring participants, update sign_out_time for those participants to stopTime
-          try {
-            await Promise.all(studentParticipants.map(async (p) => {
-              const sid = Number(p.student_id);
-              // find the participant row id (cache or API)
-              let found = null;
-              try {
-                const cached = await getTable(sessionType);
-                found = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid) || null;
-              } catch (e) {
-                // ignore
-              }
-              if (!found && isOnline) {
-                try {
-                  const { data: rows, error } = await api.from(sessionType).select('*').match({ session_id: academicSessionId, student_id: sid }).limit(1);
-                  if (!error && rows && rows.length) found = rows[0];
-                } catch (e) {}
-              }
-              if (found && found.id) {
-                try {
-                  await updateParticipantRow(found.id, { sign_out_time: stopTime });
-                  console.log('[BiometricsSignIn] updated participant sign_out_time for', sid);
-                } catch (uerr) {
-                  console.warn('[BiometricsSignIn] updateParticipantRow failed for sign_out_time, falling back to API update', uerr);
-                  try { await api.from(sessionType).update({ sign_out_time: stopTime }).eq('id', found.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant sign_out failed', e2); }
-                }
-              }
-            }));
-          } catch (e) {
-            console.warn('[BiometricsSignIn] failed to update participant sign_out_time batch', e);
-          }
         } catch (err) {
           console.warn('Failed to ensure session participants', err);
         }
@@ -3181,101 +1473,6 @@ useEffect(() => {
     recordingStartRef.current = null;
     setMode("snapshot");
   };
-
-  // Parent-driven stop request: when `stopRecordingRequest` increments, stop continuous recording
-  const lastStopReqRef = useRef(0);
-  useEffect(() => {
-    try {
-      const v = Number(stopRecordingRequest) || 0;
-      console.log('[BiometricsSignIn] stopRecordingRequest effect, value=', stopRecordingRequest, 'last=', lastStopReqRef.current);
-      if (v && v !== lastStopReqRef.current) {
-        lastStopReqRef.current = v;
-        console.log('[BiometricsSignIn] stopRecordingRequest triggered -> stopping continuous (if active)');
-        // only attempt to stop if currently recording
-        if (mode === 'continuous') {
-          stopContinuous().catch((e) => { console.warn('stopContinuous failed', e); });
-        }
-      }
-    } catch (e) {
-      console.warn('stopRecordingRequest effect failed', e);
-    }
-  }, [stopRecordingRequest]);
-
-  // Parent-driven start request: when `startRecordingRequest` increments, start continuous recording
-  const lastStartReqRef = useRef(0);
-  useEffect(() => {
-    try {
-      const v = Number(startRecordingRequest) || 0;
-      console.log('[BiometricsSignIn] startRecordingRequest effect, value=', startRecordingRequest, 'last=', lastStartReqRef.current);
-      if (v && v !== lastStartReqRef.current) {
-        lastStartReqRef.current = v;
-        console.log('[BiometricsSignIn] startRecordingRequest triggered -> starting continuous (if not already)');
-        if (mode !== 'continuous') {
-          startContinuous();
-        }
-      }
-    } catch (e) {
-      console.warn('startRecordingRequest effect failed', e);
-    }
-  }, [startRecordingRequest]);
-
-  // Parent-driven cancel-stop request: stop recording but do NOT commit attendance or session participants
-  const lastCancelStopReqRef = useRef(0);
-  const stopContinuousCancel = async () => {
-    try {
-      if (processIntervalRef.current) {
-        clearInterval(processIntervalRef.current);
-        processIntervalRef.current = null;
-      }
-      const stopTime = new Date().toISOString();
-
-      // Prepare participants info captured during recording (but we won't commit them)
-      const participants = Object.keys(pendingSignIns || {}).map((k) => {
-        const v = pendingSignIns[k] || {};
-        return {
-          student_id: k,
-          signInTime: v.signInTime || null,
-          attendanceId: v.id || null,
-          isWorker: v.isWorker || false,
-          worker_id: v.worker_id || null,
-        };
-      });
-
-      // Clear pending sign-ins without performing sign-outs or participant inserts
-      setPendingSignIns({});
-
-      setMessage('Recording stopped — session canceled (no attendance recorded).');
-
-      // Notify parent that recording stopped but was canceled so it can avoid committing
-      try {
-        if (typeof onRecordingStop === 'function') {
-          onRecordingStop({ start: recordingStartRef.current, end: stopTime, participants: [], academicSessionId, canceled: true });
-        }
-      } catch (e) {
-        if (DEBUG) console.warn('onRecordingStop (cancel) failed', e);
-      }
-
-      // clear recording timestamp and return to snapshot mode
-      recordingStartRef.current = null;
-      setMode('snapshot');
-    } catch (err) {
-      console.warn('stopContinuousCancel failed', err);
-    }
-  };
-
-  useEffect(() => {
-    try {
-      const v = Number(stopRecordingCancelRequest) || 0;
-      if (v && v !== lastCancelStopReqRef.current) {
-        lastCancelStopReqRef.current = v;
-        if (mode === 'continuous') {
-          stopContinuousCancel().catch((e) => { if (DEBUG) console.warn('stopContinuousCancel failed', e); });
-        }
-      }
-    } catch (e) {
-      if (DEBUG) console.warn('stopRecordingCancelRequest effect failed', e);
-    }
-  }, [stopRecordingCancelRequest]);
 
   const retryWorker = () => {
     setWorkerError(null);
@@ -3319,11 +1516,7 @@ useEffect(() => {
         
         // Call onCompleted callback to proceed with sign-in
         if (onCompleted) {
-          try {
-            const payload = { entityId: userId, type: 'auth', timestamp: new Date().toISOString() };
-            console.log('[BiometricsSignIn] onCompleted payload (token auth):', payload);
-            try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
-          } catch (e) {}
+          onCompleted(userId);
         }
       } else {
         setTokenError("Invalid or expired authentication code");
@@ -3342,27 +1535,20 @@ useEffect(() => {
     try {
       const date = new Date().toISOString().split("T")[0];
       
-      // Build attendance record based on entity type. Only attach snapshot timestamps provided.
+      // Build attendance record based on entity type
       const record = {
         school_id: schoolId,
         status: "present",
-        note: attendanceData.note || "biometric",
+        note: attendanceData.note || "biometric sign in",
         date,
-        method: "biometric",
+        sign_in_time: attendanceData.signInTime,
+        method: "biometric"
       };
-      if (attendanceData.signInTime) record.sign_in_time = attendanceData.signInTime;
-      if (attendanceData.signOutTime) record.sign_out_time = attendanceData.signOutTime;
       
       // Add either student_id or user/profile mapping
       if (entityType === 'student') {
         record.student_id = attendanceData.entityId;
-        console.log('[BiometricsSignIn] recording attendance -> table: attendance_records, payload:', record);
         const res = await addRow(record);
-        console.log('[BiometricsSignIn] attendance_records addRow result:', res);
-        // notify parent
-        try {
-          if (typeof onSignIn === 'function') onSignIn({ entityType: 'student', entityId: attendanceData.entityId, attendance: res, signInTime: attendanceData.signInTime });
-        } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
         return res;
       }
 
@@ -3391,14 +1577,7 @@ useEffect(() => {
               recorded_by: attendanceData.entityId,
             };
 
-            console.log('[BiometricsSignIn] recording attendance -> table: worker_attendance_records, payload:', workerPayload);
             const res = await addWorkerRow(workerPayload);
-            console.log('[BiometricsSignIn] worker_attendance_records addWorkerRow result:', res);
-            // Notify parent of worker sign-in (server-side row created or queued via offline hook)
-            try {
-              if (typeof onSignIn === 'function') onSignIn({ entityType: 'worker', profileId: attendanceData.entityId, worker_id: profile.worker_id, attendance: res, signInTime: attendanceData.signInTime });
-            } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
-
             // Annotate return so callers know this was a worker attendance insert
             return { __worker: true, worker_id: profile.worker_id, result: res };
           }
@@ -3407,12 +1586,9 @@ useEffect(() => {
         }
 
         // If not a worker profile, fall back to recording in attendance_records (user_id)
-  record.user_id = attendanceData.entityId;
-  console.log('[BiometricsSignIn] recording attendance -> table: attendance_records (user fallback), payload:', record);
-  const res = await addRow(record);
-  console.log('[BiometricsSignIn] attendance_records addRow (user) result:', res);
-  try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'user', entityId: attendanceData.entityId, attendance: res, signInTime: attendanceData.signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
-  return res;
+        record.user_id = attendanceData.entityId;
+        const res = await addRow(record);
+        return res;
       }
     } catch (err) {
       console.error("Failed to record attendance:", err);
@@ -3461,69 +1637,31 @@ useEffect(() => {
                 ...prev,
                 [entityId]: { id: pendingId, signInTime, isWorker: true, worker_id: res.worker_id },
               }));
-              try { addRecordedParticipant(entityId, displayName, signInTime, pendingId, true); } catch (e) { if (DEBUG) console.warn('addRecordedParticipant failed', e); }
-              try { if (typeof onSignIn === 'function') onSignIn({ entityType: 'worker', profileId: entityId, worker_id: res.worker_id, attendance: workerResult, signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
             } else {
               const pendingId = res?.id || res?.tempId || null;
               setPendingSignIns((prev) => ({
                 ...prev,
                 [entityId]: { id: pendingId, signInTime, isWorker: false },
               }));
-              try { addRecordedParticipant(entityId, displayName, signInTime, pendingId, false); } catch (e) { if (DEBUG) console.warn('addRecordedParticipant failed', e); }
-              try { if (typeof onSignIn === 'function') onSignIn({ entityType: entityType === 'user' ? 'user' : 'student', entityId, attendance: res, signInTime }); } catch (e) { if (DEBUG) console.warn('onSignIn callback failed', e); }
             }
 
             setMessage(`${displayName} authenticated and attendance recorded.`);
             // Add academic session participant (for prompt-based sign-ins) if session id provided
-            // Only add participants for students — do not insert profile/worker rows into student participants table
             try {
-              if (academicSessionId && recordSessionParticipants && entityType === 'student') {
-                const sid = Number(entityId);
-                const now = new Date().toISOString();
-                const partPayload = { session_id: academicSessionId, student_id: sid, school_id: schoolId, added_at: now, sign_in_time: now };
-                try {
-                  const cached = await getTable(sessionType);
-                  const found = (cached || []).find(r => Number(r.session_id) === Number(academicSessionId) && Number(r.student_id) === sid);
-                  if (found && found.id) {
-                    if (!found.sign_in_time) {
-                      try {
-                        await updateParticipantRow(found.id, { sign_in_time: now });
-                        console.log('[BiometricsSignIn] updated participant sign_in_time (prompt) for', sid);
-                      } catch (uerr) {
-                        console.warn('[BiometricsSignIn] updateParticipantRow failed (prompt), falling back to API update', uerr);
-                        try { await api.from(sessionType).update({ sign_in_time: now }).eq('id', found.id); } catch (e2) { console.error('[BiometricsSignIn] api.update participant failed (prompt)', e2); }
-                      }
-                    }
-                    } else {
-                    try {
-                      const last = lastParticipantAttemptRef.current[sid] || 0;
-                      if (Date.now() - last < MIN_PARTICIPANT_ATTEMPT_MS) {
-                        if (DEBUG) console.log('[BiometricsSignIn] prompt: skipping addParticipantRow due to rate-limit for', sid);
-                      } else {
-                        lastParticipantAttemptRef.current[sid] = Date.now();
-                        const addRes = await addParticipantRow(partPayload);
-                        console.log('[BiometricsSignIn] addParticipantRow (prompt) result:', addRes);
-                      }
-                    } catch (err) {
-                      console.warn('[BiometricsSignIn] addParticipantRow failed (prompt), falling back to API insert', err);
-                      try { await api.from(sessionType).insert(partPayload); console.log('[BiometricsSignIn] api.insert participant ok (prompt)'); } catch (e2) { console.error('[BiometricsSignIn] api.insert participant failed (prompt)', e2); }
-                    }
-                  }
-                } catch (err) {
-                  console.warn('Failed to ensure academic_session_participant (prompt)', err);
-                }
+              if (academicSessionId) {
+                await api.from('academic_session_participants').insert({
+                  session_id: academicSessionId,
+                  student_id: Number(entityId),
+                  school_id: schoolId
+                });
               }
             } catch (e) {
-              console.warn('Failed to insert academic_session_participant (outer)', e);
+              console.warn('Failed to insert academic_session_participant', e);
             }
 
             // Hide/unmount biometric UI for caller if they provided onCompleted
             if (typeof onCompleted === 'function') {
-              try {
-                const payload = { entityId, type: 'signin', timestamp: signInTime, attendance: res };
-                console.log('[BiometricsSignIn] onCompleted payload (prompt sign-in):', payload);
-                try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
-              } catch (e) {}
+              try { onCompleted(entityId); } catch (e) { }
             }
         } else {
           // Sign out
@@ -3539,9 +1677,6 @@ useEffect(() => {
                   const workerRowId = pending.id; // tempId or real id
                   // updateRow handles online/offline update
                   await updateWorkerRow(workerRowId, { sign_out_time: signOutTime, hours: Number(durationHours.toFixed(2)), description: `biometric sign out @ ${signOutTime}` });
-                  try { if (typeof onSignOut === 'function') onSignOut({ entityType: 'worker', profileId: entityId, worker_id: pending.worker_id, attendanceId: workerRowId, signOutTime }); } catch (e) { if (DEBUG) console.warn('onSignOut callback failed', e); }
-                  // Notify any global listeners that a requested sign-out completed
-                  try { window.dispatchEvent(new CustomEvent('app:request-signout-complete', { detail: { profileId: entityId, worker_id: pending.worker_id, attendanceId: workerRowId, signOutTime } })); } catch (e) { if (DEBUG) console.warn('dispatch app:request-signout-complete failed', e); }
                 } catch (err) {
                   console.error('Failed to update worker attendance record on sign-out', err);
                 }
@@ -3549,8 +1684,6 @@ useEffect(() => {
                 // Existing behavior: update attendance_records sign_out_time
                 try {
                   await updateRow(pending.id, { sign_out_time: signOutTime });
-                  try { if (typeof onSignOut === 'function') onSignOut({ entityType: 'attendance', entityId, attendanceId: pending.id, signOutTime }); } catch (e) { if (DEBUG) console.warn('onSignOut callback failed', e); }
-                  try { window.dispatchEvent(new CustomEvent('app:request-signout-complete', { detail: { entityId, attendanceId: pending.id, signOutTime } })); } catch (e) { if (DEBUG) console.warn('dispatch app:request-signout-complete failed', e); }
                 } catch (err) {
                   console.error('updateRow failed, falling back to addRow update for attendance_records', err);
                   try {
@@ -3560,17 +1693,16 @@ useEffect(() => {
                   }
                 }
               }
-              try { completeRecordedParticipant(entityId, signOutTime); } catch (e) { if (DEBUG) console.warn('completeRecordedParticipant failed', e); }
               setPendingSignIns((prev) => {
                 const copy = { ...prev };
                 delete copy[entityId];
                 return copy;
               });
               setMessage(`${displayName} signed out. Duration: ${durationHours.toFixed(2)} hrs`);
-              // update academic_session_participants record sign_out_time when available (optional)
+              // update academic_session_participants record sign_out_time when available
               try {
-                if (academicSessionId && recordSessionParticipants) {
-                  await api.from(sessionType)
+                if (academicSessionId) {
+                  await api.from('academic_session_participants')
                     .update({ sign_out_time: new Date().toISOString() })
                     .match({ session_id: academicSessionId, student_id: Number(entityId) });
                 }
@@ -3587,13 +1719,9 @@ useEffect(() => {
       const action = isSignOut ? "logged out" : "logged in";
       setMessage(`${displayName} ${action} (attendance not recorded).`);
       
-      // For authentication-only mode, call onCompleted with structured payload
+      // For authentication-only mode, call onCompleted
       if (onCompleted && !isSignOut) {
-        try {
-          const payload = { entityId, type: 'auth', timestamp: new Date().toISOString() };
-          console.log('[BiometricsSignIn] onCompleted payload (auth-only):', payload);
-          try { onCompleted(payload); } catch (e) { console.warn('onCompleted callback failed', e); }
-        } catch (e) {}
+        onCompleted(entityId);
       }
     }
     
@@ -3604,8 +1732,8 @@ useEffect(() => {
   const computedPrimaryLabel = (() => {
     if (isProcessing) return 'Processing...';
     if (primaryActionLabel) return primaryActionLabel;
-  if (effectiveForceOperation === 'signin' && typeof onCompleted === 'function') return 'Log In';
-  if (effectiveForceOperation === 'signout' && typeof onCompleted === 'function') return 'Log Out';
+    if (forceOperation === 'signin' && typeof onCompleted === 'function') return 'Log In';
+    if (forceOperation === 'signout' && typeof onCompleted === 'function') return 'Log Out';
     return Object.keys(pendingSignIns).length === 0 ? 'Sign In' : 'Sign Out';
   })();
 
@@ -3613,13 +1741,10 @@ useEffect(() => {
     ? (primaryRecordStartLabel || 'Record Session')
     : (primaryRecordEndLabel || 'End Session');
 
-  // Use 80% viewport width across devices per group-sign requirement
-  const containerStyle = { width: '80vw', maxWidth: '1200px', margin: '0 auto' };
-
   return (
     <div
       className="student-signin-container"
-      style={containerStyle}
+      style={{ width: isSmallScreen ? '80vw' : '40vw', margin: '0 auto' }}
     >
       {loadingModels && <p style={{ textAlign: 'center' }}>Loading models…</p>}
 
@@ -3632,7 +1757,7 @@ useEffect(() => {
           )}
 
           {/* Token Input for Sign-In/Sign-Out when webcam unavailable */}
-          {showTokenInput && entityType === 'user' && (effectiveForceOperation === 'signin' || effectiveForceOperation === 'signout') && (
+          {showTokenInput && entityType === 'user' && (forceOperation === 'signin' || forceOperation === 'signout') && (
             <>
               <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1200 }} />
               <div
@@ -3652,7 +1777,7 @@ useEffect(() => {
                   textAlign: 'center'
                 }}
               >
-                <h3 style={{ marginTop: 0 }}>{effectiveForceOperation === 'signout' ? 'Sign-out code' : 'Authentication code'}</h3>
+                <h3 style={{ marginTop: 0 }}>{forceOperation === 'signout' ? 'Sign-out code' : 'Authentication code'}</h3>
                 {message && <div style={{ fontSize: '0.9rem', color: '#374151', marginBottom: 8 }}>{message}</div>}
 
                 <form onSubmit={handleTokenSubmit} style={{ maxWidth: '320px', margin: '0 auto' }}>
@@ -3711,7 +1836,7 @@ useEffect(() => {
           )}
 
           {/* Webcam Warning for Sign-Out */}
-          {webcamError && effectiveForceOperation === 'signout' && !showTokenInput && (
+          {webcamError && forceOperation === 'signout' && !showTokenInput && (
             <>
               <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 1200 }} />
               <div
@@ -3742,21 +1867,20 @@ useEffect(() => {
           )}
 
           {/* Only show video and controls when not using token fallback or showing webcam warning */}
-          {!showTokenInput && !(webcamError && effectiveForceOperation === 'signout') && (
+          {!showTokenInput && !(webcamError && forceOperation === 'signout') && (
             <>
               <div className="video-container">
             <video
-                ref={webcamRef}
-                autoPlay
-                playsInline
-                muted
-                tabIndex={-1}
-                style={{
-                  display: captureDone ? "none" : "block",
-                  width: "100%",
-                  borderRadius: "8px",
-                }}
-              />
+              ref={webcamRef}
+              autoPlay
+              playsInline
+              muted
+              style={{
+                display: captureDone ? "none" : "block",
+                width: "100%",
+                borderRadius: "8px",
+              }}
+            />
             <canvas
               ref={canvasRef}
               style={{
@@ -3787,8 +1911,7 @@ useEffect(() => {
             )}
           </div>
 
-          {!hidePrimaryControls && (
-            <div style={{ marginBottom: 12 }}>
+          <div style={{ marginBottom: 12 }}>
               <div style={{ marginBottom: 6 }}>
                 <div style={{ textAlign: 'center' }}>{mode === 'continuous' ? 'Recording…' : ''}</div>
               </div>
@@ -3807,41 +1930,12 @@ useEffect(() => {
                   {recordToggleLabel}
                 </button>
               </div>
-            </div>
-          )}
+          </div>
             </>
           )}
 
           {/* Don't show the global floating message when token input or webcam fallback UI is active to avoid overlap */}
           {message && !showTokenInput && !webcamError && <pre className="message">{message}</pre>}
-
-          {/* Small session participants panel: shows recorded participants and durations */}
-          {recordedParticipants && recordedParticipants.length > 0 && (
-            <div className="mt-4 p-3 bg-gray-50 dark:bg-gray-900 border rounded">
-              <div className="flex items-center justify-between mb-2">
-                <div className="font-medium">Session participants</div>
-                <div className="text-sm text-gray-500">{mode === 'continuous' ? 'Live' : 'Summary'}</div>
-              </div>
-              <div className="space-y-2">
-                {recordedParticipants.map((p) => {
-                  const name = p.displayName || `#${p.student_id}`;
-                  let minutes = p.durationMinutes;
-                  if ((minutes === null || minutes === undefined) && p.signInTime && !p.signOutTime) {
-                    const start = new Date(p.signInTime).getTime();
-                    const now = Date.now();
-                    minutes = start ? ((now - start) / (1000 * 60)) : 0;
-                  }
-                  const minutesStr = minutes !== null && minutes !== undefined ? `${Number(minutes).toFixed(2)} min` : '—';
-                  return (
-                    <div key={`${p.student_id}-${p.signInTime}`} className="flex items-center justify-between">
-                      <div className="text-sm">{name} <span className="text-xs text-gray-400">({p.student_id})</span></div>
-                      <div className="text-sm font-mono text-indigo-600">{minutesStr}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
           {/* If models are not loaded, provide a quick link to Offline Settings so users can download models */}
           {!loadingModels && !areFaceApiModelsLoaded() && (

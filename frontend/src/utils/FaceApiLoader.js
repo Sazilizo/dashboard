@@ -26,49 +26,33 @@ function isOnWifiLike() {
   }
 }
 
-async function arrayBufferFromResponseWithGzipFallback(resp) {
-  // No client-side gzip fallback: return raw bytes as served by the server.
-  return await resp.arrayBuffer();
-}
-
-async function parseJsonResponseWithGzipFallback(resp) {
-  // No gzip fallback: rely on server to return JSON with correct headers.
-  return await resp.json();
-}
-
 async function probeModelUrl(baseUrl, testFile) {
-  const url = baseUrl + testFile;
-  const details = { url, ok: false, status: null, contentType: null, contentLength: null, error: null };
   try {
+    const url = baseUrl + testFile;
     const resp = await fetch(url, { mode: 'cors' });
-    if (!resp) {
-      details.error = 'no_response';
-      return details;
-    }
-    details.status = resp.status;
+    if (!resp || !resp.ok) return false;
     const ct = resp.headers && resp.headers.get ? resp.headers.get('content-type') : null;
-    details.contentType = ct;
-    const cl = resp.headers && resp.headers.get ? resp.headers.get('content-length') : null;
-    details.contentLength = cl;
-
-    if (!resp.ok) {
-      details.error = `http_${resp.status}`;
-      return details;
-    }
-
     // Prefer JSON manifests; if we get HTML (e.g., 403/404 page), reject
+    if (ct && !/application\/json/i.test(ct)) {
+      // Try to parse JSON anyway in case server omitted content-type
       try {
-        await parseJsonResponseWithGzipFallback(resp.clone());
-        details.ok = true;
-        return details;
+        await resp.clone().json();
+        return true;
       } catch (e) {
-        details.error = 'json_parse_error';
-        try { details.errorMessage = e && e.message ? e.message : String(e); } catch (ee) {}
-        return details;
+        console.warn('[FaceApiLoader] probeModelUrl: non-JSON response for', url);
+        return false;
       }
+    }
+    // If content-type suggests JSON or is absent, attempt to parse
+    try {
+      await resp.clone().json();
+      return true;
+    } catch (e) {
+      console.warn('[FaceApiLoader] probeModelUrl: failed to parse JSON for', url, e);
+      return false;
+    }
   } catch (e) {
-    details.error = String(e);
-    return details;
+    return false;
   }
 }
 
@@ -81,7 +65,7 @@ async function probeModelUrl(baseUrl, testFile) {
  *  - requireConsent: boolean - if true, will refuse to download unless biometric consent exists
  * Returns: { success: boolean, reason?: string }
  */
-export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, baseUrl = null, requireWifi = false, requireConsent = false, allowRemote = false } = {}) {
+export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, requireWifi = false, requireConsent = false } = {}) {
   if (modelsLoaded) return { success: true };
 
   if (requireConsent && !hasBiometricConsent()) {
@@ -108,63 +92,23 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, ba
 
   const MODEL_FILES = FILES_BY_VARIANT[variant] || FILES_BY_VARIANT.tiny;
 
-  // Prefer explicit param, then environment/runtime overrides, then REACT_APP_MODELS_URLS (plural), then REACT_APP_MODELS_URL, then default
-  // Support a temporary force-local flag to prefer the app's bundled `/public/models/` while hosted models are fixed.
-  // - Build-time env: REACT_APP_FORCE_LOCAL_MODELS === 'true'
-  // - Runtime override: window.__FACEAPI_FORCE_LOCAL === true
-  let forceLocal = false;
-  try {
-    if (typeof window !== 'undefined' && window.__FACEAPI_FORCE_LOCAL) forceLocal = true;
-  } catch (e) {}
-  try {
-    if (process && process.env && String(process.env.REACT_APP_FORCE_LOCAL_MODELS).toLowerCase() === 'true') forceLocal = true;
-  } catch (e) {}
-
-  let BASE_URL = null;
-  // Determine whether remote models are allowed. By default, disallow remote
-  // model downloads so the app uses its bundled public/models directory.
-  let allowRemoteEnv = false;
-  try {
-    if (typeof window !== 'undefined' && window.__FACEAPI_ALLOW_REMOTE) allowRemoteEnv = true;
-  } catch (e) {}
-  try {
-    if (process && process.env && String(process.env.REACT_APP_ALLOW_REMOTE_MODELS).toLowerCase() === 'true') allowRemoteEnv = true;
-  } catch (e) {}
-  const allowRemoteFinal = allowRemote || allowRemoteEnv;
-
-  // If caller provided an explicit baseUrl use that first (e.g. caller verified it)
-  if (baseUrl) {
-    BASE_URL = baseUrl;
-  } else if (!allowRemoteFinal) {
-    // Force local public models
-    BASE_URL = '/models/';
-  } else {
-    if (forceLocal && !modelsUrl) {
-      BASE_URL = '/models/';
-    } else {
-      BASE_URL = modelsUrl || process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';
-    }
-  }
+  let BASE_URL = modelsUrl || process.env.REACT_APP_MODELS_URL || '/models/';
   BASE_URL = ensureSlash(BASE_URL);
-  try { console.info('[FaceApiLoader] models base URL chosen:', BASE_URL, 'allowRemote=', allowRemoteFinal); } catch (e) {}
 
   // probe the provided base url first, then try a small set of fallbacks
   const candidatePaths = [BASE_URL, '/models/', '/public/models/', 'models/', './models/'];
   let workingPath = null;
-  const probeResults = [];
   for (const p of candidatePaths) {
     const candidate = ensureSlash(p);
-    const res = await probeModelUrl(candidate, MODEL_FILES[0]);
-    probeResults.push(res);
-    if (res && res.ok) {
+    const ok = await probeModelUrl(candidate, MODEL_FILES[0]);
+    if (ok) {
       workingPath = candidate;
       break;
     }
   }
 
   if (!workingPath) {
-    try { console.warn('[FaceApiLoader] no workingPath from probes', probeResults); } catch (e) {}
-    return { success: false, reason: 'models_unavailable', details: { probes: probeResults } };
+    return { success: false, reason: 'models_unavailable' };
   }
 
   // Try to prefetch into Cache Storage (best-effort)
@@ -172,19 +116,34 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, ba
     try {
       const cache = await caches.open('faceapi-models');
 
-      // Attempt to fetch manifest for integrity checks (supports gzip-without-Content-Encoding)
+      // Attempt to fetch manifest for integrity checks
       let manifest = null;
       try {
         const manifestUrl = workingPath + 'models-manifest.json';
         const mresp = await fetch(manifestUrl, { mode: 'cors' });
         if (mresp && mresp.ok) {
           try {
-            manifest = await parseJsonResponseWithGzipFallback(mresp);
+            const ct = mresp.headers && mresp.headers.get ? mresp.headers.get('content-type') : null;
+            if (ct && !/application\/json/i.test(ct)) {
+              // content-type indicates non-JSON; attempt parse once, then fail clearly
+              try {
+                manifest = await mresp.clone().json();
+              } catch (e) {
+                console.warn('[FaceApiLoader] models-manifest.json is not valid JSON (content-type:', ct, ')');
+                return { success: false, reason: 'models_unavailable', error: 'invalid_manifest' };
+              }
+            } else {
+              // try parse; if it fails, return a clear failure so UI can guide the user
+              try {
+                manifest = await mresp.json();
+              } catch (e) {
+                console.warn('[FaceApiLoader] Failed to parse models-manifest.json', e);
+                return { success: false, reason: 'models_unavailable', error: 'invalid_manifest' };
+              }
+            }
           } catch (e) {
-            // If manifest exists but cannot be parsed (e.g., server returned HTML index),
-            // log a warning and continue without manifest checks rather than aborting.
-            console.warn('[FaceApiLoader] models-manifest.json is not valid JSON or could not be parsed; continuing without manifest checks', e);
-            manifest = null;
+            console.warn('[FaceApiLoader] Unexpected error while reading manifest headers', e);
+            return { success: false, reason: 'models_unavailable', error: String(e) };
           }
         }
       } catch (e) {
@@ -208,49 +167,21 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, ba
           const resp = await fetch(url, { mode: 'cors' });
           if (!resp || !resp.ok) return;
 
-          // Always normalize to an ArrayBuffer, decompressing client-side if needed
-          const ab = await arrayBufferFromResponseWithGzipFallback(resp);
-
-              // If this is a weights manifest, try to parse and log a compact summary
-              try {
-                if (f.toLowerCase().endsWith('weights_manifest.json')) {
-                  try {
-                    const txt = new TextDecoder('utf-8').decode(ab);
-                    const parsed = JSON.parse(txt);
-                    // parsed is typically an array of manifest groups; summarize names/shapes
-                    const summary = (Array.isArray(parsed) ? parsed : [parsed]).map((g) => {
-                      if (!g.weights) return { info: 'no weights array' };
-                      return g.weights.map(w => ({ name: w.name, shape: w.shape }));
-                    });
-                    console.log('[FaceApiLoader] Weight manifest summary for', f, summary);
-                  } catch (e) {
-                    console.warn('[FaceApiLoader] Failed to parse weight manifest', f, e);
-                  }
-                }
-              } catch (logErr) {
-                console.warn('[FaceApiLoader] weight manifest logging failed', f, logErr);
-              }
-
           if (manifest && manifest.files && manifest.files[f] && manifest.files[f].sha256) {
-            // verify checksum against decompressed bytes
+            // verify checksum
+            const ab = await resp.arrayBuffer();
             const hex = await bufferToHex(ab);
             const expected = manifest.files[f].sha256;
             if (hex !== expected) {
               throw new Error(`Checksum mismatch for ${f}: expected ${expected} got ${hex}`);
             }
-            // prepare headers for cached response (remove content-encoding since we store decompressed bytes)
+            // put verified response into cache
             const headers = {};
-            try { resp.headers.forEach((v, k) => { if (k !== 'content-encoding') headers[k] = v; }); } catch (e) {}
-            // Ensure content-type present (manifest may declare it)
-            if (!headers['content-type'] && manifest.files[f] && manifest.files[f].contentType) {
-              headers['content-type'] = manifest.files[f].contentType;
-            }
+            resp.headers.forEach((v, k) => { headers[k] = v; });
             await cache.put(url, new Response(ab, { headers }));
           } else {
-            // No manifest entry — cache decompressed bytes to avoid repeated client decompression
-            const headers = {};
-            try { resp.headers.forEach((v, k) => { if (k !== 'content-encoding') headers[k] = v; }); } catch (e) {}
-            await cache.put(url, new Response(ab, { headers }));
+            // no manifest entry — store as-is
+            await cache.put(url, resp.clone());
           }
         } catch (e) {
           // ignore single-file failures but log
@@ -265,24 +196,19 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, ba
   // Load faceapi and the selected networks
   try {
     const faceapi = await getFaceApi();
-    // No fetch/Response/XHR gzip shims: rely on server to serve correct bytes and headers.
 
-    try {
-      if (variant === 'ssd') {
-        await Promise.all([
-          faceapi.nets.ssdMobilenetv1.loadFromUri(workingPath),
-          faceapi.nets.faceLandmark68Net.loadFromUri(workingPath),
-          faceapi.nets.faceRecognitionNet.loadFromUri(workingPath)
-        ]);
-      } else {
-        await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri(workingPath),
-          faceapi.nets.faceLandmark68Net.loadFromUri(workingPath),
-          faceapi.nets.faceRecognitionNet.loadFromUri(workingPath)
-        ]);
-      }
-    } finally {
-      // Nothing to restore because no runtime shims were installed.
+    if (variant === 'ssd') {
+      await Promise.all([
+        faceapi.nets.ssdMobilenetv1.loadFromUri(workingPath),
+        faceapi.nets.faceLandmark68Net.loadFromUri(workingPath),
+        faceapi.nets.faceRecognitionNet.loadFromUri(workingPath)
+      ]);
+    } else {
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(workingPath),
+        faceapi.nets.faceLandmark68Net.loadFromUri(workingPath),
+        faceapi.nets.faceRecognitionNet.loadFromUri(workingPath)
+      ]);
     }
 
     modelsLoaded = true;
@@ -300,35 +226,7 @@ export function areFaceApiModelsLoaded() {
 }
 
 export function getFaceApiModelsBaseUrl() {
-  // If remote models are not explicitly allowed, always return local `/models/`.
-  let allowRemoteEnv = false;
-  try {
-    if (typeof window !== 'undefined' && window.__FACEAPI_ALLOW_REMOTE) allowRemoteEnv = true;
-  } catch (e) {}
-  try {
-    if (process && process.env && String(process.env.REACT_APP_ALLOW_REMOTE_MODELS).toLowerCase() === 'true') allowRemoteEnv = true;
-  } catch (e) {}
-  if (!allowRemoteEnv) return ensureSlash('/models/');
-
-  // Remote models allowed: prefer last discovered working path
-  if (lastBaseUrl) return lastBaseUrl;
-  // allow a runtime override for debugging without rebuild: window.__FACEAPI_MODELS_BASE_URL
-  try {
-    // eslint-disable-next-line no-undef
-    const runtime = (typeof window !== 'undefined' && window.__FACEAPI_MODELS_BASE_URL) ? window.__FACEAPI_MODELS_BASE_URL : null;
-    if (runtime) return ensureSlash(runtime);
-  } catch (e) {}
-
-  // Allow forcing local models at runtime or via build env
-  try {
-    if (typeof window !== 'undefined' && window.__FACEAPI_FORCE_LOCAL) return ensureSlash('/models/');
-  } catch (e) {}
-  try {
-    if (process && process.env && String(process.env.REACT_APP_FORCE_LOCAL_MODELS).toLowerCase() === 'true') return ensureSlash('/models/');
-  } catch (e) {}
-
-  const cfg = process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/';
-  return ensureSlash(cfg);
+  return lastBaseUrl;
 }
 
 // Backwards-compatible wrapper for older imports that expect a boolean-returning

@@ -1,0 +1,139 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Frame Extractor</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;padding:16px}
+  .wrap{max-width:1000px;margin:0 auto}
+  video{width:100%;background:#000}
+  canvas{display:block;width:100%;border:1px solid #ccc;margin-top:8px}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  button{padding:8px 12px}
+  .info{margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h2>Frame Extractor</h2>
+  <p>Load the debug video and use the controls to step frames and save PNGs.</p>
+  <video id="video" controls playsinline>
+    <source src="./Screen recording 2025-12-02 08.36.09.webm" type="video/webm">
+    Your browser does not support video.
+  </video>
+  <div class="controls">
+    <button id="play">Play/Pause</button>
+    <button id="stepBack">Step -1 frame</button>
+    <button id="stepForward">Step +1 frame</button>
+    <button id="capture">Capture frame (download PNG)</button>
+    <button id="captureAll">Capture sequence (5 frames)</button>
+    <label>Step size (s): <input id="stepSize" value="0.04" style="width:80px" /></label>
+  </div>
+  <canvas id="canvas" width="640" height="480"></canvas>
+  <div class="info">
+    <div>Time: <span id="time">0.00</span>s</div>
+    <div>Frame (approx): <span id="frame">0</span></div>
+  </div>
+</div>
+<script>
+const video = document.getElementById('video');
+const playBtn = document.getElementById('play');
+const stepBack = document.getElementById('stepBack');
+const stepForward = document.getElementById('stepForward');
+const captureBtn = document.getElementById('capture');
+const captureAllBtn = document.getElementById('captureAll');
+const stepSizeInput = document.getElementById('stepSize');
+const timeEl = document.getElementById('time');
+const frameEl = document.getElementById('frame');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+function drawCurrentFrame(){
+  const w = video.videoWidth || 640;
+  const h = video.videoHeight || 480;
+  canvas.width = w;
+  canvas.height = h;
+  try{
+    ctx.drawImage(video, 0, 0, w, h);
+  }catch(e){ /* ignore if not ready */ }
+  timeEl.textContent = video.currentTime.toFixed(3);
+  const fps = 25; // approximate
+  frameEl.textContent = Math.round(video.currentTime * fps);
+}
+
+video.addEventListener('play', function(){
+  (function loop(){
+    if(video.paused || video.ended) return;
+    drawCurrentFrame();
+    requestAnimationFrame(loop);
+  })();
+});
+video.addEventListener('seeked', drawCurrentFrame);
+video.addEventListener('loadeddata', drawCurrentFrame);
+
+playBtn.addEventListener('click', ()=>{ if(video.paused) video.play(); else video.pause(); });
+
+function step(delta){
+  const stepSize = parseFloat(stepSizeInput.value) || 0.04;
+  video.currentTime = Math.max(0, Math.min(video.duration || Infinity, video.currentTime + delta * stepSize));
+}
+stepBack.addEventListener('click', ()=> step(-1));
+stepForward.addEventListener('click', ()=> step(1));
+
+function downloadDataUrl(url, filename){
+  try {
+    // Convert base64 dataURL to blob and use object URL for more reliable downloads
+    const parts = url.split(',');
+    const meta = parts[0];
+    const data = parts[1];
+    const mimeMatch = meta.match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/png';
+    const byteString = atob(data);
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+    const blob = new Blob([ab], { type: mime });
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => { try { URL.revokeObjectURL(objUrl); } catch (e) {} }, 1500);
+    return;
+  } catch (err) {
+    console.warn('Blob download failed, falling back to direct open', err);
+  }
+  // Fallback: open in new tab so user can right-click Save as...
+  const w = window.open(url, '_blank');
+  if (!w) alert('Download blocked; right-click the image and choose "Save image as..."');
+}
+
+captureBtn.addEventListener('click', ()=>{
+  drawCurrentFrame();
+  const data = canvas.toDataURL('image/png');
+  const name = `frame_${Math.floor(video.currentTime*1000)}.png`;
+  downloadDataUrl(data, name);
+});
+
+captureAllBtn.addEventListener('click', async ()=>{
+  // capture 5 frames spaced by stepSize
+  const count = 5;
+  const stepSize = parseFloat(stepSizeInput.value) || 0.04;
+  const start = video.currentTime;
+  for(let i=0;i<count;i++){
+    video.currentTime = Math.min(video.duration || Infinity, start + i*stepSize);
+    await new Promise(r => { video.addEventListener('seeked', r, {once:true}); });
+    drawCurrentFrame();
+    const data = canvas.toDataURL('image/png');
+    const name = `frame_${Math.floor(video.currentTime*1000)}.png`;
+    downloadDataUrl(data, name);
+  }
+});
+
+// initial draw
+setTimeout(()=>{ drawCurrentFrame(); }, 200);
+</script>
+</body>
+</html>

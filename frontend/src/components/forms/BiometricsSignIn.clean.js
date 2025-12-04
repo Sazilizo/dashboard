@@ -47,7 +47,12 @@ export default function BiometricsSignIn({
       }
       if (videoRef.current) {
         try { videoRef.current.srcObject = null; } catch (e) { /* ignore */ }
-        setVideoReady(false);
+        // Intentionally do not force `videoReady` to false here. Clearing
+        // `videoReady` can cause the status overlay to appear (and cover the
+        // video) which produces a visible black flash when the camera is
+        // restarted quickly. Keep the last-ready visual state so the UI
+        // doesn't flicker; callers that need to explicitly reset the UI can
+        // set `videoReady` themselves.
       }
       if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
       if (idleTimerRef.current) { clearTimeout(idleTimerRef.current); idleTimerRef.current = null; }
@@ -183,6 +188,7 @@ export default function BiometricsSignIn({
   useEffect(() => {
     if (status !== 'ready' || !isRecording) return;
     const faceapi = faceapiRef.current;
+    console.log("faceapi",faceapi);
     if (!faceapi || !matcherRef.current || !videoRef.current) return;
 
     const detectInterval = 350; // ms between detections
@@ -194,6 +200,7 @@ export default function BiometricsSignIn({
       const v = videoRef.current;
       if (!v || v.readyState < 2) return;
       try {
+        console.log("check mount",mounted);
         detectingRef.current = true;
         const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold: 0.5 });
         const res = await faceapi.detectSingleFace(v, options).withFaceLandmarks().withFaceDescriptor();
@@ -270,7 +277,7 @@ export default function BiometricsSignIn({
       const w = v.videoWidth || 320; const h = v.videoHeight || 240;
       const c = document.createElement('canvas'); c.width = w; c.height = h;
       const ctx = c.getContext('2d'); ctx.drawImage(v, 0, 0, w, h);
-      return c.toDataURL('image/jpeg', 0.8);
+      return c.toDataURL('image/jpeg', 0.6);
     } catch (e) { if (debug) console.warn('snapshot failed', e); return null; }
   }, [debug]);
 
@@ -297,11 +304,32 @@ export default function BiometricsSignIn({
       React.createElement('div', { style: { width: 320, height: 240, position: 'relative' } },
         // Always render the video element to avoid DOM mount/unmount flicker.
         React.createElement('video', { ref: videoRef, style: { width: '320px', height: '240px', background: '#000', objectFit: 'cover', willChange: 'transform' }, autoPlay: true, muted: true, playsInline: true }),
-        // Status overlay: show loading/error messages until the video is actually playing
-        !videoReady && status === 'loading' && React.createElement('div', { style: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', background: 'rgba(0,0,0,0.45)' } }, 'Loading models...'),
-        !videoReady && status === 'models-unavailable' && React.createElement('div', { style: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', background: 'rgba(0,0,0,0.45)' } }, 'Face models unavailable.'),
-        !videoReady && status === 'camera-error' && React.createElement('div', { style: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', background: 'rgba(0,0,0,0.45)' } }, 'Camera access denied.'),
-        !videoReady && status === 'error' && React.createElement('div', { style: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', background: 'rgba(0,0,0,0.45)' } }, 'Biometrics failed to initialize.'),
+        // Unified, non-invasive status overlay. We keep the video visible at
+        // all times and fade a lightweight semi-transparent overlay on top
+        // when the component is not yet ready. This avoids flashes where a
+        // full opaque block replaces the video for one frame.
+        (() => {
+          const overlayMessage = (status !== 'ready') ? (
+            status === 'loading' ? 'Loading models...' :
+            status === 'models-unavailable' ? 'Face models unavailable.' :
+            status === 'camera-error' ? 'Camera access denied.' :
+            status === 'error' ? 'Biometrics failed to initialize.' : ''
+          ) : '';
+          const show = !!overlayMessage || !videoReady;
+          return React.createElement('div', {
+            style: {
+              position: 'absolute', left: 0, top: 0, right: 0, bottom: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#fff', pointerEvents: 'none',
+              background: 'rgba(0,0,0,0.35)',
+              opacity: show ? 1 : 0,
+              transition: 'opacity 220ms ease',
+              // keep this element visually above the video but do not cause
+              // layout reflows when toggled
+              willChange: 'opacity'
+            }
+          }, overlayMessage || null);
+        })(),
         React.createElement('div', { style: { display: status === 'ready' ? 'block' : 'none', marginTop: 8 } },
           !hidePrimaryControls && React.createElement('div', { style: { marginTop: 8 } },
             React.createElement('button', { type: 'button', onClick: () => { setIsRecording(true); handleAction('sign_in'); } }, 'Sign In'),
