@@ -1,35 +1,20 @@
-// Simple utility to manage biometric consent (local device-level opt-in)
-// This stores a flag in localStorage and exposes helper functions for UI and code to check consent.
-
+// Minimal biometric consent helper (stub).
 const KEY = 'biometric_consent_v1';
 
-export function hasBiometricConsent() {
-  try {
-    const v = localStorage.getItem(KEY);
-    return v === '1' || v === 'true' || v === 'yes';
-  } catch (err) {
-    return false;
+const biometricConsent = {
+  hasBiometricConsent: () => {
+    try { return localStorage.getItem(KEY) === '1'; } catch (e) { return false; }
+  },
+  setBiometricConsent: (val = true) => {
+    try { localStorage.setItem(KEY, val ? '1' : '0'); } catch (e) { }
+  },
+  clearBiometricConsent: () => {
+    try { localStorage.removeItem(KEY); } catch (e) { }
   }
-}
+};
 
-export function setBiometricConsent(enabled = true) {
-  try {
-    localStorage.setItem(KEY, enabled ? '1' : '0');
-    return true;
-  } catch (err) {
-    console.warn('[biometricConsent] set failed', err);
-    return false;
-  }
-}
+export const hasBiometricConsent = () => biometricConsent.hasBiometricConsent();
+export const setBiometricConsent = (v = true) => biometricConsent.setBiometricConsent(v);
+export const clearBiometricConsent = () => biometricConsent.clearBiometricConsent();
 
-export function clearBiometricConsent() {
-  try {
-    localStorage.removeItem(KEY);
-    return true;
-  } catch (err) {
-    console.warn('[biometricConsent] clear failed', err);
-    return false;
-  }
-}
-
-export default { hasBiometricConsent, setBiometricConsent, clearBiometricConsent };
+export default biometricConsent;

@@ -1,3 +1,4 @@
+// faceApiShim: dynamically imports face-api.js with a robust singleton and minimal global shims.
 // Lightweight shim to ensure a minimal environment exists before importing face-api.js
 // Some builds or environments expect `process.env` or `navigator` to exist during
 // face-api's module initialization. This shim creates minimal globals, then

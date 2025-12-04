@@ -7,7 +7,6 @@ import { useParams } from "react-router-dom";
 import { useAuth } from "../../context/AuthProvider";
 import { useSchools } from "../../context/SchoolsContext";
 import UploadFile from "../profiles/UploadHelper";
-import BiometricsSignIn from "./BiometricsSignIn.clean";
 import { useSupabaseStudents } from "../../hooks/useSupabaseStudents";
 // filters handled in RecordSessionForm
 import useToast from "../../hooks/useToast";

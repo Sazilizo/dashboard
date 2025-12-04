@@ -9,7 +9,7 @@ import { useSchools } from "../../context/SchoolsContext";
 import useOfflineTable from "../../hooks/useOfflineTable";
 import useOnlineStatus from "../../hooks/useOnlineStatus";
 import { getTableFiltered, getTable } from "../../utils/tableCache";
-import StudentBiometrics from "../forms/StudentBiometrics";
+// StudentBiometrics removed
 import LearnerAttendance from "../profiles/LearnerAttendance";
 import ToastContainer from "../ToastContainer";
 
@@ -831,30 +831,6 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
             </div>
           </div>
 
-          {showBiometrics && (
-            <div className="mt-4 border rounded p-4 bg-white">
-              <StudentBiometrics
-                // If user selected students, pass those IDs; otherwise fall back to the first filtered student
-                studentId={selectedStudentIds && selectedStudentIds.length ? selectedStudentIds : (filteredStudents[0]?.id ? [filteredStudents[0].id] : null)}
-                schoolId={filteredStudents[0]?.school_id || null}
-                academicSessionId={selectedSession}
-                // pass session name as note so biometric component can include it
-                sessionNote={(sessionRows || []).find(s => String(s.id) === String(selectedSession))?.session_name || (sessionRows || []).find(s => String(s.id) === String(selectedSession))?.name || null}
-                bucketName="student-uploads"
-                folderName="faces"
-                onCompleted={(data) => handleBiometricsCompleted(data)}
-                // Customize labels for recording flows
-                primaryRecordStartLabel={recordingActive ? 'Recording…' : 'Record Session'}
-                primaryRecordEndLabel={'End Session'}
-                // Keep biometric UI mounted while recording so continuous processing continues
-                closeOnStart={false}
-                onRecordingStart={handleRecordingStart}
-                onRecordingStop={handleRecordingStop}
-                stopRecordingRequest={stopRecordingRequest}
-                stopRecordingCancelRequest={stopRecordingCancelRequest}
-              />
-            </div>
-          )}
 
           <div className="mt-6">
             <h3 className="text-lg font-medium">Existing participants <span className="text-sm text-gray-500">({participantsForSelected.length})</span></h3>

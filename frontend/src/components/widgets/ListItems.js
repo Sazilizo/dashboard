@@ -41,9 +41,9 @@ export default function ListItems({
     <>
       {resource === 'students' && (
         <div className="list-toolbar" style={{ marginBottom: 8 }}>
-          <Link to="/dashboard/students/group-sign" className="btn btn-secondary">
+          {/* <Link to="/dashboard/students/group-sign" className="btn btn-secondary">
             Group Sign
-          </Link>
+          </Link> */}
         </div>
       )}
 

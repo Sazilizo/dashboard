@@ -9,10 +9,6 @@ import UpdateLearnerProfile from "./components/updates/UpdateLearnerProfile";
 import LearnerAttendanceCalendar from "./components/profiles/LearnerAttendance";
 import WorkerList from "./components/lists/WorkerList";
 import WorkerForm from "./components/forms/WorkerForm";
-import GroupSign from "./pages/workers/GroupSign";
-import GroupSignPerform from "./pages/workers/GroupSignPerform";
-import StudentGroupSign from "./pages/students/GroupSign";
-import StudentGroupSignPerform from "./pages/students/GroupSignPerform";
 import DynamicForm from "./utils/dynamicForm";
 import SessionList from "./components/lists/SessionList";
 import SessionForm from "./components/forms/SessionForm";
@@ -87,8 +83,8 @@ const router = createBrowserRouter([
         errorElement: <ErrorBoundary />,
         children: [
           { index: true, element: <StudentList /> },
-          { path: "group-sign", element: <StudentGroupSign /> },
-          { path: "group-sign/perform", element: <StudentGroupSignPerform /> },
+          // { path: "group-sign", element: <StudentGroupSign /> },
+          // { path: "group-sign/perform", element: <StudentGroupSignPerform /> },
           { path: "create", element: <StudentForm /> },
           { path: ":id", element: <LearnerProfile /> },
           { path: "attandance/:id", element: <LearnerAttendanceCalendar /> },
@@ -102,8 +98,10 @@ const router = createBrowserRouter([
         errorElement: <ErrorBoundary />,
         children: [
           { index: true, element: <WorkerList /> },
-              { path: "group-sign", element: <GroupSign /> },
-              { path: "group-sign/perform", element: <GroupSignPerform /> },
+              // { path: "group-sign", element: <GroupSign /> },
+              // { path: "group-sign/perform", element: <GroupSignPerform /> 
+
+              // },
           { path: "create", element: <WorkerForm /> },
           { path: ":id", element:<WorkerProfile />},
           { path: "update/:id", element: <UpdateWorkerProfile /> },

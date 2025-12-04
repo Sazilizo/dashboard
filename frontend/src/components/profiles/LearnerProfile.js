@@ -6,7 +6,7 @@ import SpecsRadarChartEnhanced from "../charts/SpecsRadarChartEnhanced";
 import AttendanceBarChart from "../charts/AttendanceBarChart";
 import Photos from "./Photos";
 import LearnerAttendance from "./LearnerAttendance";
-import BiometricsSignIn from "../forms/BiometricsSignIn.clean";
+// (biometric attendance UI removed; no BiometricsSignIn references remain)
 import Card from "../widgets/Card";
 import ProfileInfoCard from "../widgets/ProfileInfoCard";
 import StatsDashboard from "../StatsDashboard";
@@ -591,9 +591,9 @@ console.log("student academic sessions:", student?.academic_sessions)
         <button className="btn btn-success mb-2" onClick={() => setAttendanceMode("calendar")}>
           Calendar Attendance
         </button>
-        <button className="btn btn-success mb-2" onClick={() => setAttendanceMode("biometrics")}>
+        {/* <button className="btn btn-success mb-2" onClick={() => setAttendanceMode("biometrics")}>
           Biometric Attendance
-        </button>
+        </button> */}
       </div>
 
       <div className="grid-layout">
@@ -815,14 +815,8 @@ console.log("student academic sessions:", student?.academic_sessions)
               </button>
               {attendanceMode === "calendar" ? (
                 <LearnerAttendance id={id} school_id={student.school_id} restrictToMonth={true} />
-              ) : (
-                <BiometricsSignIn
-                  studentId={id}
-                  schoolId={student.school_id}
-                  bucketName="student-uploads"
-                  folderName="students"
-                  debug={true}
-                />
+              ) : (""
+                // biometric attendance UI removed
               )}
             </div>
           </div>
