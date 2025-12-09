@@ -9,6 +9,8 @@ import ToastContainer from "../ToastContainer";
 import ConfirmToast from "../ConfirmToast";
 import { cacheUserImages } from "../../utils/proactiveImageCache";
 import { generateAuthToken, storeAuthToken } from "../../utils/authTokenGenerator";
+import useOfflineTable from "../../hooks/useOfflineTable";
+import WorkerBiometrics from "../biometrics/WorkerBiometrics";
 
 export default function LoginForm() {
   const [form, setForm] = useState({ email: "", password: "" });
@@ -20,10 +22,16 @@ export default function LoginForm() {
   const [authToken, setAuthToken] = useState(null);
   const [showTokenDisplay, setShowTokenDisplay] = useState(false);
   const [pendingCredentials, setPendingCredentials] = useState(null);
+  const [authUser, setAuthUser] = useState(null);
   const navigate = useNavigate();
   const location = useLocation();
   const { toasts, showToast, removeToast } = useToast();
-  const [hasCamera, setHasCamera] = useState(true);
+
+  const {
+    addRow: addWorkerRow,
+    rows: workerRows = [],
+    isOnline: workersOnline,
+  } = useOfflineTable("worker_attendance_records");
 
   const { refreshUser } = useAuth() || {};
   const from = location.state?.from?.pathname || "/dashboard";
@@ -31,6 +39,61 @@ export default function LoginForm() {
   const handleChange = (e) => {
     const { name, value } = e.target;
     setForm((f) => ({ ...f, [name]: value }));
+  };
+
+  const recordWorkerSignIn = async (workerId, schoolId) => {
+    if (!workerId) return;
+
+    const nowIso = new Date().toISOString();
+    const today = nowIso.split("T")[0];
+
+    const openLocal = Array.isArray(workerRows)
+      ? workerRows.find((r) => r.worker_id === workerId && r.date === today && !r.sign_out_time)
+      : null;
+
+    if (openLocal) {
+      showToast("You are already signed in for today.", "info");
+      return;
+    }
+
+    let openRemote = false;
+    if (navigator.onLine) {
+      try {
+        const { data: existingRows, error: existingErr } = await api
+          .from("worker_attendance_records")
+          .select("id, sign_in_time, sign_out_time")
+          .eq("worker_id", workerId)
+          .eq("date", today)
+          .order("id", { ascending: false })
+          .limit(1);
+        if (!existingErr && Array.isArray(existingRows) && existingRows.some((r) => !r.sign_out_time)) {
+          openRemote = true;
+        }
+      } catch (e) {
+        /* ignore network errors; fall back to offline cache */
+      }
+    }
+
+    if (openRemote) {
+      showToast("You are already signed in for today.", "info");
+      return;
+    }
+
+    const payload = {
+      worker_id: workerId,
+      school_id: schoolId || null,
+      date: today,
+      sign_in_time: nowIso,
+      description: "biometric sign-in",
+      recorded_by: authUser?.id || null,
+    };
+
+    const res = await addWorkerRow(payload);
+    if (res?.__error) {
+      showToast("Sign-in cached offline; will sync when online.", "warning");
+    } else {
+      showToast(workersOnline ? "Sign-in recorded." : "Sign-in cached offline.", workersOnline ? "success" : "info");
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -47,6 +110,7 @@ export default function LoginForm() {
       if (refreshUser) await refreshUser(true);
 
       const { data: { user: authUser } } = await api.auth.getUser();
+      setAuthUser(authUser);
       let profile = null;
       try {
         const { data: prof } = await api
@@ -71,13 +135,6 @@ export default function LoginForm() {
         setPendingCredentials({ email: form.email.trim(), password: form.password });
 
         const openBiometrics = async (profile, record) => {
-          try {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoDevices = devices.filter((d) => d.kind === "videoinput");
-            setHasCamera(Boolean(videoDevices && videoDevices.length > 0));
-          } catch (e) {
-            setHasCamera(false);
-          }
           setUserProfile(profile);
           setRecordAttendance(record);
           setShowBiometrics(true);
@@ -115,8 +172,9 @@ export default function LoginForm() {
     }
   };
 
-  const handleBiometricComplete = async (entityId = null) => {
+  const handleBiometricComplete = async (entityId = null, meta = {}) => {
     const profileId = entityId || userProfile?.id;
+    const workerId = meta?.workerId || userProfile?.worker_id || null;
 
     if (profileId) {
       const token = generateAuthToken();
@@ -126,7 +184,11 @@ export default function LoginForm() {
       setTimeout(() => setShowTokenDisplay(false), 30000);
     }
 
-    if (profileId && recordAttendance) {
+    if (recordAttendance && workerId) {
+      await recordWorkerSignIn(workerId, userProfile?.school_id);
+    }
+
+    if (profileId && recordAttendance && !workerId) {
       const nowIso = new Date().toISOString();
       const today = nowIso.split("T")[0];
 
@@ -265,17 +327,15 @@ export default function LoginForm() {
       )}
 
       {showBiometrics && userProfile ? (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.4)' }}>
-          <div style={{ background: '#fff', padding: 16, borderRadius: 8, width: '90vw', maxWidth: 420 }}>
-            <div style={{ padding: 12, textAlign: 'center' }}>
-              <p style={{ marginBottom: 12 }}>Biometric component removed. You can continue without biometric authentication or cancel to return to the login screen.</p>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-                <button className="btn btn-secondary" onClick={handleBiometricCancel}>Cancel</button>
-                <button className="btn btn-primary" onClick={() => handleBiometricComplete()}>Continue without biometric</button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <WorkerBiometrics
+          profile={userProfile}
+          requireMatch={recordAttendance}
+          onSuccess={(payload) =>
+            handleBiometricComplete(payload?.profileId || userProfile.id, payload)
+          }
+          onCancel={handleBiometricCancel}
+          onSkip={() => handleBiometricComplete(userProfile.id, { workerId: userProfile?.worker_id })}
+        />
       ) : (
         <div className="login-container">
           <form className="login-box login-form" onSubmit={handleSubmit} style={{ maxWidth: 400, margin: "0 auto" }}>
