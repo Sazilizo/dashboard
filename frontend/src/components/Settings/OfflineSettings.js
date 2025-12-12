@@ -3,7 +3,7 @@ import imageCache from '../../utils/imageCache';
 import { getMutations, clearMutations, clearFiles } from '../../utils/tableCache';
 import { getCacheStats } from '../../utils/imageCache';
 import { getFaceDescriptors, removeFaceDescriptors, clearAllFaceDescriptors } from '../../utils/faceDescriptorCache';
-import biometricConsent from '../../utils/biometricConsent';
+import biometricConsent, { setBiometricConsent } from '../../utils/biometricConsent';
 import BiometricConsentModal from '../Modals/BiometricConsentModal';
 import { loadFaceApiModels, areFaceApiModelsLoaded, getFaceApiModelsBaseUrl } from '../../utils/FaceApiLoader';
 
@@ -51,6 +51,7 @@ export default function OfflineSettings() {
 
   const handleConsentAccepted = () => {
     setConsent(true);
+    try { setBiometricConsent(true); } catch (e) { /* ignore */ }
     alert('Biometric enrollment enabled on this device. You can enroll face templates from the Sign-in screen.');
   };
 
@@ -67,7 +68,7 @@ export default function OfflineSettings() {
     setModelsStatus('downloading');
     setModelsErrorDetails(null);
     // Verify model base URL is reachable before attempting the full download
-    const baseUrl = getFaceApiModelsBaseUrl() || (process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '');
+    const baseUrl = getFaceApiModelsBaseUrl() || (process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/');
     const verify = async (base) => {
       if (!base) return { success: false, reason: 'no_base_url', details: 'No models base URL configured.' };
       const files = [
@@ -115,7 +116,7 @@ export default function OfflineSettings() {
       return;
     }
 
-    const res = await loadFaceApiModels({ variant: 'tiny', requireWifi: wifiOnly, requireConsent: true, baseUrl });
+    const res = await loadFaceApiModels({ variant: 'tiny', requireWifi: wifiOnly, requireConsent: true, modelsUrl: baseUrl });
     if (res.success) {
       setModelsStatus('loaded');
       alert('Face models downloaded and cached. Biometric features are ready.');
@@ -153,7 +154,7 @@ export default function OfflineSettings() {
 
   // Manual verification helper: probe manifest files at configured base URL
   const handleVerifyModels = async () => {
-    const baseUrl = getFaceApiModelsBaseUrl() || (process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '');
+    const baseUrl = getFaceApiModelsBaseUrl() || (process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/');
     setModelsStatus('verifying');
     setModelsErrorDetails(null);
     if (!baseUrl) {

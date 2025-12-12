@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import api from "../api/client";
 import useToast from "../hooks/useToast";
 import ToastContainer from "../components/ToastContainer";
-import ConfirmToast from "../components/ConfirmToast";
 import useOfflineTable from "../hooks/useOfflineTable";
 import WorkerBiometrics from "../components/biometrics/WorkerBiometrics";
 
@@ -13,7 +12,8 @@ const LogoutButton = () => {
   const [showBiometrics, setShowBiometrics] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
   const [recordSignOut, setRecordSignOut] = useState(false);
-  const { toasts, showToast, removeToast } = useToast();
+  const [showChoiceOverlay, setShowChoiceOverlay] = useState(false);
+  const { toasts, showToast } = useToast();
   const { addRow: addWorkerRow, updateRow: updateWorkerRow, rows: workerRows = [], isOnline: workersOnline } = useOfflineTable('worker_attendance_records');
 
   const handleLogout = async () => {
@@ -29,26 +29,7 @@ const LogoutButton = () => {
         if (profile?.id) {
           setUserProfile(profile);
 
-          const toastId = showToast(
-            '',
-            'info',
-            0,
-            <ConfirmToast
-              message="End your day now? This will record sign-out."
-              yesText="Yes, End Day"
-              noText="No, Just Logout"
-              onYes={() => {
-                removeToast(toastId);
-                setRecordSignOut(true);
-                setShowBiometrics(true);
-              }}
-              onNo={() => {
-                removeToast(toastId);
-                setRecordSignOut(false);
-                setShowBiometrics(true);
-              }}
-            />
-          );
+          setShowChoiceOverlay(true);
           return;
         }
       }
@@ -155,6 +136,7 @@ const LogoutButton = () => {
 
   const handleBiometricCancel = () => {
     setShowBiometrics(false);
+    setShowChoiceOverlay(false);
     showToast('Sign-out cancelled.', 'info');
   };
 
@@ -182,6 +164,26 @@ const LogoutButton = () => {
           onCancel={handleBiometricCancel}
         />
       ) : null}
+
+      {showChoiceOverlay && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: 20, width: '92vw', maxWidth: 420, boxShadow: '0 12px 30px rgba(0,0,0,0.18)' }}>
+            <h3 style={{ marginTop: 0, marginBottom: 8 }}>End your day?</h3>
+            <p style={{ marginTop: 0, color: '#475569' }}>This will record a sign-out time for today. You can also continue without recording.</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn btn-secondary" onClick={() => { setShowChoiceOverlay(false); setShowBiometrics(false); }}>
+                Cancel
+              </button>
+              <button className="btn" onClick={() => { setShowChoiceOverlay(false); setRecordSignOut(false); setShowBiometrics(true); }}>
+                No, Just Logout
+              </button>
+              <button className="btn btn-primary" onClick={() => { setShowChoiceOverlay(false); setRecordSignOut(true); setShowBiometrics(true); }}>
+                Yes, End Day
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'inline-block' }}>
         <button

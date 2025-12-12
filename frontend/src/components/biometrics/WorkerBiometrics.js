@@ -121,7 +121,7 @@ export default function WorkerBiometrics({
       setLoading(true);
       setStatus("Loading models...");
 
-      const models = await loadFaceApiModels({ variant: "tiny", requireWifi: false });
+      const models = await loadFaceApiModels({ variant: "tiny", requireWifi: false, modelsUrl: "/models" });
       if (!models?.success) {
         const reason = models?.reason === "consent_required"
           ? "Enable biometric consent to proceed."
@@ -245,7 +245,7 @@ export default function WorkerBiometrics({
         }
         onSuccess?.({
           profileId: profile.id,
-          workerId: worker.id,
+          workerId: profile.worker_id || null,
           matchDistance: best.distance,
         });
       } else {
