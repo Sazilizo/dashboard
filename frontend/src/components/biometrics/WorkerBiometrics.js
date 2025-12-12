@@ -112,6 +112,7 @@ export default function WorkerBiometrics({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [matchDistance, setMatchDistance] = useState(null);
+  const [failedAttempts, setFailedAttempts] = useState(0);
 
   const overlayStyle = {
     position: "fixed",
@@ -140,16 +141,19 @@ export default function WorkerBiometrics({
       setError("");
       setLoading(true);
       setStatus("Loading models...");
+      console.log(`[WorkerBiometrics] Init started for profile.id=${profile.id}, worker_id=${profile.worker_id}`);
 
       const models = await loadFaceApiModels({ variant: "tiny", requireWifi: false, modelsUrl: "/models" });
       if (!models?.success) {
         const reason = models?.reason === "consent_required"
           ? "Enable biometric consent to proceed."
           : "Face models unavailable. Please connect and retry.";
+        console.warn(`[WorkerBiometrics] Model loading failed: ${models?.reason}`, models);
         setError(reason);
         setLoading(false);
         return;
       }
+      console.log(`[WorkerBiometrics] Models loaded successfully`);
 
       const faceapi = await getFaceApi();
 
@@ -158,7 +162,9 @@ export default function WorkerBiometrics({
       let cached = [];
       try {
         cached = await getCachedImagesByEntity(profile.id);
+        console.log(`[WorkerBiometrics] Cached images found: ${cached?.length || 0} for profile.id=${profile.id}`);
       } catch (e) {
+        console.warn(`[WorkerBiometrics] Failed to fetch cached images for profile.id=${profile.id}:`, e);
         cached = [];
       }
 
@@ -167,9 +173,11 @@ export default function WorkerBiometrics({
         blobs = cached.map((c) => ({ blob: c.blob, bucket: c.bucket, path: c.path }));
       } else {
         blobs = await downloadImagesForProfile(profile);
+        console.log(`[WorkerBiometrics] Downloaded ${blobs?.length || 0} images for profile.id=${profile.id}`);
       }
 
       if (!blobs.length) {
+        console.error(`[WorkerBiometrics] No reference photos found for profile.id=${profile.id}`);
         setError("No reference photo found for this account.");
         setLoading(false);
         return;
@@ -190,18 +198,21 @@ export default function WorkerBiometrics({
             .withFaceDescriptor();
           if (det?.descriptor) {
             descriptors.push(det.descriptor);
+            console.log(`[WorkerBiometrics] Descriptor extracted from reference photo (profile.id=${profile.id})`);
           }
         } catch (e) {
-          /* ignore individual failures */
+          console.warn(`[WorkerBiometrics] Failed to extract descriptor from reference photo:`, e);
         }
       }
 
       if (!descriptors.length) {
+        console.error(`[WorkerBiometrics] No valid descriptors extracted for profile.id=${profile.id}`);
         setError("Reference photo is unreadable. Try another device/photo.");
         setLoading(false);
         return;
       }
 
+      console.log(`[WorkerBiometrics] Built ${descriptors.length} face descriptors for profile.id=${profile.id}`);
       matcherRef.current = new faceapi.FaceMatcher(
         [new faceapi.LabeledFaceDescriptors(String(profile.id), descriptors)],
         MATCH_THRESHOLD
@@ -220,9 +231,11 @@ export default function WorkerBiometrics({
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
         }
+        console.log(`[WorkerBiometrics] Camera started successfully for profile.id=${profile.id}`);
         setStatus("Look straight at the camera");
         setLoading(false);
       } catch (camErr) {
+        console.error(`[WorkerBiometrics] Camera access failed for profile.id=${profile.id}:`, camErr);
         setError("Camera not available. Plug in a webcam or allow access.");
         setLoading(false);
       }
@@ -256,7 +269,10 @@ export default function WorkerBiometrics({
       if (!det?.descriptor) return;
 
       const best = matcherRef.current.findBestMatch(det.descriptor);
+      console.log(`[WorkerBiometrics] Face detected: label=${best.label}, distance=${best.distance.toFixed(4)}, threshold=${MATCH_THRESHOLD}, profile.id=${profile.id}`);
+      
       if (best.label !== "unknown" && best.distance <= MATCH_THRESHOLD) {
+        console.log(`[WorkerBiometrics] ✓ MATCH CONFIRMED: profile.id=${profile.id}, worker_id=${profile.worker_id}, distance=${best.distance.toFixed(4)}`);
         setMatchDistance(best.distance);
         setStatus("Match confirmed");
         matcherRef.current = null;
@@ -269,16 +285,26 @@ export default function WorkerBiometrics({
           matchDistance: best.distance,
         });
       } else {
-        setStatus("Face detected but not recognized");
+        const newAttempts = failedAttempts + 1;
+        console.log(`[WorkerBiometrics] Face detected but not recognized: distance=${best.distance.toFixed(4)}, attempt=${newAttempts}, profile.id=${profile.id}`);
+        setFailedAttempts(newAttempts);
+        setStatus(`Face detected but not recognized (attempt ${newAttempts}). Try again.`);
       }
     } catch (e) {
+      console.error(`[WorkerBiometrics] Detection error for profile.id=${profile.id}:`, e);
       setError("Detection failed. Please retry.");
     } finally {
       detectingRef.current = false;
     }
-  }, [error, loading, onSuccess, profile.id, profile.worker_id]);
+  }, [error, loading, onSuccess, profile.id, profile.worker_id, failedAttempts]);
 
   useRafLoop(detectFace, !loading && !error && !!matcherRef.current);
+
+  const handleRetry = () => {
+    console.log(`[WorkerBiometrics] Retry requested by user (profile.id=${profile.id}, failed_attempts=${failedAttempts})`);
+    setError("");
+    setStatus("Look straight at the camera");
+  };
 
   return (
     <div className="biometric-modal-overlay" style={overlayStyle}>
@@ -300,6 +326,9 @@ export default function WorkerBiometrics({
             <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>
             {!requireMatch && (
               <button className="btn btn-tertiary" onClick={() => onSkip?.()}>Skip</button>
+            )}
+            {error && (
+              <button className="btn btn-primary" onClick={handleRetry}>Retry</button>
             )}
           </div>
         </div>

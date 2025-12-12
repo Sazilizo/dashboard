@@ -68,10 +68,11 @@ const LogoutButton = () => {
       }
 
       if (!workerId) {
-        if (DEBUG) console.warn('No worker_id available for sign-out');
+        console.warn('[Logout] No worker_id available for sign-out');
         return;
       }
 
+      console.log(`[Logout] Signing out worker: worker_id=${workerId}, profile_id=${profileId}`);
       const nowIso = new Date().toISOString();
       const today = nowIso.split('T')[0];
 
@@ -82,24 +83,51 @@ const LogoutButton = () => {
 
         if (open) {
           let hours = null;
+          let mins = null;
+          let sessionDisplay = '';
           try {
             if (open.sign_in_time) {
-              const dur = new Date(nowIso) - new Date(open.sign_in_time);
-              hours = Number(((dur / (1000 * 60 * 60))).toFixed(2));
+              const signInTime = new Date(open.sign_in_time);
+              const signOutTime = new Date(nowIso);
+              const dur = signOutTime - signInTime;
+              hours = Math.floor(dur / (1000 * 60 * 60));
+              mins = Math.floor((dur % (1000 * 60 * 60)) / (1000 * 60));
+              const hoursDecimal = Number((dur / (1000 * 60 * 60)).toFixed(2));
+              sessionDisplay = `${hours}h ${mins}m`;
+              console.log(`[Logout] Session duration: ${sessionDisplay} (decimal: ${hoursDecimal}h), sign_in=${open.sign_in_time}, sign_out=${nowIso}`);
             }
-          } catch (e) { /* ignore */ }
+          } catch (e) {
+            console.warn('[Logout] Failed to calculate session duration:', e);
+          }
 
           // Use offline-aware updateRow which will queue when offline
-          await updateWorkerRow(open.id, { sign_out_time: nowIso, hours });
+          await updateWorkerRow(open.id, { sign_out_time: nowIso, hours: hours !== null ? Number(((new Date(nowIso) - new Date(open.sign_in_time)) / (1000 * 60 * 60)).toFixed(2)) : null });
 
-          if (workersOnline) showToast('Sign-out recorded.', 'success');
-          else showToast('Sign-out queued and will sync when online.', 'info');
+          const message = sessionDisplay 
+            ? `Sign-out recorded. Session: ${sessionDisplay}` 
+            : 'Sign-out recorded.';
+          if (workersOnline) showToast(message, 'success');
+          else showToast(message + ' (will sync when online)', 'info');
+          console.log(`[Logout] Sign-out successful: worker_id=${workerId}, attendance_id=${open.id}, ${message}`);
           return;
         }
 
         // No open row found for today — create a best-effort record combining info.signInTime if available
         const signInTime = info?.signInTime || null;
-        const hours = signInTime ? Number(((new Date(nowIso) - new Date(signInTime)) / (1000 * 60 * 60)).toFixed(2)) : null;
+        let hours = null;
+        let mins = null;
+        let sessionDisplay = '';
+        if (signInTime) {
+          try {
+            const dur = new Date(nowIso) - new Date(signInTime);
+            hours = Math.floor(dur / (1000 * 60 * 60));
+            mins = Math.floor((dur % (1000 * 60 * 60)) / (1000 * 60));
+            sessionDisplay = `${hours}h ${mins}m`;
+            console.log(`[Logout] New record session duration: ${sessionDisplay}, sign_in=${signInTime}, sign_out=${nowIso}`);
+          } catch (e) {
+            console.warn('[Logout] Failed to calculate session duration for new record:', e);
+          }
+        }
 
         const payload = {
           worker_id: workerId,
@@ -107,7 +135,7 @@ const LogoutButton = () => {
           date: today,
           sign_in_time: signInTime,
           sign_out_time: nowIso,
-          hours,
+          hours: hours !== null ? Number(((new Date(nowIso) - new Date(signInTime)) / (1000 * 60 * 60)).toFixed(2)) : null,
           status: 'present',
           description: 'biometric sign out',
           recorded_by: profileId,
@@ -115,15 +143,22 @@ const LogoutButton = () => {
 
         const res = await addWorkerRow(payload);
         // res may be the inserted row (online) or a queued descriptor (offline) — provide appropriate feedback
+        const message = sessionDisplay 
+          ? `Sign-out recorded. Session: ${sessionDisplay}` 
+          : 'Sign-out recorded.';
         if (workersOnline && res && !res.__error) {
-          showToast('Sign-out recorded.', 'success');
+          showToast(message, 'success');
+          console.log(`[Logout] New sign-out record created: worker_id=${workerId}, ${message}`);
         } else if (!workersOnline && res && (res.tempId || res.mutationKey || res.__queued)) {
-          showToast('Sign-out queued and will sync when online.', 'info');
+          showToast(message + ' (will sync when online)', 'info');
+          console.log(`[Logout] New sign-out record queued (offline): worker_id=${workerId}, ${message}`);
         } else if (res && res.__error) {
           showToast('Failed to record sign-out, but logging out.', 'warning');
+          console.warn('[Logout] Failed to create sign-out record:', res.__error);
         } else {
           // fallback message
-          showToast('Sign-out recorded.', 'success');
+          showToast(message, 'success');
+          console.log(`[Logout] Sign-out record created: worker_id=${workerId}, ${message}`);
         }
       } catch (err) {
         console.warn('Failed to record worker sign-out via onSignOut handler', err);
