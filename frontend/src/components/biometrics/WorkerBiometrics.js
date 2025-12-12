@@ -7,9 +7,12 @@ import {
   getCachedImagesByEntity,
 } from "../../utils/imageCache";
 
-const MATCH_THRESHOLD = 0.52;
+const MATCH_THRESHOLD = 0.65;
 const INPUT_SIZE = 192;
 const SCORE_THRESHOLD = 0.45;
+
+// Track distances for debugging
+let distanceHistory = [];
 
 function useRafLoop(callback, enabled) {
   const rafRef = useRef(null);
@@ -212,7 +215,7 @@ export default function WorkerBiometrics({
         return;
       }
 
-      console.log(`[WorkerBiometrics] Built ${descriptors.length} face descriptors for profile.id=${profile.id}`);
+      console.log(`[WorkerBiometrics] Built ${descriptors.length} face descriptors for profile.id=${profile.id}, match_threshold=${MATCH_THRESHOLD}`);
       matcherRef.current = new faceapi.FaceMatcher(
         [new faceapi.LabeledFaceDescriptors(String(profile.id), descriptors)],
         MATCH_THRESHOLD
@@ -269,10 +272,19 @@ export default function WorkerBiometrics({
       if (!det?.descriptor) return;
 
       const best = matcherRef.current.findBestMatch(det.descriptor);
-      console.log(`[WorkerBiometrics] Face detected: label=${best.label}, distance=${best.distance.toFixed(4)}, threshold=${MATCH_THRESHOLD}, profile.id=${profile.id}`);
+      distanceHistory.push(best.distance);
+      // Keep last 50 distances for analysis
+      if (distanceHistory.length > 50) distanceHistory.shift();
+      
+      const avgDistance = distanceHistory.reduce((a, b) => a + b, 0) / distanceHistory.length;
+      const minDistance = Math.min(...distanceHistory);
+      const maxDistance = Math.max(...distanceHistory);
+      
+      console.log(`[WorkerBiometrics] Face detected: label=${best.label}, distance=${best.distance.toFixed(4)}, threshold=${MATCH_THRESHOLD}, profile.id=${profile.id} | Stats: avg=${avgDistance.toFixed(4)}, min=${minDistance.toFixed(4)}, max=${maxDistance.toFixed(4)}, attempts=${distanceHistory.length}`);
       
       if (best.label !== "unknown" && best.distance <= MATCH_THRESHOLD) {
         console.log(`[WorkerBiometrics] ✓ MATCH CONFIRMED: profile.id=${profile.id}, worker_id=${profile.worker_id}, distance=${best.distance.toFixed(4)}`);
+        distanceHistory = []; // Reset on success
         setMatchDistance(best.distance);
         setStatus("Match confirmed");
         matcherRef.current = null;
@@ -286,7 +298,7 @@ export default function WorkerBiometrics({
         });
       } else {
         const newAttempts = failedAttempts + 1;
-        console.log(`[WorkerBiometrics] Face detected but not recognized: distance=${best.distance.toFixed(4)}, attempt=${newAttempts}, profile.id=${profile.id}`);
+        console.log(`[WorkerBiometrics] Face detected but not recognized: distance=${best.distance.toFixed(4)}, threshold=${MATCH_THRESHOLD}, attempt=${newAttempts}, profile.id=${profile.id}`);
         setFailedAttempts(newAttempts);
         setStatus(`Face detected but not recognized (attempt ${newAttempts}). Try again.`);
       }
@@ -320,6 +332,11 @@ export default function WorkerBiometrics({
             )}
             {error && (
               <p style={{ margin: "4px 0", color: "#dc2626", fontSize: "0.9rem" }}>{error}</p>
+            )}
+            {failedAttempts > 5 && !error && (
+              <p style={{ margin: "8px 0", padding: "8px", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 4, fontSize: "0.85rem", color: "#92400e" }}>
+                💡 If you continue to see "not recognized", the threshold may be too strict. Check browser console for distance stats. Current threshold: {MATCH_THRESHOLD}. Try lower lighting, closer range, or a different angle.
+              </p>
             )}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
