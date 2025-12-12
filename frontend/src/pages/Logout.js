@@ -13,7 +13,7 @@ const LogoutButton = () => {
   const [userProfile, setUserProfile] = useState(null);
   const [recordSignOut, setRecordSignOut] = useState(false);
   const [showChoiceOverlay, setShowChoiceOverlay] = useState(false);
-  const { toasts, showToast } = useToast();
+  const { toasts, showToast, removeToast } = useToast();
   const { addRow: addWorkerRow, updateRow: updateWorkerRow, rows: workerRows = [], isOnline: workersOnline } = useOfflineTable('worker_attendance_records');
 
   const handleLogout = async () => {

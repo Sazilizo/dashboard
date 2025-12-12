@@ -27,6 +27,27 @@ export default function LoginForm() {
   const location = useLocation();
   const { toasts, showToast, removeToast } = useToast();
 
+  const overlayStyle = {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(15,23,42,0.65)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 12,
+    zIndex: 9998,
+  };
+
+  const tokenModalStyle = {
+    maxWidth: "400px",
+    width: "92vw",
+    textAlign: "center",
+    background: "#fff",
+    borderRadius: 12,
+    padding: "20px 18px",
+    boxShadow: "0 12px 30px rgba(0,0,0,0.18)",
+  };
+
   const {
     addRow: addWorkerRow,
     rows: workerRows = [],
@@ -123,10 +144,10 @@ export default function LoginForm() {
 
       if (profile?.id) {
         const roleName = profile?.roles?.name?.toLowerCase?.() || "";
-        const isTestingRole = ["superuser", "admin", "hr", "viewer"].includes(roleName);
+        const skipBiometrics = ["guest", "viewer"].includes(roleName);
         cacheUserImages(profile.id).catch(() => {});
 
-        if (isTestingRole) {
+        if (skipBiometrics) {
           navigate(from, { replace: true });
           setLoading(false);
           return;
@@ -317,8 +338,8 @@ export default function LoginForm() {
 
       {/* Token Display Modal */}
       {showTokenDisplay && authToken && (
-        <div className="biometric-modal-overlay">
-          <div className="biometric-modal" style={{ maxWidth: '400px', textAlign: 'center' }}>
+        <div className="biometric-modal-overlay" style={overlayStyle}>
+          <div className="biometric-modal" style={tokenModalStyle}>
             <h2>🔐 Backup Authentication Code</h2>
             <p style={{ marginBottom: '1rem', color: '#666' }}>Use this code if you need to sign in on a device without a webcam.</p>
             <div style={{ background: '#f0f9ff', border: '2px solid #0284c7', borderRadius: '8px', padding: '1.5rem', marginBottom: '1rem' }}>
