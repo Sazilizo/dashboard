@@ -94,14 +94,21 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
 
   const MODEL_FILES = FILES_BY_VARIANT[variant] || FILES_BY_VARIANT.tiny;
 
-  let BASE_URL = modelsUrl || process.env.REACT_APP_MODELS_URL || '/models/';
-  BASE_URL = ensureSlash(BASE_URL);
+  // Prioritize /models/ first; if not provided explicitly, use it as the primary candidate.
+  // Fall back to env var only if /models/ is unreachable.
+  let candidatePaths;
+  if (modelsUrl) {
+    // Explicit modelsUrl provided; try it first, then fallbacks
+    candidatePaths = [ensureSlash(modelsUrl), '/models/', '/public/models/', 'models/', './models/'];
+  } else {
+    // No explicit URL; prioritize /models/, then env var, then other fallbacks
+    const envUrl = process.env.REACT_APP_MODELS_URL ? ensureSlash(process.env.REACT_APP_MODELS_URL) : null;
+    candidatePaths = ['/models/', ...(envUrl ? [envUrl] : []), '/public/models/', 'models/', './models/'];
+  }
 
-  // probe the provided base url first, then try a small set of fallbacks
-  const candidatePaths = [BASE_URL, '/models/', '/public/models/', 'models/', './models/'];
   let workingPath = null;
   for (const p of candidatePaths) {
-    const candidate = ensureSlash(p);
+    const candidate = p;
     const ok = await probeModelUrl(candidate, MODEL_FILES[0]);
     if (ok) {
       workingPath = candidate;

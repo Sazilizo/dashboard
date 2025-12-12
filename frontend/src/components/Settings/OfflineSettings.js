@@ -61,14 +61,12 @@ export default function OfflineSettings() {
   };
 
   const handleDownloadModelsNow = async () => {
-    if (!consent) {
-      alert('Please enable biometric consent first.');
-      return;
-    }
+    // Allow model downloads regardless of consent; consent gates enrollment, not file caching.
     setModelsStatus('downloading');
     setModelsErrorDetails(null);
     // Verify model base URL is reachable before attempting the full download
-    const baseUrl = getFaceApiModelsBaseUrl() || (process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/');
+    // Prioritize /models/ first, then env var
+    const baseUrl = getFaceApiModelsBaseUrl() || '/models/';
     const verify = async (base) => {
       if (!base) return { success: false, reason: 'no_base_url', details: 'No models base URL configured.' };
       const files = [
@@ -125,7 +123,6 @@ export default function OfflineSettings() {
       setModelsStatus('error');
       if (res.details) setModelsErrorDetails(res.details);
       if (res.reason === 'wifi_required') alert('Model download requires Wi‑Fi. Please connect to Wi‑Fi or disable the Wi‑Fi-only setting.');
-      else if (res.reason === 'consent_required') alert('Biometric consent required to download models.');
       else if (res.reason === 'models_unavailable') alert('Models are not available from the configured server.');
       else alert('Failed to download models: ' + (res.error || res.reason || 'unknown'));
     }
@@ -155,7 +152,7 @@ export default function OfflineSettings() {
 
   // Manual verification helper: probe manifest files at configured base URL
   const handleVerifyModels = async () => {
-    const baseUrl = getFaceApiModelsBaseUrl() || (process.env.REACT_APP_MODELS_URLS || process.env.REACT_APP_MODELS_URL || '/models/');
+    const baseUrl = getFaceApiModelsBaseUrl() || '/models/';
     setModelsStatus('verifying');
     setModelsErrorDetails(null);
     if (!baseUrl) {
