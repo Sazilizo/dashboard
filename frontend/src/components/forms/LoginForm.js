@@ -18,7 +18,7 @@ export default function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [showBiometrics, setShowBiometrics] = useState(false);
   const [userProfile, setUserProfile] = useState(null);
-  const [recordAttendance, setRecordAttendance] = useState(false);
+  const [recordAttendance, setRecordAttendance] = useState(null);
   const [authToken, setAuthToken] = useState(null);
   const [showTokenDisplay, setShowTokenDisplay] = useState(false);
   const [pendingCredentials, setPendingCredentials] = useState(null);
@@ -133,34 +133,11 @@ export default function LoginForm() {
         }
 
         setPendingCredentials({ email: form.email.trim(), password: form.password });
-
-        const openBiometrics = async (profile, record) => {
-          setUserProfile(profile);
-          setRecordAttendance(record);
-          setShowBiometrics(true);
-        };
-
-        const toastId = showToast(
-          "",
-          "info",
-          0,
-          <ConfirmToast
-            message="Sign in for work? This will record your time."
-            yesText="Yes, Record Time"
-            noText="No, Just Login"
-            onYes={() => {
-              removeToast(toastId);
-              setLoading(false);
-              openBiometrics(profile, true).then(() => showToast("Please complete biometric authentication (or continue without it).", "info", 5000));
-            }}
-            onNo={() => {
-              removeToast(toastId);
-              setLoading(false);
-              openBiometrics(profile, false).then(() => showToast("Please complete biometric authentication (or continue without it).", "info", 5000));
-            }}
-          />
-        );
-
+        setUserProfile(profile);
+        setRecordAttendance(null);
+        setShowBiometrics(true);
+        setLoading(false);
+        showToast("Look at the camera to continue.", "info", 4000);
         return;
       } else {
         navigate(from, { replace: true });
@@ -172,23 +149,10 @@ export default function LoginForm() {
     }
   };
 
-  const handleBiometricComplete = async (entityId = null, meta = {}) => {
-    const profileId = entityId || userProfile?.id;
-    const workerId = meta?.workerId || userProfile?.worker_id || null;
-
-    if (profileId) {
-      const token = generateAuthToken();
-      await storeAuthToken(profileId, token, 60);
-      setAuthToken(token);
-      setShowTokenDisplay(true);
-      setTimeout(() => setShowTokenDisplay(false), 30000);
-    }
-
-    if (recordAttendance && workerId) {
+  const finalizeLogin = async (profileId, workerId, shouldRecord) => {
+    if (shouldRecord && workerId) {
       await recordWorkerSignIn(workerId, userProfile?.school_id);
-    }
-
-    if (profileId && recordAttendance && !workerId) {
+    } else if (profileId && shouldRecord && !workerId) {
       const nowIso = new Date().toISOString();
       const today = nowIso.split("T")[0];
 
@@ -270,7 +234,7 @@ export default function LoginForm() {
           showToast("Attendance recording failed, but you are logged in.", "warning");
         }
       }
-    } else if (profileId && !recordAttendance) {
+    } else if (profileId && !shouldRecord) {
       showToast("Sign-in successful! (Time not recorded)", "success");
     }
 
@@ -296,8 +260,49 @@ export default function LoginForm() {
 
     setPendingCredentials(null);
     setShowBiometrics(false);
-
     setTimeout(() => navigate(from, { replace: true }), 800);
+  };
+
+  const handleBiometricComplete = async (entityId = null, meta = {}) => {
+    const profileId = entityId || userProfile?.id;
+    const workerId = meta?.workerId || userProfile?.worker_id || null;
+
+    if (profileId) {
+      const token = generateAuthToken();
+      await storeAuthToken(profileId, token, 60);
+      setAuthToken(token);
+      setShowTokenDisplay(true);
+      setTimeout(() => setShowTokenDisplay(false), 30000);
+    }
+
+    const proceed = (choice) => {
+      setRecordAttendance(choice);
+      finalizeLogin(profileId, workerId, choice);
+    };
+
+    if (recordAttendance === null) {
+      const toastId = showToast(
+        "",
+        "info",
+        0,
+        <ConfirmToast
+          message="Record your time for today?"
+          yesText="Yes, Record Time"
+          noText="No, Just Sign In"
+          onYes={() => {
+            removeToast(toastId);
+            proceed(true);
+          }}
+          onNo={() => {
+            removeToast(toastId);
+            proceed(false);
+          }}
+        />
+      );
+      return;
+    }
+
+    finalizeLogin(profileId, workerId, recordAttendance);
   };
 
   const handleBiometricCancel = () => {
@@ -329,12 +334,11 @@ export default function LoginForm() {
       {showBiometrics && userProfile ? (
         <WorkerBiometrics
           profile={userProfile}
-          requireMatch={recordAttendance}
+          requireMatch={true}
           onSuccess={(payload) =>
             handleBiometricComplete(payload?.profileId || userProfile.id, payload)
           }
           onCancel={handleBiometricCancel}
-          onSkip={() => handleBiometricComplete(userProfile.id, { workerId: userProfile?.worker_id })}
         />
       ) : (
         <div className="login-container">

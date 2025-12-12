@@ -24,6 +24,7 @@ import Register from "./pages/Register";
 import Login from "./pages/Login";
 import Logout from "./pages/Logout";
 import LandingPage from "./pages/LandingPage";
+import Kiosk from "./pages/Kiosk";
 import SessionMarkingForm from "./components/forms/SessionMarkingForm";
 import Users from "./components/lists/Users";
 import OfflineSettings from "./components/Settings/OfflineSettings";
@@ -48,6 +49,11 @@ const router = createBrowserRouter([
         <Login />
       </ProtectedRoute>
     ),
+    errorElement: <ErrorBoundary />,
+  },
+  {
+    path: "/kiosk",
+    element: <Kiosk />,
     errorElement: <ErrorBoundary />,
   },
   { 

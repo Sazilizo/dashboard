@@ -245,7 +245,7 @@ export default function WorkerBiometrics({
         }
         onSuccess?.({
           profileId: profile.id,
-          workerId: profile.worker_id,
+          workerId: worker.id,
           matchDistance: best.distance,
         });
       } else {
