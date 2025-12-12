@@ -116,7 +116,8 @@ export default function OfflineSettings() {
       return;
     }
 
-    const res = await loadFaceApiModels({ variant: 'tiny', requireWifi: wifiOnly, requireConsent: true, modelsUrl: baseUrl });
+    // Load models from local public/models regardless of consent (consent gates enrollments, not downloads)
+    const res = await loadFaceApiModels({ variant: 'tiny', requireWifi: wifiOnly, requireConsent: false, modelsUrl: baseUrl });
     if (res.success) {
       setModelsStatus('loaded');
       alert('Face models downloaded and cached. Biometric features are ready.');

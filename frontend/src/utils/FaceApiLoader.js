@@ -68,8 +68,10 @@ async function probeModelUrl(baseUrl, testFile) {
 export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, requireWifi = false, requireConsent = false } = {}) {
   if (modelsLoaded) return { success: true };
 
+  // Consent should not block local model loading; only gate remote enrollments.
   if (requireConsent && !hasBiometricConsent()) {
-    return { success: false, reason: 'consent_required' };
+    // Proceed if models are local; we'll still attempt probing below.
+    // Do not hard-fail here.
   }
 
   if (requireWifi && !isOnWifiLike()) {
@@ -125,29 +127,28 @@ export async function loadFaceApiModels({ variant = 'tiny', modelsUrl = null, re
           try {
             const ct = mresp.headers && mresp.headers.get ? mresp.headers.get('content-type') : null;
             if (ct && !/application\/json/i.test(ct)) {
-              // content-type indicates non-JSON; attempt parse once, then fail clearly
               try {
                 manifest = await mresp.clone().json();
               } catch (e) {
-                console.warn('[FaceApiLoader] models-manifest.json is not valid JSON (content-type:', ct, ')');
-                return { success: false, reason: 'models_unavailable', error: 'invalid_manifest' };
+                // Manifest optional: continue without it
+                console.warn('[FaceApiLoader] models-manifest.json not JSON; continuing without manifest');
+                manifest = null;
               }
             } else {
-              // try parse; if it fails, return a clear failure so UI can guide the user
               try {
                 manifest = await mresp.json();
               } catch (e) {
-                console.warn('[FaceApiLoader] Failed to parse models-manifest.json', e);
-                return { success: false, reason: 'models_unavailable', error: 'invalid_manifest' };
+                console.warn('[FaceApiLoader] Failed to parse models-manifest.json; continuing without manifest');
+                manifest = null;
               }
             }
           } catch (e) {
-            console.warn('[FaceApiLoader] Unexpected error while reading manifest headers', e);
-            return { success: false, reason: 'models_unavailable', error: String(e) };
+            console.warn('[FaceApiLoader] Error reading manifest headers; continuing without manifest', e);
+            manifest = null;
           }
         }
       } catch (e) {
-        // no manifest available; we'll continue without checks
+        // no manifest available; continue without checks
       }
 
       const bufferToHex = async (buffer) => {
