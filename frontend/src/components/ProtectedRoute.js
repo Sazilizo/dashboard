@@ -51,8 +51,14 @@ export default function ProtectedRoute({ children, redirectIfAuthenticated = fal
 
   // If route should redirect when authenticated (e.g., login page)
   if (redirectIfAuthenticated && user) {
-    // User is already logged in, redirect to dashboard
-    return <Navigate to="/dashboard" replace />;
+    // Allow staying on login/register while biometric 2FA is pending
+    const biometricPending = (() => {
+      try { return sessionStorage.getItem('biometric_pending') === '1'; } catch { return false; }
+    })();
+
+    if (!biometricPending) {
+      return <Navigate to="/dashboard" replace />;
+    }
   }
 
   // If route requires authentication but user is not logged in
