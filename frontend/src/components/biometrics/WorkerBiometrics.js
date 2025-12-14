@@ -49,24 +49,6 @@ const convertToPlainArrays = (descriptors) => {
   });
 };
 
-function useRafLoop(callback, enabled) {
-  const rafRef = useRef(null);
-
-  useEffect(() => {
-    if (!enabled) return undefined;
-
-    const tick = () => {
-      callback();
-      rafRef.current = requestAnimationFrame(tick);
-    };
-
-    rafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    };
-  }, [callback, enabled]);
-}
-
 async function blobToImage(blob, faceapi) {
   const img = await faceapi.bufferToImage(blob);
   return img;
@@ -276,8 +258,14 @@ export default function WorkerBiometrics({
         log(`Requesting camera stream...`);
         setStatus("Requesting camera...");
         
+        // Low-end device optimization: reduced resolution and frame rate
         const cameraPromise = navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+          video: { 
+            facingMode: "user", 
+            width: { ideal: 320, max: 480 }, 
+            height: { ideal: 240, max: 360 },
+            frameRate: { ideal: 15, max: 24 }
+          },
           audio: false,
         }).catch(err => {
           log(`❌ Camera request failed: ${err.message}`);
@@ -314,11 +302,11 @@ export default function WorkerBiometrics({
         setStatus("Loading face data...");
         setLoading(false); // <-- Hide loading screen NOW that camera is streaming
         
-        // Start timer
+        // Start timer (update every 250ms for low-end devices)
         startTimeRef.current = Date.now();
         timerRef.current = setInterval(() => {
           setElapsedTime(Math.floor((Date.now() - startTimeRef.current) / 100) / 10);
-        }, 100);
+        }, 250);
 
         // NOW load descriptors/models in background while user sees live video
         const cachedDescriptors = await descriptorLoadPromise;
@@ -505,7 +493,13 @@ export default function WorkerBiometrics({
     }
   }, [error, loading, onSuccess, profile.id, profile.worker_id, failedAttempts]);
 
-  useRafLoop(detectFace, !loading && !error && !!matcherRef.current);
+  // Use slower detection loop for low-end devices (500ms interval instead of RAF)
+  useEffect(() => {
+    if (loading || error || capturedPhoto || !matcherRef.current) return;
+    
+    const interval = setInterval(detectFace, 500); // 2 FPS instead of 60 FPS for low-end devices
+    return () => clearInterval(interval);
+  }, [loading, error, capturedPhoto, detectFace]);
 
   // Capture a photo from the video stream
   const capturePhoto = useCallback(() => {
@@ -535,17 +529,20 @@ export default function WorkerBiometrics({
       canvas.width = videoWidth;
       canvas.height = videoHeight;
       
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: false });
       if (!ctx) {
         log(`❌ Failed to get canvas context`);
         setError('Canvas error. Please try again.');
         return;
       }
       
+      // Use lower quality for smaller memory footprint
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'low';
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      // Convert to data URL immediately (more reliable than toBlob)
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      // Convert to data URL with lower quality for low-end devices (0.7 instead of 0.92)
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
       if (!dataUrl) {
         log(`❌ Failed to generate data URL`);
         setError('Failed to capture. Please try again.');
@@ -561,12 +558,18 @@ export default function WorkerBiometrics({
         timerRef.current = null;
       }
       
-      // Stop camera stream to save resources
+      // Stop camera stream to save resources and free memory
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => {
           track.stop();
           log(`Stopped track: ${track.kind}`);
         });
+        streamRef.current = null;
+      }
+      
+      // Clear video source to free memory
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
       }
       
       log(`✓ Capture complete`);
@@ -668,10 +671,15 @@ export default function WorkerBiometrics({
     setStatus("Starting camera...");
     setElapsedTime(0);
     
-    // Restart camera
+    // Restart camera with low-end device settings
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        video: { 
+          facingMode: "user", 
+          width: { ideal: 320, max: 480 }, 
+          height: { ideal: 240, max: 360 },
+          frameRate: { ideal: 15, max: 24 }
+        },
         audio: false,
       });
       streamRef.current = stream;
@@ -681,11 +689,11 @@ export default function WorkerBiometrics({
       }
       setStatus("Look straight at the camera");
       
-      // Restart timer
+      // Restart timer (update every 250ms for low-end devices)
       startTimeRef.current = Date.now();
       timerRef.current = setInterval(() => {
         setElapsedTime((Date.now() - startTimeRef.current) / 1000);
-      }, 100);
+      }, 250);
     } catch (err) {
       console.error(`[WorkerBiometrics] Failed to restart camera:`, err);
       setError("Camera not available");
@@ -740,7 +748,15 @@ export default function WorkerBiometrics({
             <>
               <video
                 ref={videoRef}
-                style={{ width: "100%", height: "100%", objectFit: "cover", background: "#0f172a" }}
+                style={{ 
+                  width: "100%", 
+                  height: "100%", 
+                  objectFit: "cover", 
+                  background: "#0f172a",
+                  transform: "translateZ(0)", // Hardware acceleration
+                  backfaceVisibility: "hidden", // Prevent unnecessary repaints
+                  willChange: "auto" // Let browser optimize
+                }}
                 playsInline
                 muted
               />
