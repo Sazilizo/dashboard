@@ -198,6 +198,12 @@ export default function WorkerBiometrics({
     zIndex: 9998,
   };
 
+  // Debug logging helper
+  const log = (msg) => {
+    const timestamp = new Date().toLocaleTimeString();
+    console.log(`[${timestamp}] [WorkerBiometrics] ${msg}`);
+  };
+
   const modalStyle = {
     width: "92vw",
     maxWidth: 520,
@@ -209,173 +215,168 @@ export default function WorkerBiometrics({
 
   useEffect(() => {
     let cancelled = false;
+    let cleanupDone = false;
 
     async function init() {
-      setError("");
-      setLoading(true);
-      setStatus("Preparing camera...");
-      console.log(`[WorkerBiometrics] Init started for profile.id=${profile.id}, worker_id=${profile.worker_id}`);
+      log(`Init started for profile.id=${profile.id}`);
+      
+      try {
+        // CRITICAL OPTIMIZATION: Request camera FIRST, do other stuff in background
+        // This gets the permission prompt shown immediately
+        log(`Requesting camera stream...`);
+        setStatus("Requesting camera...");
+        
+        const cameraPromise = navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false,
+        }).catch(err => {
+          log(`❌ Camera request failed: ${err.message}`);
+          throw err;
+        });
 
-      // Fast path: Try to load cached descriptors first (skip model load and image processing)
-      const cachedDescriptors = await getDescriptor(profile.id);
-      if (cachedDescriptors && cachedDescriptors.length > 0) {
-        console.log(`[WorkerBiometrics] ⚡ Using cached descriptors for profile.id=${profile.id} (count=${cachedDescriptors.length})`);
-        const faceapi = await getFaceApi();
-        // Convert cached arrays back to Float32Array for Face-API
-        const float32Descriptors = convertToFloat32Arrays(cachedDescriptors);
-        matcherRef.current = new faceapi.FaceMatcher(
-          [new faceapi.LabeledFaceDescriptors(String(profile.id), float32Descriptors)],
-          MATCH_THRESHOLD
-        );
+        // Start parallel descriptor loading (don't block on it)
+        const descriptorLoadPromise = getDescriptor(profile.id).catch(() => null);
 
-        if (cancelled) return;
-
-        setStatus("Starting camera...");
+        // Now get the camera stream - this is what shows up first
+        let stream;
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-            audio: false,
-          });
-          streamRef.current = stream;
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-            await videoRef.current.play();
-          }
-          console.log(`[WorkerBiometrics] ⚡ Camera started (cached descriptors) for profile.id=${profile.id}`);
-          setStatus("Look straight at the camera");
-          setLoading(false);
-          // Start timer
-          startTimeRef.current = Date.now();
-          timerRef.current = setInterval(() => {
-            setElapsedTime(Math.floor((Date.now() - startTimeRef.current) / 100) / 10);
-          }, 100);
+          stream = await cameraPromise;
         } catch (camErr) {
-          console.error(`[WorkerBiometrics] Camera access failed for profile.id=${profile.id}:`, camErr);
+          log(`❌ Camera unavailable`);
           setError("Camera not available. Plug in a webcam or allow access.");
-          setLoading(false);
-        }
-        return;
-      }
-
-      // Slow path: Load models (reuse session cache if available)
-      setStatus("Loading models...");
-      if (!sessionModelsLoaded) {
-        const models = await loadFaceApiModels({ variant: "tiny", requireWifi: false, modelsUrl: "/models" });
-        if (!models?.success) {
-          const reason = models?.reason === "consent_required"
-            ? "Enable biometric consent to proceed."
-            : "Face models unavailable. Please connect and retry.";
-          console.warn(`[WorkerBiometrics] Model loading failed: ${models?.reason}`, models);
-          setError(reason);
           setLoading(false);
           return;
         }
-        sessionModelsLoaded = true;
-        sessionFaceApi = await getFaceApi();
-        console.log(`[WorkerBiometrics] Models loaded and cached for session`);
-      } else {
-        console.log(`[WorkerBiometrics] Reusing session-cached models`);
-      }
 
-      if (cancelled) return;
-
-      const faceapi = sessionFaceApi;
-
-      // Collect images (cached first, then download if available)
-      setStatus("Loading reference photos...");
-      let cached = [];
-      try {
-        cached = await getCachedImagesByEntity(profile.id);
-        console.log(`[WorkerBiometrics] Cached images found: ${cached?.length || 0} for profile.id=${profile.id}`);
-      } catch (e) {
-        console.warn(`[WorkerBiometrics] Failed to fetch cached images for profile.id=${profile.id}:`, e);
-        cached = [];
-      }
-
-      let blobs = [];
-      if (cached?.length) {
-        blobs = cached.map((c) => ({ blob: c.blob, bucket: c.bucket, path: c.path }));
-      } else {
-        blobs = await downloadImagesForProfile(profile);
-        console.log(`[WorkerBiometrics] Downloaded ${blobs?.length || 0} images for profile.id=${profile.id}`);
-      }
-
-      if (!blobs.length) {
-        console.error(`[WorkerBiometrics] No reference photos found for profile.id=${profile.id}`);
-        setError("No reference photo found for this account.");
-        setLoading(false);
-        return;
-      }
-
-      if (cancelled) return;
-
-      setStatus("Building face signatures...");
-      const descriptors = [];
-
-      for (const entry of blobs) {
-        try {
-          const img = await blobToImage(entry.blob, faceapi);
-          const det = await faceapi
-            .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({
-              inputSize: INPUT_SIZE,
-              scoreThreshold: SCORE_THRESHOLD,
-            }))
-            .withFaceLandmarks()
-            .withFaceDescriptor();
-          if (det?.descriptor) {
-            descriptors.push(det.descriptor);
-            console.log(`[WorkerBiometrics] Descriptor extracted from reference photo (profile.id=${profile.id})`);
-          }
-        } catch (e) {
-          console.warn(`[WorkerBiometrics] Failed to extract descriptor from reference photo:`, e);
+        if (cancelled) {
+          stream?.getTracks().forEach(t => t.stop());
+          return;
         }
-      }
 
-      if (!descriptors.length) {
-        console.error(`[WorkerBiometrics] No valid descriptors extracted for profile.id=${profile.id}`);
-        setError("Reference photo is unreadable. Try another device/photo.");
-        setLoading(false);
-        return;
-      }
-
-      // Cache descriptors for future use (async, fire and forget)
-      // Convert Float32Array to plain arrays for storage
-      const plainArrays = convertToPlainArrays(descriptors);
-      setDescriptor(profile.id, plainArrays).catch((e) => {
-        console.warn(`[WorkerBiometrics] Failed to cache descriptors for profile.id=${profile.id}:`, e);
-      });
-
-      console.log(`[WorkerBiometrics] Built ${descriptors.length} face descriptors for profile.id=${profile.id}, match_threshold=${MATCH_THRESHOLD}`);
-      matcherRef.current = new faceapi.FaceMatcher(
-        [new faceapi.LabeledFaceDescriptors(String(profile.id), descriptors)],
-        MATCH_THRESHOLD
-      );
-
-      if (cancelled) return;
-
-      setStatus("Starting camera...");
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: false,
-        });
+        // Got camera stream! Show it immediately
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
         }
-        console.log(`[WorkerBiometrics] Camera started successfully for profile.id=${profile.id}`);
-        setStatus("Look straight at the camera");
-        setLoading(false);
+        
+        log(`✓ Camera stream active`);
+        setStatus("Loading face data...");
+        setLoading(false); // <-- Hide loading screen NOW that camera is streaming
+        
         // Start timer
         startTimeRef.current = Date.now();
         timerRef.current = setInterval(() => {
-          setElapsedTime((Date.now() - startTimeRef.current) / 1000);
+          setElapsedTime(Math.floor((Date.now() - startTimeRef.current) / 100) / 10);
         }, 100);
-      } catch (camErr) {
-        console.error(`[WorkerBiometrics] Camera access failed for profile.id=${profile.id}:`, camErr);
-        setError("Camera not available. Plug in a webcam or allow access.");
-        setLoading(false);
+
+        // NOW load descriptors/models in background while user sees live video
+        const cachedDescriptors = await descriptorLoadPromise;
+        if (cancelled) return;
+
+        if (cachedDescriptors && cachedDescriptors.length > 0) {
+          log(`✓ Loaded cached descriptors (count=${cachedDescriptors.length})`);
+          const faceapi = await getFaceApi();
+          const float32Descriptors = convertToFloat32Arrays(cachedDescriptors);
+          matcherRef.current = new faceapi.FaceMatcher(
+            [new faceapi.LabeledFaceDescriptors(String(profile.id), float32Descriptors)],
+            MATCH_THRESHOLD
+          );
+          setStatus("Look straight at the camera");
+          log(`✓ Ready for facial recognition`);
+          return;
+        }
+
+        // No cached descriptors - load models and build them
+        log(`No cached descriptors, loading models...`);
+        setStatus("Loading face models...");
+        
+        if (!sessionModelsLoaded) {
+          const models = await loadFaceApiModels({ variant: "tiny", requireWifi: false, modelsUrl: "/models" });
+          if (!models?.success) {
+            const reason = models?.reason === "consent_required"
+              ? "Enable biometric consent to proceed."
+              : "Face models unavailable. Please connect and retry.";
+            log(`❌ Model loading failed: ${models?.reason}`);
+            setError(reason);
+            return;
+          }
+          sessionModelsLoaded = true;
+          sessionFaceApi = await getFaceApi();
+          log(`✓ Models loaded`);
+        } else {
+          log(`✓ Using session-cached models`);
+        }
+
+        if (cancelled) return;
+
+        // Now download reference images and extract descriptors
+        log(`Downloading reference images...`);
+        setStatus("Processing reference photos...");
+        const { imageBlobs } = await downloadImagesForProfile(profile);
+
+        if (cancelled) return;
+
+        if (!imageBlobs || imageBlobs.length === 0) {
+          log(`⚠️ No reference images found`);
+          setError("No reference photos available. Upload a profile photo first.");
+          return;
+        }
+
+        log(`Extracting descriptors from ${imageBlobs.length} photos...`);
+        setStatus("Extracting face data...");
+        const faceapi = await getFaceApi();
+        const descriptors = [];
+
+        for (const entry of imageBlobs) {
+          try {
+            const img = await blobToImage(entry.blob, faceapi);
+            const det = await faceapi
+              .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({
+                inputSize: INPUT_SIZE,
+                scoreThreshold: SCORE_THRESHOLD,
+              }))
+              .withFaceLandmarks()
+              .withFaceDescriptor();
+            if (det?.descriptor) {
+              descriptors.push(det.descriptor);
+              log(`✓ Extracted descriptor`);
+            }
+          } catch (e) {
+            log(`⚠️ Failed to extract descriptor: ${e.message}`);
+          }
+        }
+
+        if (cancelled) return;
+
+        if (!descriptors.length) {
+          log(`❌ No valid descriptors extracted`);
+          setError("Reference photo is unreadable. Try another device/photo.");
+          return;
+        }
+
+        // Cache descriptors
+        const plainArrays = convertToPlainArrays(descriptors);
+        setDescriptor(profile.id, plainArrays).catch((e) => {
+          log(`⚠️ Failed to cache descriptors: ${e.message}`);
+        });
+
+        log(`✓ Built ${descriptors.length} descriptors`);
+        matcherRef.current = new faceapi.FaceMatcher(
+          [new faceapi.LabeledFaceDescriptors(String(profile.id), descriptors)],
+          MATCH_THRESHOLD
+        );
+        
+        setStatus("Look straight at the camera");
+        log(`✓ Ready for facial recognition`);
+
+      } catch (err) {
+        log(`❌ Init error: ${err.message}`);
+        console.error(err);
+        if (!cancelled) {
+          setError(err.message || "Initialization failed");
+          setLoading(false);
+        }
       }
     }
 
@@ -391,7 +392,6 @@ export default function WorkerBiometrics({
       }
     };
   }, [profile]);
-
   const detectFace = useCallback(async () => {
     // Early exit conditions: skip all checks if not ready
     if (!matcherRef.current || !videoRef.current || loading || error) return;
@@ -459,14 +459,19 @@ export default function WorkerBiometrics({
 
   // Capture a photo from the video stream
   const capturePhoto = useCallback(() => {
+    log(`📸 Capture button clicked`);
+    
     if (!videoRef.current || !canvasRef.current) {
-      console.warn('[WorkerBiometrics] Video or canvas not ready for capture');
+      log(`❌ Missing video or canvas ref`);
+      setError('Camera not initialized. Please wait and try again.');
       return;
     }
 
     // Check if video has valid dimensions
-    if (!videoRef.current.videoWidth || !videoRef.current.videoHeight) {
-      console.warn('[WorkerBiometrics] Video dimensions not available yet');
+    const { videoWidth, videoHeight } = videoRef.current;
+    if (!videoWidth || !videoHeight) {
+      log(`❌ Video dimensions invalid: ${videoWidth}x${videoHeight}`);
+      setError('Video not ready. Please try again.');
       return;
     }
 
@@ -474,18 +479,31 @@ export default function WorkerBiometrics({
       const canvas = canvasRef.current;
       const video = videoRef.current;
       
+      log(`Drawing video to canvas: ${videoWidth}x${videoHeight}`);
+      
       // Set canvas dimensions to match video
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+      canvas.width = videoWidth;
+      canvas.height = videoHeight;
       
       const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        log(`❌ Failed to get canvas context`);
+        setError('Canvas error. Please try again.');
+        return;
+      }
+      
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       
       // Convert to data URL immediately (more reliable than toBlob)
       const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-      setCapturedPhoto(dataUrl);
+      if (!dataUrl) {
+        log(`❌ Failed to generate data URL`);
+        setError('Failed to capture. Please try again.');
+        return;
+      }
       
-      console.log(`[WorkerBiometrics] ✓ Photo captured: ${canvas.width}x${canvas.height}`);
+      log(`✓ Photo captured and converted to data URL`);
+      setCapturedPhoto(dataUrl);
       
       // Stop timer when photo is captured
       if (timerRef.current) {
@@ -495,11 +513,17 @@ export default function WorkerBiometrics({
       
       // Stop camera stream to save resources
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current.getTracks().forEach(track => {
+          track.stop();
+          log(`Stopped track: ${track.kind}`);
+        });
       }
+      
+      log(`✓ Capture complete`);
     } catch (e) {
-      console.error(`[WorkerBiometrics] Failed to capture photo:`, e);
-      setError('Failed to capture photo. Please try again.');
+      log(`❌ Capture failed: ${e.message}`);
+      console.error(`[WorkerBiometrics] Capture error:`, e);
+      setError(`Failed to capture photo: ${e.message}`);
     }
   }, []);
 
@@ -625,7 +649,7 @@ export default function WorkerBiometrics({
           <div>
             <h3 style={{ margin: 0 }}>Verify your face</h3>
             <p style={{ margin: "4px 0", color: "#4b5563" }}>{status}</p>
-            {!loading && !capturedPhoto && elapsedTime > 0 && (
+            {!capturedPhoto && elapsedTime >= 0.1 && (
               <p style={{ margin: "4px 0", color: "#6b7280", fontSize: "0.85rem", fontFamily: "monospace" }}>
                 ⏱️ {elapsedTime.toFixed(1)}s
               </p>
