@@ -74,93 +74,143 @@ async function blobToImage(blob, faceapi) {
 
 async function downloadImagesForProfile(profile) {
   const blobs = [];
-
   const workerId = profile?.worker_id;
-  const downloadPromises = [];
+  
+  // Determine route context
+  const currentPath = window.location.pathname;
+  const isWorkerContext = currentPath.includes('/workers') || currentPath.includes('/kiosk');
+  
+  console.log(`[WorkerBiometrics] Download context: route=${currentPath}, isWorkerContext=${isWorkerContext}, workerId=${workerId}, profileId=${profile.id}`);
 
-  // Worker uploads
-  if (workerId) {
-    const workerPath = `workers/${workerId}/profile-picture`;
-    downloadPromises.push(
-      downloadWithTimeout(
-        (async () => {
-          try {
-            const { data: workerFiles } = await api.storage
-              .from("worker-uploads")
-              .list(workerPath);
+  // Helper: Download from worker-uploads bucket
+  const downloadWorkerUploads = async () => {
+    if (!workerId) return [];
+    const workerBlobs = [];
+    try {
+      const workerPath = `workers/${workerId}/profile-picture`;
+      const { data: workerFiles } = await api.storage
+        .from("worker-uploads")
+        .list(workerPath);
 
-            const imageFiles = (workerFiles || []).filter((f) =>
-              /\.(jpg|jpeg|png|webp)$/i.test(f.name)
-            );
+      const imageFiles = (workerFiles || []).filter((f) =>
+        /\.(jpg|jpeg|png|webp)$/i.test(f.name)
+      );
 
-            for (const file of imageFiles) {
-              const fullPath = `${workerPath}/${file.name}`;
-              try {
-                const { data: blob } = await api.storage
-                  .from("worker-uploads")
-                  .download(fullPath);
-                if (blob) {
-                  blobs.push({ blob, bucket: "worker-uploads", path: fullPath });
-                  await cacheImage("worker-uploads", fullPath, blob, profile.id, {
-                    source: "worker-uploads",
-                    workerId,
-                  });
-                }
-              } catch (e) {
-                console.warn(`[WorkerBiometrics] Failed to download ${file.name}:`, e);
-              }
-            }
-          } catch (e) {
-            console.warn(`[WorkerBiometrics] Worker uploads unavailable`, e);
-          }
-        })(),
-        2000
-      )
-    );
-  }
+      console.log(`[WorkerBiometrics] Found ${imageFiles.length} files in worker-uploads/${workerPath}`);
 
-  // Profile avatars (parallel download with timeout)
-  downloadPromises.push(
-    downloadWithTimeout(
-      (async () => {
+      for (const file of imageFiles) {
+        const fullPath = `${workerPath}/${file.name}`;
         try {
-          const { data: avatarFiles } = await api.storage
-            .from("profile-avatars")
-            .list("");
-          const imageFiles = (avatarFiles || []).filter((f) =>
-            /\.(jpg|jpeg|png|webp)$/i.test(f.name)
-          );
-          const matches = imageFiles.filter((f) => {
-            const name = f.name.replace(/\.(jpg|jpeg|png|webp)$/i, "");
-            return name === String(profile.id);
-          });
-
-          for (const file of matches) {
-            try {
-              const { data: blob } = await api.storage
-                .from("profile-avatars")
-                .download(file.name);
-              if (blob) {
-                blobs.push({ blob, bucket: "profile-avatars", path: file.name });
-                await cacheImage("profile-avatars", file.name, blob, profile.id, {
-                  source: "profile-avatars",
-                });
-              }
-            } catch (e) {
-              console.warn(`[WorkerBiometrics] Failed to download avatar:`, e);
-            }
+          const { data: blob } = await api.storage
+            .from("worker-uploads")
+            .download(fullPath);
+          if (blob) {
+            workerBlobs.push({ blob, bucket: "worker-uploads", path: fullPath });
+            await cacheImage("worker-uploads", fullPath, blob, profile.id, {
+              source: "worker-uploads",
+              workerId,
+            });
+            console.log(`[WorkerBiometrics] ✓ Downloaded: worker-uploads/${fullPath}`);
           }
         } catch (e) {
-          console.warn(`[WorkerBiometrics] Profile avatars unavailable`, e);
+          console.warn(`[WorkerBiometrics] Failed to download ${file.name}:`, e);
         }
-      })(),
-      2000
-    )
-  );
+      }
+    } catch (e) {
+      console.warn(`[WorkerBiometrics] Worker uploads unavailable:`, e);
+    }
+    return workerBlobs;
+  };
 
-  // Wait for all downloads with individual timeout handling
-  await Promise.allSettled(downloadPromises);
+  // Helper: Download from profile-avatars bucket
+  const downloadProfileAvatars = async () => {
+    const avatarBlobs = [];
+    try {
+      // Try direct path first: profile-avatars/{id}.{ext}
+      const extensions = ['jpg', 'jpeg', 'png', 'webp'];
+      for (const ext of extensions) {
+        const fileName = `${profile.id}.${ext}`;
+        try {
+          const { data: blob } = await api.storage
+            .from("profile-avatars")
+            .download(fileName);
+          if (blob) {
+            avatarBlobs.push({ blob, bucket: "profile-avatars", path: fileName });
+            await cacheImage("profile-avatars", fileName, blob, profile.id, {
+              source: "profile-avatars",
+            });
+            console.log(`[WorkerBiometrics] ✓ Downloaded: profile-avatars/${fileName}`);
+            break; // Found one, stop looking
+          }
+        } catch (e) {
+          // File doesn't exist with this extension, try next
+        }
+      }
 
+      // If direct path didn't work, list all files and match by ID
+      if (avatarBlobs.length === 0) {
+        const { data: avatarFiles } = await api.storage
+          .from("profile-avatars")
+          .list("");
+        const imageFiles = (avatarFiles || []).filter((f) =>
+          /\.(jpg|jpeg|png|webp)$/i.test(f.name)
+        );
+        const matches = imageFiles.filter((f) => {
+          const name = f.name.replace(/\.(jpg|jpeg|png|webp)$/i, "");
+          return name === String(profile.id);
+        });
+
+        console.log(`[WorkerBiometrics] Found ${matches.length} files matching profile.id=${profile.id} in profile-avatars`);
+
+        for (const file of matches) {
+          try {
+            const { data: blob } = await api.storage
+              .from("profile-avatars")
+              .download(file.name);
+            if (blob) {
+              avatarBlobs.push({ blob, bucket: "profile-avatars", path: file.name });
+              await cacheImage("profile-avatars", file.name, blob, profile.id, {
+                source: "profile-avatars",
+              });
+              console.log(`[WorkerBiometrics] ✓ Downloaded: profile-avatars/${file.name}`);
+            }
+          } catch (e) {
+            console.warn(`[WorkerBiometrics] Failed to download avatar:`, e);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[WorkerBiometrics] Profile avatars unavailable:`, e);
+    }
+    return avatarBlobs;
+  };
+
+  // Priority-based downloading based on route context
+  if (isWorkerContext) {
+    // Workers/Kiosk: Try worker-uploads first, then profile-avatars
+    console.log(`[WorkerBiometrics] Worker context - prioritizing worker-uploads`);
+    const workerBlobs = await downloadWorkerUploads();
+    blobs.push(...workerBlobs);
+    
+    if (blobs.length === 0) {
+      console.log(`[WorkerBiometrics] No worker uploads found, trying profile-avatars...`);
+      const avatarBlobs = await downloadProfileAvatars();
+      blobs.push(...avatarBlobs);
+    }
+  } else {
+    // Login/Logout: Try profile-avatars first, then worker-uploads
+    console.log(`[WorkerBiometrics] Login/Logout context - prioritizing profile-avatars`);
+    const avatarBlobs = await downloadProfileAvatars();
+    blobs.push(...avatarBlobs);
+    
+    if (blobs.length === 0 && workerId) {
+      console.log(`[WorkerBiometrics] No profile avatars found, trying worker-uploads...`);
+      const workerBlobs = await downloadWorkerUploads();
+      blobs.push(...workerBlobs);
+    }
+  }
+
+  console.log(`[WorkerBiometrics] Total images downloaded: ${blobs.length}`);
   return blobs;
 }
 
@@ -313,7 +363,7 @@ export default function WorkerBiometrics({
         // Now download reference images and extract descriptors
         log(`Downloading reference images...`);
         setStatus("Processing reference photos...");
-        const { imageBlobs } = await downloadImagesForProfile(profile);
+        const imageBlobs = await downloadImagesForProfile(profile);
 
         if (cancelled) return;
 
