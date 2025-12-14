@@ -183,6 +183,9 @@ export default function WorkerBiometrics({
   const [failedAttempts, setFailedAttempts] = useState(0);
   const [capturedPhoto, setCapturedPhoto] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const timerRef = useRef(null);
+  const startTimeRef = useRef(null);
 
   const overlayStyle = {
     position: "fixed",
@@ -241,6 +244,11 @@ export default function WorkerBiometrics({
           console.log(`[WorkerBiometrics] ⚡ Camera started (cached descriptors) for profile.id=${profile.id}`);
           setStatus("Look straight at the camera");
           setLoading(false);
+          // Start timer
+          startTimeRef.current = Date.now();
+          timerRef.current = setInterval(() => {
+            setElapsedTime(Math.floor((Date.now() - startTimeRef.current) / 100) / 10);
+          }, 100);
         } catch (camErr) {
           console.error(`[WorkerBiometrics] Camera access failed for profile.id=${profile.id}:`, camErr);
           setError("Camera not available. Plug in a webcam or allow access.");
@@ -359,6 +367,11 @@ export default function WorkerBiometrics({
         console.log(`[WorkerBiometrics] Camera started successfully for profile.id=${profile.id}`);
         setStatus("Look straight at the camera");
         setLoading(false);
+        // Start timer
+        startTimeRef.current = Date.now();
+        timerRef.current = setInterval(() => {
+          setElapsedTime((Date.now() - startTimeRef.current) / 1000);
+        }, 100);
       } catch (camErr) {
         console.error(`[WorkerBiometrics] Camera access failed for profile.id=${profile.id}:`, camErr);
         setError("Camera not available. Plug in a webcam or allow access.");
@@ -372,6 +385,9 @@ export default function WorkerBiometrics({
       cancelled = true;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
       }
     };
   }, [profile]);
@@ -412,6 +428,11 @@ export default function WorkerBiometrics({
         setMatchDistance(best.distance);
         setStatus("Match confirmed");
         matcherRef.current = null;
+        // Stop timer on success
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
         if (streamRef.current) {
           streamRef.current.getTracks().forEach((t) => t.stop());
         }
@@ -437,23 +458,48 @@ export default function WorkerBiometrics({
   useRafLoop(detectFace, !loading && !error && !!matcherRef.current);
 
   // Capture a photo from the video stream
-  const capturePhoto = useCallback(async () => {
-    if (!videoRef.current || !canvasRef.current) return;
+  const capturePhoto = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current) {
+      console.warn('[WorkerBiometrics] Video or canvas not ready for capture');
+      return;
+    }
+
+    // Check if video has valid dimensions
+    if (!videoRef.current.videoWidth || !videoRef.current.videoHeight) {
+      console.warn('[WorkerBiometrics] Video dimensions not available yet');
+      return;
+    }
 
     try {
-      const ctx = canvasRef.current.getContext("2d");
-      canvasRef.current.width = videoRef.current.videoWidth;
-      canvasRef.current.height = videoRef.current.videoHeight;
-      ctx.drawImage(videoRef.current, 0, 0);
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
       
-      // Convert canvas to blob and create data URL for preview
-      canvasRef.current.toBlob((blob) => {
-        const dataUrl = URL.createObjectURL(blob);
-        setCapturedPhoto(dataUrl);
-        console.log(`[WorkerBiometrics] Photo captured: ${canvasRef.current.width}x${canvasRef.current.height}`);
-      });
+      // Set canvas dimensions to match video
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      // Convert to data URL immediately (more reliable than toBlob)
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      setCapturedPhoto(dataUrl);
+      
+      console.log(`[WorkerBiometrics] ✓ Photo captured: ${canvas.width}x${canvas.height}`);
+      
+      // Stop timer when photo is captured
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      
+      // Stop camera stream to save resources
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
     } catch (e) {
       console.error(`[WorkerBiometrics] Failed to capture photo:`, e);
+      setError('Failed to capture photo. Please try again.');
     }
   }, []);
 
@@ -541,11 +587,35 @@ export default function WorkerBiometrics({
   }, [capturedPhoto, isProcessing, processPhotoAsync]);
 
   // Retake/retry button handler
-  const handleRetake = useCallback(() => {
+  const handleRetake = useCallback(async () => {
     console.log(`[WorkerBiometrics] Retake requested by user (profile.id=${profile.id})`);
     setCapturedPhoto(null);
     setError("");
-    setStatus("Look straight at the camera");
+    setStatus("Starting camera...");
+    setElapsedTime(0);
+    
+    // Restart camera
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setStatus("Look straight at the camera");
+      
+      // Restart timer
+      startTimeRef.current = Date.now();
+      timerRef.current = setInterval(() => {
+        setElapsedTime((Date.now() - startTimeRef.current) / 1000);
+      }, 100);
+    } catch (err) {
+      console.error(`[WorkerBiometrics] Failed to restart camera:`, err);
+      setError("Camera not available");
+    }
   }, [profile.id]);
 
   return (
@@ -555,6 +625,11 @@ export default function WorkerBiometrics({
           <div>
             <h3 style={{ margin: 0 }}>Verify your face</h3>
             <p style={{ margin: "4px 0", color: "#4b5563" }}>{status}</p>
+            {!loading && !capturedPhoto && elapsedTime > 0 && (
+              <p style={{ margin: "4px 0", color: "#6b7280", fontSize: "0.85rem", fontFamily: "monospace" }}>
+                ⏱️ {elapsedTime.toFixed(1)}s
+              </p>
+            )}
             {isProcessing && (
               <p style={{ margin: "4px 0", color: "#3b82f6", fontSize: "0.9rem" }}>⏳ Analyzing...</p>
             )}
