@@ -6,13 +6,28 @@ import {
   cacheImage,
   getCachedImagesByEntity,
 } from "../../utils/imageCache";
+import { getDescriptor, setDescriptor } from "../../utils/descriptorDB";
 
 const MATCH_THRESHOLD = 0.65;
 const INPUT_SIZE = 192;
 const SCORE_THRESHOLD = 0.45;
 
+// Session-level model cache (persists across component mounts)
+let sessionFaceApi = null;
+let sessionModelsLoaded = false;
+
 // Track distances for debugging
 let distanceHistory = [];
+
+// Cache for parallel photo downloads with timeout
+const downloadWithTimeout = (promise, timeoutMs = 3000) => {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Download timeout")), timeoutMs)
+    ),
+  ]);
+};
 
 function useRafLoop(callback, enabled) {
   const rafRef = useRef(null);
@@ -41,61 +56,90 @@ async function downloadImagesForProfile(profile) {
   const blobs = [];
 
   const workerId = profile?.worker_id;
+  const downloadPromises = [];
+
+  // Worker uploads
   if (workerId) {
     const workerPath = `workers/${workerId}/profile-picture`;
-    try {
-      const { data: workerFiles } = await api.storage
-        .from("worker-uploads")
-        .list(workerPath);
+    downloadPromises.push(
+      downloadWithTimeout(
+        (async () => {
+          try {
+            const { data: workerFiles } = await api.storage
+              .from("worker-uploads")
+              .list(workerPath);
 
-      const imageFiles = (workerFiles || []).filter((f) =>
-        /\.(jpg|jpeg|png|webp)$/i.test(f.name)
-      );
+            const imageFiles = (workerFiles || []).filter((f) =>
+              /\.(jpg|jpeg|png|webp)$/i.test(f.name)
+            );
 
-      for (const file of imageFiles) {
-        const fullPath = `${workerPath}/${file.name}`;
-        const { data: blob } = await api.storage
-          .from("worker-uploads")
-          .download(fullPath);
-        if (blob) {
-          blobs.push({ blob, bucket: "worker-uploads", path: fullPath });
-          await cacheImage("worker-uploads", fullPath, blob, profile.id, {
-            source: "worker-uploads",
-            workerId,
-          });
-        }
-      }
-    } catch (e) {
-      /* offline or unavailable */
-    }
-  }
-
-  try {
-    const { data: avatarFiles } = await api.storage
-      .from("profile-avatars")
-      .list("");
-    const imageFiles = (avatarFiles || []).filter((f) =>
-      /\.(jpg|jpeg|png|webp)$/i.test(f.name)
+            for (const file of imageFiles) {
+              const fullPath = `${workerPath}/${file.name}`;
+              try {
+                const { data: blob } = await api.storage
+                  .from("worker-uploads")
+                  .download(fullPath);
+                if (blob) {
+                  blobs.push({ blob, bucket: "worker-uploads", path: fullPath });
+                  await cacheImage("worker-uploads", fullPath, blob, profile.id, {
+                    source: "worker-uploads",
+                    workerId,
+                  });
+                }
+              } catch (e) {
+                console.warn(`[WorkerBiometrics] Failed to download ${file.name}:`, e);
+              }
+            }
+          } catch (e) {
+            console.warn(`[WorkerBiometrics] Worker uploads unavailable`, e);
+          }
+        })(),
+        2000
+      )
     );
-    const matches = imageFiles.filter((f) => {
-      const name = f.name.replace(/\.(jpg|jpeg|png|webp)$/i, "");
-      return name === String(profile.id);
-    });
-
-    for (const file of matches) {
-      const { data: blob } = await api.storage
-        .from("profile-avatars")
-        .download(file.name);
-      if (blob) {
-        blobs.push({ blob, bucket: "profile-avatars", path: file.name });
-        await cacheImage("profile-avatars", file.name, blob, profile.id, {
-          source: "profile-avatars",
-        });
-      }
-    }
-  } catch (e) {
-    /* offline */
   }
+
+  // Profile avatars (parallel download with timeout)
+  downloadPromises.push(
+    downloadWithTimeout(
+      (async () => {
+        try {
+          const { data: avatarFiles } = await api.storage
+            .from("profile-avatars")
+            .list("");
+          const imageFiles = (avatarFiles || []).filter((f) =>
+            /\.(jpg|jpeg|png|webp)$/i.test(f.name)
+          );
+          const matches = imageFiles.filter((f) => {
+            const name = f.name.replace(/\.(jpg|jpeg|png|webp)$/i, "");
+            return name === String(profile.id);
+          });
+
+          for (const file of matches) {
+            try {
+              const { data: blob } = await api.storage
+                .from("profile-avatars")
+                .download(file.name);
+              if (blob) {
+                blobs.push({ blob, bucket: "profile-avatars", path: file.name });
+                await cacheImage("profile-avatars", file.name, blob, profile.id, {
+                  source: "profile-avatars",
+                });
+              }
+            } catch (e) {
+              console.warn(`[WorkerBiometrics] Failed to download avatar:`, e);
+            }
+          }
+        } catch (e) {
+          console.warn(`[WorkerBiometrics] Profile avatars unavailable`, e);
+        }
+      })(),
+      2000
+    )
+  );
+
+  // Wait for all downloads with individual timeout handling
+  await Promise.allSettled(downloadPromises);
 
   return blobs;
 }
@@ -143,24 +187,68 @@ export default function WorkerBiometrics({
     async function init() {
       setError("");
       setLoading(true);
-      setStatus("Loading models...");
+      setStatus("Preparing camera...");
       console.log(`[WorkerBiometrics] Init started for profile.id=${profile.id}, worker_id=${profile.worker_id}`);
 
-      const models = await loadFaceApiModels({ variant: "tiny", requireWifi: false, modelsUrl: "/models" });
-      if (!models?.success) {
-        const reason = models?.reason === "consent_required"
-          ? "Enable biometric consent to proceed."
-          : "Face models unavailable. Please connect and retry.";
-        console.warn(`[WorkerBiometrics] Model loading failed: ${models?.reason}`, models);
-        setError(reason);
-        setLoading(false);
+      // Fast path: Try to load cached descriptors first (skip model load and image processing)
+      const cachedDescriptors = await getDescriptor(profile.id);
+      if (cachedDescriptors && cachedDescriptors.length > 0) {
+        console.log(`[WorkerBiometrics] ⚡ Using cached descriptors for profile.id=${profile.id} (count=${cachedDescriptors.length})`);
+        const faceapi = await getFaceApi();
+        matcherRef.current = new faceapi.FaceMatcher(
+          [new faceapi.LabeledFaceDescriptors(String(profile.id), cachedDescriptors)],
+          MATCH_THRESHOLD
+        );
+
+        if (cancelled) return;
+
+        setStatus("Starting camera...");
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+            audio: false,
+          });
+          streamRef.current = stream;
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            await videoRef.current.play();
+          }
+          console.log(`[WorkerBiometrics] ⚡ Camera started (cached descriptors) for profile.id=${profile.id}`);
+          setStatus("Look straight at the camera");
+          setLoading(false);
+        } catch (camErr) {
+          console.error(`[WorkerBiometrics] Camera access failed for profile.id=${profile.id}:`, camErr);
+          setError("Camera not available. Plug in a webcam or allow access.");
+          setLoading(false);
+        }
         return;
       }
-      console.log(`[WorkerBiometrics] Models loaded successfully`);
 
-      const faceapi = await getFaceApi();
+      // Slow path: Load models (reuse session cache if available)
+      setStatus("Loading models...");
+      if (!sessionModelsLoaded) {
+        const models = await loadFaceApiModels({ variant: "tiny", requireWifi: false, modelsUrl: "/models" });
+        if (!models?.success) {
+          const reason = models?.reason === "consent_required"
+            ? "Enable biometric consent to proceed."
+            : "Face models unavailable. Please connect and retry.";
+          console.warn(`[WorkerBiometrics] Model loading failed: ${models?.reason}`, models);
+          setError(reason);
+          setLoading(false);
+          return;
+        }
+        sessionModelsLoaded = true;
+        sessionFaceApi = await getFaceApi();
+        console.log(`[WorkerBiometrics] Models loaded and cached for session`);
+      } else {
+        console.log(`[WorkerBiometrics] Reusing session-cached models`);
+      }
 
-      // collect images (cached first, then download if available)
+      if (cancelled) return;
+
+      const faceapi = sessionFaceApi;
+
+      // Collect images (cached first, then download if available)
       setStatus("Loading reference photos...");
       let cached = [];
       try {
@@ -185,6 +273,8 @@ export default function WorkerBiometrics({
         setLoading(false);
         return;
       }
+
+      if (cancelled) return;
 
       setStatus("Building face signatures...");
       const descriptors = [];
@@ -214,6 +304,11 @@ export default function WorkerBiometrics({
         setLoading(false);
         return;
       }
+
+      // Cache descriptors for future use (async, fire and forget)
+      setDescriptor(profile.id, descriptors).catch((e) => {
+        console.warn(`[WorkerBiometrics] Failed to cache descriptors for profile.id=${profile.id}:`, e);
+      });
 
       console.log(`[WorkerBiometrics] Built ${descriptors.length} face descriptors for profile.id=${profile.id}, match_threshold=${MATCH_THRESHOLD}`);
       matcherRef.current = new faceapi.FaceMatcher(
@@ -255,8 +350,10 @@ export default function WorkerBiometrics({
   }, [profile]);
 
   const detectFace = useCallback(async () => {
+    // Early exit conditions: skip all checks if not ready
     if (!matcherRef.current || !videoRef.current || loading || error) return;
-    if (detectingRef.current) return;
+    if (detectingRef.current) return; // Prevent parallel detections
+
     const faceapi = await getFaceApi();
     detectingRef.current = true;
 
@@ -269,7 +366,7 @@ export default function WorkerBiometrics({
         .withFaceLandmarks()
         .withFaceDescriptor();
 
-      if (!det?.descriptor) return;
+      if (!det?.descriptor) return; // No face detected, skip processing
 
       const best = matcherRef.current.findBestMatch(det.descriptor);
       distanceHistory.push(best.distance);
