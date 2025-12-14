@@ -29,6 +29,26 @@ const downloadWithTimeout = (promise, timeoutMs = 3000) => {
   ]);
 };
 
+// Helper: Convert cached array descriptors back to Float32Array (required by Face-API)
+const convertToFloat32Arrays = (descriptors) => {
+  if (!descriptors || !Array.isArray(descriptors)) return [];
+  return descriptors.map(desc => {
+    if (desc instanceof Float32Array) return desc;
+    if (Array.isArray(desc)) return new Float32Array(desc);
+    return new Float32Array(Object.values(desc));
+  });
+};
+
+// Helper: Convert Float32Array descriptors to plain arrays for storage
+const convertToPlainArrays = (descriptors) => {
+  if (!descriptors || !Array.isArray(descriptors)) return [];
+  return descriptors.map(desc => {
+    if (desc instanceof Float32Array) return Array.from(desc);
+    if (Array.isArray(desc)) return desc;
+    return Array.from(Object.values(desc));
+  });
+};
+
 function useRafLoop(callback, enabled) {
   const rafRef = useRef(null);
 
@@ -195,8 +215,10 @@ export default function WorkerBiometrics({
       if (cachedDescriptors && cachedDescriptors.length > 0) {
         console.log(`[WorkerBiometrics] ⚡ Using cached descriptors for profile.id=${profile.id} (count=${cachedDescriptors.length})`);
         const faceapi = await getFaceApi();
+        // Convert cached arrays back to Float32Array for Face-API
+        const float32Descriptors = convertToFloat32Arrays(cachedDescriptors);
         matcherRef.current = new faceapi.FaceMatcher(
-          [new faceapi.LabeledFaceDescriptors(String(profile.id), cachedDescriptors)],
+          [new faceapi.LabeledFaceDescriptors(String(profile.id), float32Descriptors)],
           MATCH_THRESHOLD
         );
 
@@ -306,7 +328,9 @@ export default function WorkerBiometrics({
       }
 
       // Cache descriptors for future use (async, fire and forget)
-      setDescriptor(profile.id, descriptors).catch((e) => {
+      // Convert Float32Array to plain arrays for storage
+      const plainArrays = convertToPlainArrays(descriptors);
+      setDescriptor(profile.id, plainArrays).catch((e) => {
         console.warn(`[WorkerBiometrics] Failed to cache descriptors for profile.id=${profile.id}:`, e);
       });
 
