@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import useToast from "../hooks/useToast";
 import ToastContainer from "../components/ToastContainer";
 import Biometrics from "../components/biometrics/Biometrics";
 import useOfflineTable from "../hooks/useOfflineTable";
-import { getCachedImagesByEntity } from "../utils/imageCache";
 import FiltersPanel from "../components/filters/FiltersPanel";
 import { useFilters } from "../context/FiltersContext";
 import { useAuth } from "../context/AuthProvider";
@@ -11,19 +11,19 @@ import { useSchools } from "../context/SchoolsContext";
 import { useData } from "../context/DataContext";
 import { useAttendance } from "../context/AttendanceContext";
 import Photos from "../components/profiles/Photos";
+import AttendanceRollbackReview from "./AttendanceRollbackReview";
+const ENTITY = { WORKER: "worker", STUDENT: "student" };
 
-const ENTITY = { worker: "worker", student: "student" };
-const CUTOFF_HOUR = 17;
-const CUTOFF_MINUTE = 15;
-
-const computeHours = (startIso, endIso) => {
-  if (!startIso) return null;
-  const diff = new Date(endIso).getTime() - new Date(startIso).getTime();
-  if (isNaN(diff) || diff < 0) return null;
-  return Number((diff / (1000 * 60 * 60)).toFixed(2));
-};
-
+/**
+ * Industry-Standard Kiosk Component
+ * - Enforces biometric verification before sign-in/out
+ * - Prevents cross-entity selection (workers + students simultaneously)
+ * - Offline-first with persistent state
+ * - Real-time attendance tracking
+ * - Backend calculates hours (frontend sends timestamps only)
+ */
 export default function Kiosk() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { schools } = useSchools();
   const { filters, setFilters } = useFilters();
@@ -33,18 +33,14 @@ export default function Kiosk() {
 
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
 
-  /* ------------------ Offline tables ------------------ */
+  /* ------------------ Offline Tables ------------------ */
   const {
     rows: workerRows = [],
-    addRow: addWorkerAttendance,
-    updateRow: updateWorkerAttendance,
     isOnline: workerOnline,
   } = useOfflineTable("worker_attendance_records", { date: today }, "*", 200, "id", "desc");
 
   const {
     rows: studentRows = [],
-    addRow: addStudentAttendance,
-    updateRow: updateStudentAttendance,
     isOnline: studentOnline,
   } = useOfflineTable("attendance_records", { date: today }, "*", 200, "id", "desc");
 
@@ -53,16 +49,10 @@ export default function Kiosk() {
   /* ------------------ State ------------------ */
   const [allWorkers, setAllWorkers] = useState([]);
   const [allStudents, setAllStudents] = useState([]);
-  const [entityType, setEntityType] = useState(null);
+  const [activeEntity, setActiveEntity] = useState(null); // "worker" or "student"
   const [selectedIds, setSelectedIds] = useState([]);
-  const [biometricTarget, setBiometricTarget] = useState(null);
-  const [biometricEntityType, setBiometricEntityType] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [biometricVerifiedId, setBiometricVerifiedId] = useState(null);
-  const [optimisticWorkerOpen, setOptimisticWorkerOpen] = useState(new Set());
-  const [optimisticStudentOpen, setOptimisticStudentOpen] = useState(new Set());
+  const [biometricModal, setBiometricModal] = useState(null); // { profile, entityType, action, existingRecordId, schoolId, recordedBy }
   const [flash, setFlash] = useState({ workers: new Set(), students: new Set() });
-  const autoCloseRef = useRef(null);
 
   const isAllSchoolRole = useMemo(() => {
     const roleName = user?.profile?.roles?.name;
@@ -101,237 +91,558 @@ export default function Kiosk() {
     return filtered;
   }, [allStudents, schoolIds, filters.grade]);
 
-  /* ------------------ Open maps ------------------ */
-  const workerOpenMap = useMemo(() => new Map((workerDayRows || []).filter(r => !r.sign_out_time).map(r => [r.worker_id, r])), [workerDayRows]);
-  const studentOpenMap = useMemo(() => new Map((studentDayRows || []).filter(r => !r.sign_out_time).map(r => [r.student_id, r])), [studentDayRows]);
+  /* ------------------ Open/Closed Maps ------------------ */
+  const workerOpenMap = useMemo(() => {
+    const map = new Map();
+    (workerDayRows || []).forEach(r => {
+      if (!r.sign_out_time) map.set(r.worker_id, r);
+    });
+    return map;
+  }, [workerDayRows]);
 
-  useEffect(() => setOptimisticWorkerOpen(new Set(openWorkerIds)), [openWorkerIds]);
-  useEffect(() => setOptimisticStudentOpen(new Set(openStudentIds)), [openStudentIds]);
+  const studentOpenMap = useMemo(() => {
+    const map = new Map();
+    (studentDayRows || []).forEach(r => {
+      if (!r.sign_out_time) map.set(r.student_id, r);
+    });
+    return map;
+  }, [studentDayRows]);
 
-  /* ------------------ Flash effect ------------------ */
-  const flashIds = (ids, type) => {
+  /* ------------------ Flash Effect ------------------ */
+  const flashIds = useCallback((ids, entityType) => {
     if (!ids.length) return;
-    const key = type === ENTITY.worker ? "workers" : "students";
+    const key = entityType === ENTITY.WORKER ? "workers" : "students";
+    
     setFlash((prev) => {
       const nextSet = new Set(prev[key]);
       ids.forEach((id) => nextSet.add(id));
       return { ...prev, [key]: nextSet };
     });
-    setTimeout(() => setFlash((prev) => {
-      const nextSet = new Set(prev[key]);
-      ids.forEach((id) => nextSet.delete(id));
-      return { ...prev, [key]: nextSet };
-    }), 1200);
-  };
 
-  /* ------------------ Biometric handlers ------------------ */
-  const handleBiometricStart = (entity, type) => {
-    setBiometricEntityType(type);
-    setBiometricTarget(entity);
-    setBiometricVerifiedId(null);
-  };
-
-  const handleBiometricSuccess = ({ profileId, workerId, biometricProof }) => {
-    setBiometricVerifiedId(profileId);
-    showToast("Face match confirmed", "success");
-    setSelectedIds([profileId]);
-    setEntityType(biometricEntityType);
-    setBiometricTarget(null);
-  };
-
-  const resetSelection = (keepType = false) => {
-    setSelectedIds([]);
-    if (!keepType) setEntityType(null);
-    setBiometricVerifiedId(null);
-  };
-
-  /* ------------------ Sign in/out logic ------------------ */
-  const signInWorkers = async (ids) => {
-    const now = new Date().toISOString();
-    const results = { done: 0, queued: 0, skipped: 0, errors: 0, errorDetails: [] };
-    for (const id of ids) {
-      if (workerOpenMap.has(id)) { results.skipped++; continue; }
-      const worker = filteredWorkers.find(w => w.id === id);
-      const res = await addWorkerAttendance({
-        worker_id: id,
-        school_id: worker?.school_id || null,
-        date: today,
-        sign_in_time: now,
-        recorded_by: user?.profile?.id || null,
+    setTimeout(() => {
+      setFlash((prev) => {
+        const nextSet = new Set(prev[key]);
+        ids.forEach((id) => nextSet.delete(id));
+        return { ...prev, [key]: nextSet };
       });
-      if (res?.__error) { results.errors++; results.errorDetails.push(`Worker ${id} failed`); }
-      else results.done++;
-    }
-    setOptimisticWorkerOpen(prev => { const next = new Set(prev); ids.forEach(i => next.add(i)); return next; });
-    flashIds(ids, ENTITY.worker);
-    await refreshAttendance();
-    return results;
-  };
+    }, 1500);
+  }, []);
 
-  const signOutWorkers = async (ids, forcedTimeIso) => {
-    const endIso = forcedTimeIso || new Date().toISOString();
-    const results = { done: 0, queued: 0, skipped: 0, errors: 0, durations: [] };
-    for (const id of ids) {
-      const open = workerOpenMap.get(id);
-      if (open) {
-        const hours = computeHours(open.sign_in_time, endIso);
-        const res = await updateWorkerAttendance(open.id, { sign_out_time: endIso, hours });
-        if (res?.__error) results.errors++;
-        else results.done++;
-        const w = filteredWorkers.find(w => w.id === id);
-        results.durations.push({ id, name: w ? `${w.name} ${w.last_name || ""}` : `Worker ${id}`, hours });
-      }
+  /* ------------------ Selection Handlers ------------------ */
+  const handleToggleSelection = useCallback((id, entityType) => {
+    // Enforce single entity type selection
+    if (activeEntity && activeEntity !== entityType) {
+      showToast(`Clear ${activeEntity} selection before selecting ${entityType}s`, "warning");
+      return;
     }
-    setOptimisticWorkerOpen(prev => { const next = new Set(prev); ids.forEach(i => next.delete(i)); return next; });
-    flashIds(ids, ENTITY.worker);
-    await refreshAttendance();
-    return results;
-  };
 
-  const signInStudents = async (ids) => {
-    const now = new Date().toISOString();
-    const results = { done: 0, queued: 0, skipped: 0, errors: 0 };
-    for (const id of ids) {
-      if (studentOpenMap.has(id)) { results.skipped++; continue; }
-      const student = filteredStudents.find(s => s.id === id);
-      const res = await addStudentAttendance({
-        student_id: id,
-        school_id: student?.school_id || null,
-        date: today,
-        sign_in_time: now,
-        status: "present",
-        method: "kiosk",
-        recorded_by: user?.profile?.id || null,
-      });
-      if (res?.__error) results.errors++;
-      else results.done++;
-    }
-    setOptimisticStudentOpen(prev => { const next = new Set(prev); ids.forEach(i => next.add(i)); return next; });
-    flashIds(ids, ENTITY.student);
-    await refreshAttendance();
-    return results;
-  };
-
-  const signOutStudents = async (ids, forcedTimeIso) => {
-    const endIso = forcedTimeIso || new Date().toISOString();
-    const results = { done: 0, queued: 0, skipped: 0, errors: 0, durations: [] };
-    for (const id of ids) {
-      const open = studentOpenMap.get(id);
-      if (open) {
-        const hours = computeHours(open.sign_in_time, endIso);
-        const res = await updateStudentAttendance(open.id, { sign_out_time: endIso, hours, status: "completed" });
-        if (res?.__error) results.errors++;
-        else results.done++;
-        const s = filteredStudents.find(s => s.id === id);
-        results.durations.push({ id, name: s?.full_name || `Student ${id}`, hours });
-      }
-    }
-    setOptimisticStudentOpen(prev => { const next = new Set(prev); ids.forEach(i => next.delete(i)); return next; });
-    flashIds(ids, ENTITY.student);
-    await refreshAttendance();
-    return results;
-  };
-
-  const handleBulk = async (action) => {
-    if (!entityType || !selectedIds.length) { showToast("Select at least one person", "warning"); return; }
-    setLoading(true);
-    try {
-      let result;
-      if (entityType === ENTITY.worker) result = action === "in" ? await signInWorkers(selectedIds) : await signOutWorkers(selectedIds);
-      else result = action === "in" ? await signInStudents(selectedIds) : await signOutStudents(selectedIds);
+    setSelectedIds(prev => {
+      const isSelected = prev.includes(id);
+      const newSelection = isSelected ? prev.filter(i => i !== id) : [...prev, id];
       
-      const summary = `${result.done} saved, ${result.skipped} skipped, ${result.errors} errors`;
-      showToast(summary, result.errors ? "error" : "success");
-      resetSelection();
-    } finally { setLoading(false); }
-  };
-
-  /* ------------------ Auto-cutoff ------------------ */
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = new Date();
-      const dayKey = now.toISOString().split("T")[0];
-      if (autoCloseRef.current === dayKey) return;
-      const pastCutoff = now.getHours() > CUTOFF_HOUR || (now.getHours() === CUTOFF_HOUR && now.getMinutes() >= CUTOFF_MINUTE);
-      if (pastCutoff) {
-        const forcedIso = new Date(now.setHours(CUTOFF_HOUR, CUTOFF_MINUTE, 0, 0)).toISOString();
-        (async () => {
-          await signOutWorkers([...openWorkerIds], forcedIso);
-          await signOutStudents([...openStudentIds], forcedIso);
-        })();
-        autoCloseRef.current = dayKey;
+      // Update active entity
+      if (newSelection.length === 0) {
+        setActiveEntity(null);
+      } else if (!activeEntity) {
+        setActiveEntity(entityType);
       }
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [openWorkerIds, openStudentIds]);
+      
+      return newSelection;
+    });
+  }, [activeEntity, showToast]);
 
-  /* ------------------ UI LIST RENDER ------------------ */
-  const renderList = (items, type) => {
-    const openSet = type === ENTITY.worker ? optimisticWorkerOpen : optimisticStudentOpen;
-    const flashSet = type === ENTITY.worker ? flash.workers : flash.students;
+  const clearSelection = useCallback(() => {
+    setSelectedIds([]);
+    setActiveEntity(null);
+  }, []);
+
+  /* ------------------ Biometric Flow ------------------ */
+  const startBiometricVerification = useCallback((profile, entityType, action, existingRecordId = null) => {
+    setBiometricModal({
+      profile,
+      entityType,
+      action,
+      existingRecordId,
+      schoolId: profile.school_id,
+      recordedBy: user?.profile?.id || null,
+    });
+  }, [user?.profile?.id]);
+
+  const handleBiometricSuccess = useCallback(async (result) => {
+    console.log("[Kiosk] Biometric success:", result);
+    
+    const { profileId, action, record } = result;
+    const entityType = biometricModal.entityType;
+    
+    // Flash the updated entity
+    flashIds([profileId], entityType);
+    
+    // Refresh attendance context
+    await refreshAttendance();
+    
+    // Close modal
+    setBiometricModal(null);
+    
+    // Clear selection if single entity
+    if (selectedIds.length === 1) {
+      clearSelection();
+    } else {
+      // Remove verified entity from selection for bulk operations
+      setSelectedIds(prev => prev.filter(id => id !== profileId));
+    }
+    
+    showToast(
+      `${entityType === ENTITY.WORKER ? "Worker" : "Student"} ${action === "sign_in" ? "signed in" : "signed out"} successfully`,
+      "success"
+    );
+  }, [biometricModal, selectedIds, flashIds, refreshAttendance, clearSelection, showToast]);
+
+  const handleBiometricCancel = useCallback(() => {
+    setBiometricModal(null);
+  }, []);
+
+  /* ------------------ Bulk Sign In/Out (with enforced biometric verification) ------------------ */
+  const handleBulkSignIn = useCallback(() => {
+    if (!activeEntity || selectedIds.length === 0) {
+      showToast("Select at least one person first", "warning");
+      return;
+    }
+
+    // Get first selected entity for biometric verification
+    const firstId = selectedIds[0];
+    const entity = activeEntity === ENTITY.WORKER
+      ? filteredWorkers.find(w => w.id === firstId)
+      : filteredStudents.find(s => s.id === firstId);
+
+    if (!entity) {
+      showToast("Selected entity not found", "error");
+      return;
+    }
+
+    // Check if already signed in
+    const openMap = activeEntity === ENTITY.WORKER ? workerOpenMap : studentOpenMap;
+    if (openMap.has(firstId)) {
+      showToast("This person is already signed in", "warning");
+      return;
+    }
+
+    // Start biometric verification for first entity
+    startBiometricVerification(entity, activeEntity, "sign_in");
+  }, [activeEntity, selectedIds, filteredWorkers, filteredStudents, workerOpenMap, studentOpenMap, startBiometricVerification, showToast]);
+
+  const handleBulkSignOut = useCallback(() => {
+    if (!activeEntity || selectedIds.length === 0) {
+      showToast("Select at least one person first", "warning");
+      return;
+    }
+
+    // Get first selected entity for biometric verification
+    const firstId = selectedIds[0];
+    const entity = activeEntity === ENTITY.WORKER
+      ? filteredWorkers.find(w => w.id === firstId)
+      : filteredStudents.find(s => s.id === firstId);
+
+    if (!entity) {
+      showToast("Selected entity not found", "error");
+      return;
+    }
+
+    // Check if signed in
+    const openMap = activeEntity === ENTITY.WORKER ? workerOpenMap : studentOpenMap;
+    const openRecord = openMap.get(firstId);
+    
+    if (!openRecord) {
+      showToast("This person is not signed in", "warning");
+      return;
+    }
+
+    // Start biometric verification for first entity with existing record ID
+    startBiometricVerification(entity, activeEntity, "sign_out", openRecord.id);
+  }, [activeEntity, selectedIds, filteredWorkers, filteredStudents, workerOpenMap, studentOpenMap, startBiometricVerification, showToast]);
+
+  /* ------------------ Single Entity Quick Sign In/Out ------------------ */
+  const handleQuickSignIn = useCallback((entity, entityType) => {
+    const openMap = entityType === ENTITY.WORKER ? workerOpenMap : studentOpenMap;
+    if (openMap.has(entity.id)) {
+      showToast("Already signed in", "warning");
+      return;
+    }
+    startBiometricVerification(entity, entityType, "sign_in");
+  }, [workerOpenMap, studentOpenMap, startBiometricVerification, showToast]);
+
+  const handleQuickSignOut = useCallback((entity, entityType) => {
+    const openMap = entityType === ENTITY.WORKER ? workerOpenMap : studentOpenMap;
+    const openRecord = openMap.get(entity.id);
+    
+    if (!openRecord) {
+      showToast("Not signed in", "warning");
+      return;
+    }
+    
+    startBiometricVerification(entity, entityType, "sign_out", openRecord.id);
+  }, [workerOpenMap, studentOpenMap, startBiometricVerification, showToast]);
+
+  /* ------------------ Render Entity List ------------------ */
+  const renderList = useCallback((items, entityType) => {
+    const openMap = entityType === ENTITY.WORKER ? workerOpenMap : studentOpenMap;
+    const flashSet = entityType === ENTITY.WORKER ? flash.workers : flash.students;
+    const isOtherEntityActive = activeEntity && activeEntity !== entityType;
+
     return (
-      <div style={{ maxHeight: 520, overflowY: "auto" }}>
-        {items.length ? items.map((item) => {
-          const selected = selectedIds.includes(item.id) && entityType === type;
-          const open = openSet.has(item.id);
-          const flashItem = flashSet.has(item.id);
-          return (
-            <div key={`${type}-${item.id}`} style={{ padding: 12, border: "1px solid #e5e7eb", borderRadius: 8, display: "flex", alignItems: "center", gap: 12, background: flashItem ? "#ecfdf3" : selected ? "#eef2ff" : "#fff" }}>
-              <input type="checkbox" checked={selected} onChange={() => {
-                setSelectedIds(prev => prev.includes(item.id) ? prev.filter(i => i !== item.id) : [...prev, item.id]);
-                setEntityType(type);
-              }} />
-              <div style={{ width: 48, height: 48, borderRadius: 6, overflow: "hidden", position: "relative" }}>
-                <Photos bucketName={type === ENTITY.worker ? "worker-uploads" : "student-uploads"} folderName={type === ENTITY.worker ? "workers" : "students"} id={item.id} photoCount={1} restrictToProfileFolder={true} />
-                <span title={open ? "Signed in" : "Signed out"} style={{ position: "absolute", right: -2, bottom: -2, width: 10, height: 10, borderRadius: "50%", background: open ? "#10b981" : "#ef4444", border: "2px solid #fff" }} />
+      <div style={{ maxHeight: 520, overflowY: "auto", opacity: isOtherEntityActive ? 0.4 : 1, pointerEvents: isOtherEntityActive ? "none" : "auto" }}>
+        {items.length ? (
+          items.map((item) => {
+            const isSelected = selectedIds.includes(item.id) && activeEntity === entityType;
+            const isOpen = openMap.has(item.id);
+            const isFlashing = flashSet.has(item.id);
+
+            return (
+              <div
+                key={`${entityType}-${item.id}`}
+                style={{
+                  padding: 12,
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  marginBottom: 8,
+                  background: isFlashing ? "#ecfdf3" : isSelected ? "#eef2ff" : "#fff",
+                  transition: "all 0.3s ease",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => handleToggleSelection(item.id, entityType)}
+                  style={{ width: 18, height: 18, cursor: "pointer" }}
+                />
+                
+                <div style={{ width: 48, height: 48, borderRadius: 6, overflow: "hidden", position: "relative" }}>
+                  <Photos
+                    bucketName={entityType === ENTITY.WORKER ? "worker-uploads" : "student-uploads"}
+                    folderName={entityType === ENTITY.WORKER ? "workers" : "students"}
+                    id={item.id}
+                    photoCount={1}
+                    restrictToProfileFolder={true}
+                  />
+                  <span
+                    title={isOpen ? "Signed in" : "Signed out"}
+                    style={{
+                      position: "absolute",
+                      right: -2,
+                      bottom: -2,
+                      width: 12,
+                      height: 12,
+                      borderRadius: "50%",
+                      background: isOpen ? "#10b981" : "#ef4444",
+                      border: "2px solid #fff",
+                    }}
+                  />
+                </div>
+
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>
+                    {entityType === ENTITY.WORKER
+                      ? `${item.name} ${item.last_name || ""}`
+                      : item.full_name}
+                    <span
+                      style={{
+                        marginLeft: 8,
+                        fontSize: 12,
+                        color: isOpen ? "#10b981" : "#ef4444",
+                        fontWeight: 500,
+                      }}
+                    >
+                      • {isOpen ? "In" : "Out"}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
+                    {entityType === ENTITY.WORKER
+                      ? `School: ${item.school_name || "n/a"}`
+                      : `Grade: ${item.grade || "n/a"}`}
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  {!isOpen ? (
+                    <button
+                      onClick={() => handleQuickSignIn(item, entityType)}
+                      style={{
+                        padding: "6px 12px",
+                        fontSize: 13,
+                        borderRadius: 6,
+                        border: "1px solid #10b981",
+                        background: "#10b981",
+                        color: "#fff",
+                        cursor: "pointer",
+                        fontWeight: 500,
+                      }}
+                    >
+                      Sign In
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleQuickSignOut(item, entityType)}
+                      style={{
+                        padding: "6px 12px",
+                        fontSize: 13,
+                        borderRadius: 6,
+                        border: "1px solid #ef4444",
+                        background: "#ef4444",
+                        color: "#fff",
+                        cursor: "pointer",
+                        fontWeight: 500,
+                      }}
+                    >
+                      Sign Out
+                    </button>
+                  )}
+                </div>
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600 }}>{type === ENTITY.worker ? `${item.name} ${item.last_name || ""}` : item.full_name}<span style={{ marginLeft: 8, fontSize: 12, color: open ? "#10b981" : "#ef4444" }}>{open ? "• In" : "• Out"}</span></div>
-                <div style={{ fontSize: 12, color: "#6b7280" }}>{type === ENTITY.worker ? `School: ${item.school_name || "n/a"}` : `Grade: ${item.grade || "n/a"}`}</div>
-              </div>
-              <button onClick={() => handleBiometricStart(item, type)}>Face verify</button>
-            </div>
-          );
-        }) : <div style={{ padding: 20, textAlign: "center", color: "#6b7280" }}>No {type === ENTITY.worker ? "workers" : "students"} available</div>}
+            );
+          })
+        ) : (
+          <div style={{ padding: 40, textAlign: "center", color: "#9ca3af" }}>
+            No {entityType === ENTITY.WORKER ? "workers" : "students"} available
+          </div>
+        )}
       </div>
     );
-  };
-
-  /* ------------------ ACTION BAR ------------------ */
-  const actionBar = (
-    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
-      {[ENTITY.worker, ENTITY.student].map((type) => (
-        <button key={type} onClick={() => { setEntityType(type); resetSelection(true); }} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #e5e7eb", background: entityType === type ? "#111827" : "#fff", color: entityType === type ? "#fff" : "#111827", cursor: "pointer" }}>{type === ENTITY.worker ? "Workers" : "Students"}</button>
-      ))}
-      <button disabled={!selectedIds.length || loading} onClick={() => handleBulk("in")}>Sign in selected ({selectedIds.length})</button>
-      <button disabled={!selectedIds.length || loading} onClick={() => handleBulk("out")}>Sign out selected ({selectedIds.length})</button>
-      <button disabled={!selectedIds.length || loading} onClick={() => resetSelection(true)}>Clear</button>
-      {biometricVerifiedId && <span style={{ color: "#16a34a" }}>Biometric verified for ID {biometricVerifiedId}</span>}
-    </div>
-  );
+  }, [selectedIds, activeEntity, workerOpenMap, studentOpenMap, flash, handleToggleSelection, handleQuickSignIn, handleQuickSignOut]);
 
   /* ------------------ MAIN RENDER ------------------ */
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc", padding: 24 }}>
       <ToastContainer toasts={toasts} removeToast={removeToast} />
-      <div style={{ maxWidth: 1300, margin: "0 auto" }}>
-        <h2>Clock In / Clock Out</h2>
-        <p>Select one mode at a time. Bulk sign in/out all selected entries.</p>
-        {actionBar}
-        <FiltersPanel user={user} schools={schools || []} filters={filters} setFilters={setFilters} resource={entityType === ENTITY.student ? "students" : "workers"} />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
+      
+      <div style={{ maxWidth: 1400, margin: "0 auto" }}>
+        
+        {/* Header with Title, Online Status, and Back Button */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
           <div>
-            <h3>Workers</h3>
-            {renderList(filteredWorkers, ENTITY.worker)}
+            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: "#111827" }}>Attendance Kiosk</h1>
+            <p style={{ margin: "4px 0 0 0", fontSize: 14, color: "#6b7280" }}>Biometric-verified sign in/out system</p>
           </div>
-          <div>
-            <h3>Students</h3>
-            {renderList(filteredStudents, ENTITY.student)}
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <span
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 500,
+                background: isOnline ? "#d1fae5" : "#fee2e2",
+                color: isOnline ? "#065f46" : "#991b1b",
+              }}
+            >
+              {isOnline ? "🟢 Online" : "🔴 Offline"}
+            </span>
+            <button
+              onClick={() => navigate("/dashboard")}
+              style={{
+                padding: "10px 16px",
+                borderRadius: 6,
+                border: "1px solid #e5e7eb",
+                background: "#fff",
+                color: "#111827",
+                cursor: "pointer",
+                fontSize: 14,
+                fontWeight: 500,
+              }}
+            >
+              ← Back to Dashboard
+            </button>
           </div>
         </div>
-        {biometricTarget && (
-          <Biometrics
-            profile={biometricTarget}
-            entityType={biometricEntityType}
-            onSuccess={handleBiometricSuccess}
-      tBiometricTarg
+
+        {/* Action Bar with Entity Type Toggle and Bulk Actions */}
+        <div style={{ 
+          display: "flex", 
+          gap: 12, 
+          flexWrap: "wrap", 
+          alignItems: "center", 
+          marginBottom: 20,
+          padding: 12,
+          background: "#fff",
+          borderRadius: 8,
+          border: "1px solid #e5e7eb",
+        }}>
+          {/* Entity Type Toggle */}
+          <div style={{ display: "flex", gap: 8, borderRight: "1px solid #e5e7eb", paddingRight: 12 }}>
+            {[ENTITY.WORKER, ENTITY.STUDENT].map((type) => (
+              <button 
+                key={type} 
+                onClick={() => {
+                  setActiveEntity(type);
+                  setSelectedIds([]);
+                }}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 6,
+                  border: "1px solid " + (activeEntity === type ? "transparent" : "#e5e7eb"),
+                  background: activeEntity === type ? "#111827" : "#fff",
+                  color: activeEntity === type ? "#fff" : "#6b7280",
+                  cursor: "pointer",
+                  fontSize: 14,
+                  fontWeight: 500,
+                  transition: "all 0.2s ease",
+                }}
+              >
+                {type === ENTITY.WORKER ? "Workers" : "Students"}
+              </button>
+            ))}
+          </div>
+
+          {/* Bulk Actions */}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              disabled={activeEntity !== ENTITY.WORKER && activeEntity !== ENTITY.STUDENT}
+              onClick={handleBulkSignIn}
+              style={{
+                padding: "10px 16px",
+                borderRadius: 6,
+                border: "1px solid #3b82f6",
+                background: "#3b82f6",
+                color: "#fff",
+                cursor: "pointer",
+                fontSize: 14,
+                fontWeight: 500,
+                opacity: (activeEntity !== ENTITY.WORKER && activeEntity !== ENTITY.STUDENT) ? 0.5 : 1,
+                transition: "all 0.2s ease",
+              }}
+            >
+              🔒 Bulk Sign In ({selectedIds.length})
+            </button>
+            <button
+              disabled={activeEntity !== ENTITY.WORKER && activeEntity !== ENTITY.STUDENT}
+              onClick={handleBulkSignOut}
+              style={{
+                padding: "10px 16px",
+                borderRadius: 6,
+                border: "1px solid #ef4444",
+                background: "#ef4444",
+                color: "#fff",
+                cursor: "pointer",
+                fontSize: 14,
+                fontWeight: 500,
+                opacity: (activeEntity !== ENTITY.WORKER && activeEntity !== ENTITY.STUDENT) ? 0.5 : 1,
+                transition: "all 0.2s ease",
+              }}
+            >
+              🔒 Bulk Sign Out ({selectedIds.length})
+            </button>
+            {/* Add a new panel/tab for admin review */}
+            <div style={{ marginTop: 24 }}>
+              <h3 style={{ marginBottom: 12 }}>Attendance Rollback Review</h3>
+              <AttendanceRollbackReview currentUser={user} />
+            </div>
+          </div>
+
+          {/* Clear Selection Button */}
+          {selectedIds.length > 0 && (
+            <button
+              onClick={clearSelection}
+              style={{
+                padding: "10px 16px",
+                borderRadius: 6,
+                border: "1px solid #9ca3af",
+                background: "#fff",
+                color: "#111827",
+                cursor: "pointer",
+                fontSize: 14,
+                fontWeight: 500,
+              }}
+            >
+              Clear Selection
+            </button>
+          )}
+        </div>
+
+        {/* Filters Panel */}
+        <FiltersPanel 
+          user={user} 
+          schools={schools || []} 
+          filters={filters} 
+          setFilters={setFilters} 
+          resource={activeEntity === ENTITY.STUDENT ? "students" : "workers"} 
+        />
+
+        {/* Two-Column Grid Layout */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginTop: 24 }}>
+          
+          {/* Workers Column */}
+          <div>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 12,
+              paddingBottom: 12,
+              borderBottom: "2px solid #e5e7eb",
+            }}>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#111827" }}>Workers</h3>
+              <span style={{ fontSize: 12, color: "#9ca3af", fontWeight: 500 }}>({filteredWorkers.length})</span>
+            </div>
+            {renderList(filteredWorkers, ENTITY.WORKER)}
+          </div>
+
+          {/* Students Column */}
+          <div>
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 12,
+              paddingBottom: 12,
+              borderBottom: "2px solid #e5e7eb",
+            }}>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#111827" }}>Students</h3>
+              <span style={{ fontSize: 12, color: "#9ca3af", fontWeight: 500 }}>({filteredStudents.length})</span>
+            </div>
+            {renderList(filteredStudents, ENTITY.STUDENT)}
+          </div>
+
+        </div>
+
+        {/* Biometric Modal */}
+        {biometricModal && (
+          <div style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: "rgba(0, 0, 0, 0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+          }}>
+            <div style={{
+              background: "#fff",
+              borderRadius: 8,
+              padding: 24,
+              width: "90%",
+              maxWidth: 600,
+              maxHeight: "90vh",
+              overflowY: "auto",
+              boxShadow: "0 10px 40px rgba(0, 0, 0, 0.3)",
+            }}>
+              <Biometrics
+                profile={biometricModal.profile}
+                entityType={biometricModal.entityType}
+                action={biometricModal.action}
+                existingRecordId={biometricModal.existingRecordId}
+                schoolId={biometricModal.schoolId}
+                recordedBy={biometricModal.recordedBy}
+                onSuccess={handleBiometricSuccess}
+                onCancel={handleBiometricCancel}
+              />
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
