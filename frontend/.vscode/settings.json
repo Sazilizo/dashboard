@@ -1,0 +1,7 @@
+{
+    "workbench.editor.autoLockGroups": {
+        "workbench.editor.chatSession": true,
+        "workbench.editorinputs.searchEditorInput": true,
+        "workbench.input.interactive": true
+    }
+}

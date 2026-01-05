@@ -207,10 +207,24 @@ class QueryBuilder {
 
       let q = this.baseClient.from(this.table).select(this.queryString);
       
-      Object.entries(this.filters).forEach(([f, filter]) => {
-        if (filter.type === "eq") q = q.eq(f, filter.value);
-        else if (filter.type === "in") q = q.in(f, filter.value);
-      });
+      console.log(`[offlineClient] QueryBuilder executing query on table=${this.table}, filters=${JSON.stringify(this.filters)}`);
+      
+      try {
+        Object.entries(this.filters).forEach(([f, filter]) => {
+          if (filter.type === "eq") {
+            console.log(`[offlineClient] Adding EQ filter: ${f} = ${filter.value}`);
+            q = q.eq(f, filter.value);
+          }
+          else if (filter.type === "in") {
+            console.log(`[offlineClient] Adding IN filter: ${f} in [${filter.value.join(", ")}]`);
+            q = q.in(f, filter.value);
+          }
+        });
+      } catch (filterErr) {
+        console.error(`[offlineClient] Error applying filters:`, filterErr);
+        console.error(`[offlineClient] Filter error stack:`, filterErr.stack);
+        throw filterErr;
+      }
       if (this.orderField) q = q.order(this.orderField, { ascending: this.orderAscending });
       if (this.rangeStart !== null && this.rangeEnd !== null) q = q.range(this.rangeStart, this.rangeEnd);
       if (this.limitValue !== null) q = q.limit(this.limitValue);
@@ -255,6 +269,11 @@ class QueryBuilder {
         console.warn(`[offlineClient] ${this.table} query timed out (${timeout}ms) - using cache`);
       } else {
         console.warn(`[offlineClient] ${this.table} query failed - using cache:`, err.message);
+        console.warn(`[offlineClient] Full error:`, err);
+        console.warn(`[offlineClient] Error stack:`, err.stack);
+        // Try to extract more details from the error
+        if (err.details) console.warn(`[offlineClient] Error details:`, err.details);
+        if (err.hint) console.warn(`[offlineClient] Error hint:`, err.hint);
       }
       
       return { data: finalResult, error: null, fromCache: true };
@@ -266,6 +285,12 @@ class QueryBuilder {
 
 /* Offline Client factory */
 export function createOfflineClient(supabaseUrl, supabaseKey) {
+  console.log(`[offlineClient] Initializing offline client with URL: ${supabaseUrl ? supabaseUrl.substring(0, 20) + "..." : "UNDEFINED"}, Key: ${supabaseKey ? supabaseKey.substring(0, 20) + "..." : "UNDEFINED"}`);
+  
+  if (!supabaseUrl || !supabaseKey) {
+    console.error(`[offlineClient] CRITICAL: Missing Supabase credentials! URL=${supabaseUrl}, KEY=${supabaseKey}`);
+  }
+  
   const supabase = createSupabaseClient(supabaseUrl, supabaseKey, {
     auth: { persistSession: true, autoRefreshToken: true }
   });

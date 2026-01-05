@@ -6,6 +6,7 @@ import { AuthProvider } from "./context/AuthProvider";
 import { SchoolsProvider } from "./context/SchoolsContext";
 import { FilterProvider } from "./context/FiltersContext";
 import { DataProvider } from "./context/DataContext";
+import { AttendanceProvider } from "./context/AttendanceContext";
 import OfflineIndicator from "./components/OfflineIndicator";
 import SeoHelmet from './components/SeoHelmet';
 import "./styles/main.css";
@@ -39,10 +40,12 @@ function App() {
       <SchoolsProvider>
         <FilterProvider>
           <DataProvider>
-            <SeoHelmet />
-            <OfflineIndicator />
-            {/* Schools debug panel removed from UI to avoid intrusive popup on small screens */}
-            <RouterProvider router={router} />
+            <AttendanceProvider>
+              <SeoHelmet />
+              <OfflineIndicator />
+              {/* Schools debug panel removed from UI to avoid intrusive popup on small screens */}
+              <RouterProvider router={router} />
+            </AttendanceProvider>
           </DataProvider>
         </FilterProvider>
       </SchoolsProvider>

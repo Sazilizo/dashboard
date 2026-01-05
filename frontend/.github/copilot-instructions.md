@@ -1,0 +1,21 @@
+# Copilot Instructions for This Repo
+
+- Stack: React 19 + React Router v7 with a webpack dev server. App root mounts in [src/index.js](src/index.js) and wraps providers in [src/app.js](src/app.js).
+- Core providers: `AuthProvider`, `SchoolsProvider`, `FilterProvider`, `DataProvider`, `AttendanceProvider`; all children should assume these contexts are available.
+- Routing: routes are declared in [src/router.js](src/router.js); keep paths consistent with existing nested structures (dashboard children, kiosk, login/register, settings).
+- Offline-first rule: **do not call Supabase directly from components**. For reads, use `useOfflineTable` (hook lives under `src/hooks`). For writes, use `queueMutation` from [src/utils/tableCache.js](src/utils/tableCache.js) so changes queue and sync when online.
+- Connectivity: rely on `useOnlineStatus` (real connectivity checks) before triggering online-only work; timeouts are aggressive (3–10s) to avoid hangs.
+- RLS-aware caching: always pass user context. Use helpers from `src/utils/rlsCache.js` (`getUserContext`, `applyRLSFiltering`, `getUserCacheKey`, `canAccessTable`). Cache reads/writes should include user context to prevent data leakage (see [RLS_CACHING_GUIDE.md](RLS_CACHING_GUIDE.md)).
+- Proactive caching: background preload for key tables is in [src/utils/proactiveCache.js](src/utils/proactiveCache.js). Keep new tables added to cache list small and resilient (timeouts per table).
+- Offline storage: IndexedDB handling, mutation queues, exponential backoff, and manual debug helpers live in [src/utils/tableCache.js](src/utils/tableCache.js). Preserve debouncing/backoff behavior when touching sync logic.
+- Auth/profile loading: [src/context/AuthProvider.js](src/context/AuthProvider.js) fetches Supabase auth, hydrates profile, resolves role names from cached `roles`, and falls back to stored auth when offline. Avoid bypassing this flow; keep role resolution logic intact.
+- Attendance state: [src/context/AttendanceContext.js](src/context/AttendanceContext.js) exposes `isWorkerSignedIn`/`isStudentSignedIn` and daily sets; use it instead of re-querying attendance data.
+- Face recognition: Face-api models are lazily preloaded (see [src/utils/FaceApiLoader.js](src/utils/FaceApiLoader.js)); defer heavy work to `requestIdleCallback` patterns already used in [src/app.js](src/app.js) and [src/index.js](src/index.js).
+- Global debug utilities: `index.js` exposes helpers (`seedSchoolsCache`, `verifySchoolsCache`, `refreshCache`, offline mutation debugging) on `window` in dev—reuse these instead of duplicating.
+- Service worker: only register in production ([public/serviceWorker.js](public/serviceWorker.js)). Avoid dev changes that force reload loops.
+- Styling: Tailwind 4/PostCSS, plus local CSS under `src/styles/`. Keep component styles modular; prefer extending existing class patterns over inline styles.
+- Build/run commands: `npm start` (webpack dev server), `npm run build` (prod bundle), `npm run tauri:build` (desktop), `npm run cap:copy`/`npm run cap:open:android` (Capacitor mobile). Ensure env vars are available before building.
+- Data access: prefer using the shared `api` client in `src/api/client.js` (Supabase) and the offline-aware wrappers in `src/api/offlineClient.js`; avoid creating new clients per component.
+- Forms: many forms are schema-driven (`dynamicForm`, bulk forms). Keep validation aligned with existing `react-hook-form` + `yup` usage; reuse shared schema/field utilities in `src/components/forms/`.
+- Performance: defer heavy/background tasks (caching, face models) via `requestIdleCallback` or delayed `setTimeout` to maintain fast initial render; follow patterns in `index.js`.
+- Mobile/Desktop targets: Changes must respect offline mode and RLS filters; test flows in browser offline mode and ensure no component bypasses the cache pipeline.

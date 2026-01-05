@@ -61,6 +61,8 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
   const [selectedSession, setSelectedSession] = useState(initialSessionId || "");
   const [selectedStudentIds, setSelectedStudentIds] = useState([]);
   const [working, setWorking] = useState(false);
+  const [sessionStart, setSessionStart] = useState(null);
+  const [sessionEnd, setSessionEnd] = useState(null);
   const [showBiometrics, setShowBiometrics] = useState(false);
   const [recordingActive, setRecordingActive] = useState(false);
   const [stopRecordingRequest, setStopRecordingRequest] = useState(0);
@@ -765,9 +767,33 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
             </div>
 
             <div className="flex items-center gap-3">
-              <button className="btn inline-flex items-center gap-2" disabled={true} title="Biometrics suspended for now">
-                <span className="text-sm">Biometrics (suspended)</span>
-              </button>
+                <button
+                  className="btn primary-btn inline-flex items-center gap-2"
+                  onClick={() => setSessionStart(new Date().toISOString())}
+                  disabled={!!sessionStart}
+                >
+                  <span className="text-sm">Start Session</span>
+                </button>
+                <button
+                  className="btn secondary-btn inline-flex items-center gap-2"
+                  onClick={() => setSessionEnd(new Date().toISOString())}
+                  disabled={!sessionStart || !!sessionEnd}
+                >
+                  <span className="text-sm">End Session</span>
+                </button>
+                {sessionStart && sessionEnd && (
+                  <span className="text-xs text-gray-600" style={{ marginLeft: 8 }}>
+                    Duration: {(() => {
+                      try {
+                        const ms = new Date(sessionEnd) - new Date(sessionStart);
+                        const hours = Math.floor(ms / (1000 * 60 * 60));
+                        const mins = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
+                        const secs = Math.floor((ms % (1000 * 60)) / 1000);
+                        return `${hours}h ${mins}m ${secs}s`;
+                      } catch (e) { return '—'; }
+                    })()}
+                  </span>
+                )}
               {/* debug buttons removed */}
               {recordingActive && (
                 <>
@@ -863,7 +889,7 @@ export default function RecordSessionForm({ sessionType = 'academic', initialSes
             {/* queued mutations panel removed */}
 
             {lastActionResult && (
-              <pre className="mt-4 text-sm bg-gray-100 p-2 rounded">{JSON.stringify(lastActionResult, null, 2)}</pre>
+              <pre className="mt-4 text-sm bg-gray-100 p-2 rounded">{JSON.stringify({ ...lastActionResult, sessionStart, sessionEnd }, null, 2)}</pre>
             )}
         </div>
       </div>

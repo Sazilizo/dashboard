@@ -11,6 +11,8 @@ import Loader from "../widgets/Loader";
 import "../../styles/main.css";
 import { Link } from "react-router-dom";
 import SortDropdown from "../widgets/SortDropdown"
+import SelectableList from "../widgets/SelectableList";
+import useOfflineTable from "../../hooks/useOfflineTable";
 import Pagination from "../widgets/Pagination";
 import QueuedList from "../widgets/QueuedList";
 const gradeOptions = [
@@ -36,6 +38,8 @@ export default function StudentList() {
   const [sortOrder, setSortOrder] = useState("asc");
   const [page, setPage] = useState(1);
   const pageSize = 20;
+  const [selectedStudentIds, setSelectedStudentIds] = useState([]);
+  const { addRow: addAttendanceRow } = useOfflineTable("attendance_records");
 
   // Determine school IDs based on role and filter selection
   const schoolIds = useMemo(() => {
@@ -150,6 +154,33 @@ export default function StudentList() {
         <div className={`grid-layout split-container ${showList ? "expanded" : "collapsed"}`}>
           <div className={`list-items grid-item app-list-panel ${showList ? "show" : "hide"}`}>
             <Link to="/dashboard/students/create" className="btn btn-primary">Create student</Link>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0' }}>
+              <button
+                className="btn btn-secondary"
+                title="Group Sign In (max 5)"
+                onClick={async () => {
+                  const nowIso = new Date().toISOString();
+                  const ids = selectedStudentIds.slice(0, 5);
+                  for (const sid of ids) {
+                    try {
+                      await addAttendanceRow({
+                        student_id: Number(sid),
+                        date: nowIso.split('T')[0],
+                        sign_in_time: nowIso,
+                        note: 'group sign-in',
+                      });
+                    } catch (e) { /* ignore */ }
+                  }
+                  setSelectedStudentIds([]);
+                }}
+                disabled={selectedStudentIds.length === 0}
+              >
+                Group Sign In ({Math.min(selectedStudentIds.length, 5)}/5)
+              </button>
+              {selectedStudentIds.length > 5 && (
+                <span style={{ color: '#dc2626', fontSize: 12 }}>Limit 5 selected</span>
+              )}
+            </div>
             <SortDropdown
               options={sortOptions}
               value={sortBy}
@@ -166,7 +197,17 @@ export default function StudentList() {
             {loading && <Loader variant="pulse" size="large" text="Loading students..." />}
             {!loading && students && students.length > 0 && (
               <>
-                <ListItems items={paginatedStudents} resource="students" onClick={() => setShowList(true)} />
+                <SelectableList
+                  students={paginatedStudents}
+                  resource="students"
+                  checkbox={true}
+                  value={selectedStudentIds}
+                  onChange={(ids) => {
+                    // enforce max 5
+                    const arr = Array.isArray(ids) ? ids.slice(0, 5) : [];
+                    setSelectedStudentIds(arr);
+                  }}
+                />
                 <Pagination
                   page={page}
                   hasMore={hasMore}

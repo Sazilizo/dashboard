@@ -78,6 +78,52 @@ if (typeof window !== 'undefined') {
     // ignore require errors in environments without CommonJS require
   }
 
+  // Developer helper: view cached face descriptors
+  try {
+    const { getAllDescriptors, getDescriptor, clearDescriptors } = require('./utils/descriptorDB');
+    window.dumpFaceDescriptors = async () => {
+      try {
+        const all = await getAllDescriptors();
+        console.log('[dumpFaceDescriptors] Cached profiles:');
+        for (const entry of all) {
+          console.log(`  Profile ${entry.id}: ${entry.descriptors?.length || 0} descriptors, updated ${new Date(entry.updatedAt).toLocaleString()}`);
+        }
+        return all;
+      } catch (err) {
+        console.warn('[dumpFaceDescriptors] failed', err);
+        return null;
+      }
+    };
+
+    window.checkFaceDescriptor = async (profileId) => {
+      try {
+        const desc = await getDescriptor(profileId);
+        if (desc) {
+          console.log(`[checkFaceDescriptor] Profile ${profileId} has ${desc.length} cached descriptors`);
+        } else {
+          console.log(`[checkFaceDescriptor] Profile ${profileId} has NO cached descriptors`);
+        }
+        return desc;
+      } catch (err) {
+        console.warn('[checkFaceDescriptor] failed', err);
+        return null;
+      }
+    };
+
+    window.clearFaceDescriptors = async () => {
+      try {
+        await clearDescriptors();
+        console.log('[clearFaceDescriptors] Cleared all cached face descriptors');
+        return true;
+      } catch (err) {
+        console.warn('[clearFaceDescriptors] failed', err);
+        return false;
+      }
+    };
+  } catch (e) {
+    // ignore require errors
+  }
+
   // Helper: retry a single offline mutation by id after optional payload override
   try {
     const { getMutation, updateMutation } = require('./utils/tableCache');
@@ -156,6 +202,7 @@ if (typeof window !== 'undefined') {
   if (process.env.NODE_ENV === 'development') {
     console.log('[GCU Debug] School utilities available: window.seedSchoolsCache(), window.verifySchoolsCache(), window.enableSchoolsDebug()');
     console.log('[GCU Debug] Cache utilities available: window.refreshCache()');
+    console.log('[GCU Debug] Face descriptor utilities: window.dumpFaceDescriptors(), window.checkFaceDescriptor(id), window.clearFaceDescriptors()');
   }
 }
 

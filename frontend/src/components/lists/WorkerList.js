@@ -9,6 +9,7 @@ import Loader from "../widgets/Loader";
 import "../../styles/main.css"
 import { Link } from "react-router-dom";
 import WorkerStats from "./WorkerStats";
+import useOfflineTable from "../../hooks/useOfflineTable";
 import Pagination from "../widgets/Pagination";
 import SortDropdown from "../widgets/SortDropdown";
 import QueuedList from "../widgets/QueuedList";
@@ -26,6 +27,8 @@ export default function WorkerList() {
   const [sortOrder, setSortOrder] = React.useState("asc");
   const [page, setPage] = React.useState(1);
   const pageSize = 50;
+  const [selectedWorkerIds, setSelectedWorkerIds] = React.useState([]);
+  const { addRow: addAttendanceRow } = useOfflineTable("worker_attendance_records");
 
   const isAllSchoolRole = ["superuser", "admin", "hr", "viewer"].includes(user?.profile?.roles?.name);
 
@@ -137,6 +140,33 @@ export default function WorkerList() {
             {isAllSchoolRole && (
               <Link to="/dashboard/workers/create" className="btn btn-primary">Create worker</Link>
             )}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0' }}>
+              <button
+                className="btn btn-secondary"
+                title="Group Sign In (max 5)"
+                onClick={async () => {
+                  const nowIso = new Date().toISOString();
+                  const ids = selectedWorkerIds.slice(0, 5);
+                  for (const wid of ids) {
+                    try {
+                      await addAttendanceRow({
+                        worker_id: wid,
+                        date: nowIso.split('T')[0],
+                        sign_in_time: nowIso,
+                        description: 'group sign-in',
+                      });
+                    } catch (e) { /* ignore */ }
+                  }
+                  setSelectedWorkerIds([]);
+                }}
+                disabled={selectedWorkerIds.length === 0}
+              >
+                Group Sign In ({Math.min(selectedWorkerIds.length, 5)}/5)
+              </button>
+              {selectedWorkerIds.length > 5 && (
+                <span style={{ color: '#dc2626', fontSize: 12 }}>Limit 5 selected</span>
+              )}
+            </div>
             <SortDropdown
               options={sortOptions}
               value={sortBy}
@@ -153,7 +183,21 @@ export default function WorkerList() {
             {loading && <Loader variant="pulse" size="large" text="Loading workers..." />}
             {!loading && workers && workers.length > 0 && (
               <>
-                <WorkerListItems workers={paginatedWorkers} />
+                <WorkerListItems
+                  workers={paginatedWorkers}
+                  onSelect={(w) => {
+                    setSelectedWorkerIds((prev) => {
+                      const set = new Set(prev);
+                      if (set.has(w.id)) {
+                        set.delete(w.id);
+                      } else {
+                        if (set.size >= 5) return Array.from(set); // enforce limit
+                        set.add(w.id);
+                      }
+                      return Array.from(set);
+                    });
+                  }}
+                />
                 <Pagination
                   page={page}
                   hasMore={hasMore}

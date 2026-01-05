@@ -76,11 +76,15 @@ export default function useOfflineTable(
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
 
+        console.log(`[useOfflineTable] ${tableName}: Calling api.from() for online fetch`);
+        
         let query = api
           .from(tableName)
           .select(select)
           .order(sortBy, { ascending: sortOrder === "asc" })
           .range((pageNum - 1) * pageSize, pageNum * pageSize - 1);
+
+        console.log(`[useOfflineTable] ${tableName}: Built base query object`);
 
         // Add abort signal if supported
         if (typeof query.abortSignal === 'function') {
@@ -89,7 +93,13 @@ export default function useOfflineTable(
 
         // Apply filters
         Object.entries(filter).forEach(([key, value]) => {
+          // Skip meta keys (e.g., _refresh) used only to force re-fetch
+          if (key.startsWith("_")) {
+            console.log(`[useOfflineTable] Skipping meta key: ${key}`);
+            return;
+          }
           if (Array.isArray(value) && value.length > 0) {
+            console.log(`[useOfflineTable] Adding IN filter: ${key} in [${value.join(", ")}]`);
             query = query.in(key, value);
           } else if (
             value !== undefined &&
@@ -97,6 +107,7 @@ export default function useOfflineTable(
             value !== "" &&
             (!Array.isArray(value) || value.length > 0)
           ) {
+            console.log(`[useOfflineTable] Adding EQ filter: ${key} = ${value}`);
             query = query.eq(key, value);
           }
         });
@@ -105,7 +116,14 @@ export default function useOfflineTable(
           const { data, error } = await query;
           clearTimeout(timeoutId);
 
-          if (error) throw error;
+          if (error) {
+            console.error(`[useOfflineTable] Query error for ${tableName}:`, error);
+            console.error(`[useOfflineTable] Error message:`, error.message);
+            console.error(`[useOfflineTable] Error details:`, error.details);
+            console.error(`[useOfflineTable] Error hint:`, error.hint);
+            console.error(`[useOfflineTable] Full error object:`, error);
+            throw error;
+          }
 
           if (data) {
             allRowsRef.current = reset
@@ -120,6 +138,11 @@ export default function useOfflineTable(
           }
         } catch (queryError) {
           clearTimeout(timeoutId);
+          
+          console.error(`[useOfflineTable] Exception during query for ${tableName}:`);
+          console.error(`[useOfflineTable] Error message:`, queryError.message);
+          console.error(`[useOfflineTable] Error stack:`, queryError.stack);
+          console.error(`[useOfflineTable] Full error:`, queryError);
           
           // If query failed (timeout or network), use cached data
           if (queryError.name === 'AbortError') {

@@ -1,316 +1,337 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import api from "../api/client";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import useToast from "../hooks/useToast";
 import ToastContainer from "../components/ToastContainer";
-import WorkerBiometrics from "../components/biometrics/WorkerBiometrics";
+import Biometrics from "../components/biometrics/Biometrics";
 import useOfflineTable from "../hooks/useOfflineTable";
 import { getCachedImagesByEntity } from "../utils/imageCache";
-import { cacheUserImages } from "../utils/proactiveImageCache";
+import FiltersPanel from "../components/filters/FiltersPanel";
+import { useFilters } from "../context/FiltersContext";
+import { useAuth } from "../context/AuthProvider";
+import { useSchools } from "../context/SchoolsContext";
+import { useData } from "../context/DataContext";
+import { useAttendance } from "../context/AttendanceContext";
+import Photos from "../components/profiles/Photos";
 
-const stageEnum = {
-  credentials: "credentials",
-  biometric: "biometric",
-  choice: "choice",
-  kiosk: "kiosk",
+const ENTITY = { worker: "worker", student: "student" };
+const CUTOFF_HOUR = 17;
+const CUTOFF_MINUTE = 15;
+
+const computeHours = (startIso, endIso) => {
+  if (!startIso) return null;
+  const diff = new Date(endIso).getTime() - new Date(startIso).getTime();
+  if (isNaN(diff) || diff < 0) return null;
+  return Number((diff / (1000 * 60 * 60)).toFixed(2));
 };
 
-function useWorkerAttendance(workerId) {
-  const filter = workerId ? { worker_id: workerId } : {};
-  const { rows, addRow, updateRow, isOnline } = useOfflineTable(
-    "worker_attendance_records",
-    filter,
-    "*",
-    60,
-    "id",
-    "desc"
-  );
-  const today = new Date().toISOString().split("T")[0];
-  const open = useMemo(
-    () =>
-      Array.isArray(rows)
-        ? rows.find((r) => r.worker_id === workerId && r.date === today && !r.sign_out_time)
-        : null,
-    [rows, workerId, today]
-  );
-  return { rows, addRow, updateRow, isOnline, open, today };
-}
-
 export default function Kiosk() {
-  const navigate = useNavigate();
-  const { toasts, showToast } = useToast();
-  const [form, setForm] = useState({ email: "", password: "" });
+  const { user } = useAuth();
+  const { schools } = useSchools();
+  const { filters, setFilters } = useFilters();
+  const { workers: dataWorkers, students: dataStudents, fetchData } = useData();
+  const { openWorkerIds, openStudentIds, workerDayRows, studentDayRows, refreshAttendance } = useAttendance();
+  const { toasts, showToast, removeToast } = useToast();
+
+  const today = useMemo(() => new Date().toISOString().split("T")[0], []);
+
+  /* ------------------ Offline tables ------------------ */
+  const {
+    rows: workerRows = [],
+    addRow: addWorkerAttendance,
+    updateRow: updateWorkerAttendance,
+    isOnline: workerOnline,
+  } = useOfflineTable("worker_attendance_records", { date: today }, "*", 200, "id", "desc");
+
+  const {
+    rows: studentRows = [],
+    addRow: addStudentAttendance,
+    updateRow: updateStudentAttendance,
+    isOnline: studentOnline,
+  } = useOfflineTable("attendance_records", { date: today }, "*", 200, "id", "desc");
+
+  const isOnline = workerOnline || studentOnline;
+
+  /* ------------------ State ------------------ */
+  const [allWorkers, setAllWorkers] = useState([]);
+  const [allStudents, setAllStudents] = useState([]);
+  const [entityType, setEntityType] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [biometricTarget, setBiometricTarget] = useState(null);
+  const [biometricEntityType, setBiometricEntityType] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [stage, setStage] = useState(stageEnum.credentials);
-  const [profile, setProfile] = useState(null);
-  const [worker, setWorker] = useState(null);
-  const [authUser, setAuthUser] = useState(null);
-  const [cachedImg, setCachedImg] = useState(null);
-  const [pendingPassword, setPendingPassword] = useState("");
-  const [showPasswordGate, setShowPasswordGate] = useState(false);
+  const [biometricVerifiedId, setBiometricVerifiedId] = useState(null);
+  const [optimisticWorkerOpen, setOptimisticWorkerOpen] = useState(new Set());
+  const [optimisticStudentOpen, setOptimisticStudentOpen] = useState(new Set());
+  const [flash, setFlash] = useState({ workers: new Set(), students: new Set() });
+  const autoCloseRef = useRef(null);
 
-  const workerId = profile?.worker_id || worker?.id || null;
-  const { addRow, updateRow, open, isOnline } = useWorkerAttendance(workerId);
+  const isAllSchoolRole = useMemo(() => {
+    const roleName = user?.profile?.roles?.name;
+    return ["superuser", "admin", "hr", "viewer"].includes(roleName);
+  }, [user?.profile?.roles?.name]);
 
-  useEffect(() => {
-    return () => {
-      if (cachedImg) URL.revokeObjectURL(cachedImg);
-    };
-  }, [cachedImg]);
-
-  const loadPreview = async (entityId) => {
-    try {
-      const imgs = await getCachedImagesByEntity(entityId);
-      if (imgs && imgs.length) {
-        const first = imgs[0];
-        const url = URL.createObjectURL(first.blob);
-        setCachedImg(url);
+  const schoolIds = useMemo(() => {
+    if (isAllSchoolRole) {
+      if (Array.isArray(filters.school_id) && filters.school_id.length) {
+        return filters.school_id.map((id) => Number(id)).filter(Number.isFinite);
       }
-    } catch (e) {
-      /* ignore */
+      return (schools || []).map((s) => s.id).filter(Number.isFinite);
     }
+    return user?.profile?.school_id ? [user.profile.school_id] : [];
+  }, [isAllSchoolRole, filters.school_id, schools, user?.profile?.school_id]);
+
+  /* ------------------ Fetch & Set Data ------------------ */
+  useEffect(() => {
+    if (schoolIds.length) fetchData(schoolIds);
+  }, [fetchData, schoolIds.join(",")]);
+
+  useEffect(() => setAllWorkers(dataWorkers || []), [dataWorkers]);
+  useEffect(() => setAllStudents(dataStudents || []), [dataStudents]);
+
+  /* ------------------ Filtered lists ------------------ */
+  const filteredWorkers = useMemo(() => {
+    let filtered = [...allWorkers];
+    if (schoolIds.length && !schoolIds.includes(-1)) filtered = filtered.filter((w) => schoolIds.includes(w.school_id));
+    return filtered;
+  }, [allWorkers, schoolIds]);
+
+  const filteredStudents = useMemo(() => {
+    let filtered = [...allStudents];
+    if (schoolIds.length && !schoolIds.includes(-1)) filtered = filtered.filter((s) => schoolIds.includes(s.school_id));
+    if (Array.isArray(filters.grade) && filters.grade.length) filtered = filtered.filter((s) => filters.grade.includes(s.grade));
+    return filtered;
+  }, [allStudents, schoolIds, filters.grade]);
+
+  /* ------------------ Open maps ------------------ */
+  const workerOpenMap = useMemo(() => new Map((workerDayRows || []).filter(r => !r.sign_out_time).map(r => [r.worker_id, r])), [workerDayRows]);
+  const studentOpenMap = useMemo(() => new Map((studentDayRows || []).filter(r => !r.sign_out_time).map(r => [r.student_id, r])), [studentDayRows]);
+
+  useEffect(() => setOptimisticWorkerOpen(new Set(openWorkerIds)), [openWorkerIds]);
+  useEffect(() => setOptimisticStudentOpen(new Set(openStudentIds)), [openStudentIds]);
+
+  /* ------------------ Flash effect ------------------ */
+  const flashIds = (ids, type) => {
+    if (!ids.length) return;
+    const key = type === ENTITY.worker ? "workers" : "students";
+    setFlash((prev) => {
+      const nextSet = new Set(prev[key]);
+      ids.forEach((id) => nextSet.add(id));
+      return { ...prev, [key]: nextSet };
+    });
+    setTimeout(() => setFlash((prev) => {
+      const nextSet = new Set(prev[key]);
+      ids.forEach((id) => nextSet.delete(id));
+      return { ...prev, [key]: nextSet };
+    }), 1200);
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError("");
+  /* ------------------ Biometric handlers ------------------ */
+  const handleBiometricStart = (entity, type) => {
+    setBiometricEntityType(type);
+    setBiometricTarget(entity);
+    setBiometricVerifiedId(null);
+  };
+
+  const handleBiometricSuccess = ({ profileId, workerId, biometricProof }) => {
+    setBiometricVerifiedId(profileId);
+    showToast("Face match confirmed", "success");
+    setSelectedIds([profileId]);
+    setEntityType(biometricEntityType);
+    setBiometricTarget(null);
+  };
+
+  const resetSelection = (keepType = false) => {
+    setSelectedIds([]);
+    if (!keepType) setEntityType(null);
+    setBiometricVerifiedId(null);
+  };
+
+  /* ------------------ Sign in/out logic ------------------ */
+  const signInWorkers = async (ids) => {
+    const now = new Date().toISOString();
+    const results = { done: 0, queued: 0, skipped: 0, errors: 0, errorDetails: [] };
+    for (const id of ids) {
+      if (workerOpenMap.has(id)) { results.skipped++; continue; }
+      const worker = filteredWorkers.find(w => w.id === id);
+      const res = await addWorkerAttendance({
+        worker_id: id,
+        school_id: worker?.school_id || null,
+        date: today,
+        sign_in_time: now,
+        recorded_by: user?.profile?.id || null,
+      });
+      if (res?.__error) { results.errors++; results.errorDetails.push(`Worker ${id} failed`); }
+      else results.done++;
+    }
+    setOptimisticWorkerOpen(prev => { const next = new Set(prev); ids.forEach(i => next.add(i)); return next; });
+    flashIds(ids, ENTITY.worker);
+    await refreshAttendance();
+    return results;
+  };
+
+  const signOutWorkers = async (ids, forcedTimeIso) => {
+    const endIso = forcedTimeIso || new Date().toISOString();
+    const results = { done: 0, queued: 0, skipped: 0, errors: 0, durations: [] };
+    for (const id of ids) {
+      const open = workerOpenMap.get(id);
+      if (open) {
+        const hours = computeHours(open.sign_in_time, endIso);
+        const res = await updateWorkerAttendance(open.id, { sign_out_time: endIso, hours });
+        if (res?.__error) results.errors++;
+        else results.done++;
+        const w = filteredWorkers.find(w => w.id === id);
+        results.durations.push({ id, name: w ? `${w.name} ${w.last_name || ""}` : `Worker ${id}`, hours });
+      }
+    }
+    setOptimisticWorkerOpen(prev => { const next = new Set(prev); ids.forEach(i => next.delete(i)); return next; });
+    flashIds(ids, ENTITY.worker);
+    await refreshAttendance();
+    return results;
+  };
+
+  const signInStudents = async (ids) => {
+    const now = new Date().toISOString();
+    const results = { done: 0, queued: 0, skipped: 0, errors: 0 };
+    for (const id of ids) {
+      if (studentOpenMap.has(id)) { results.skipped++; continue; }
+      const student = filteredStudents.find(s => s.id === id);
+      const res = await addStudentAttendance({
+        student_id: id,
+        school_id: student?.school_id || null,
+        date: today,
+        sign_in_time: now,
+        status: "present",
+        method: "kiosk",
+        recorded_by: user?.profile?.id || null,
+      });
+      if (res?.__error) results.errors++;
+      else results.done++;
+    }
+    setOptimisticStudentOpen(prev => { const next = new Set(prev); ids.forEach(i => next.add(i)); return next; });
+    flashIds(ids, ENTITY.student);
+    await refreshAttendance();
+    return results;
+  };
+
+  const signOutStudents = async (ids, forcedTimeIso) => {
+    const endIso = forcedTimeIso || new Date().toISOString();
+    const results = { done: 0, queued: 0, skipped: 0, errors: 0, durations: [] };
+    for (const id of ids) {
+      const open = studentOpenMap.get(id);
+      if (open) {
+        const hours = computeHours(open.sign_in_time, endIso);
+        const res = await updateStudentAttendance(open.id, { sign_out_time: endIso, hours, status: "completed" });
+        if (res?.__error) results.errors++;
+        else results.done++;
+        const s = filteredStudents.find(s => s.id === id);
+        results.durations.push({ id, name: s?.full_name || `Student ${id}`, hours });
+      }
+    }
+    setOptimisticStudentOpen(prev => { const next = new Set(prev); ids.forEach(i => next.delete(i)); return next; });
+    flashIds(ids, ENTITY.student);
+    await refreshAttendance();
+    return results;
+  };
+
+  const handleBulk = async (action) => {
+    if (!entityType || !selectedIds.length) { showToast("Select at least one person", "warning"); return; }
     setLoading(true);
     try {
-      const email = form.email.trim();
-      const password = form.password;
-      const { data, error: signErr } = await api.auth.signInWithPassword({ email, password });
-      if (signErr) throw signErr;
-      const { data: { user } } = await api.auth.getUser();
-      setAuthUser(user);
+      let result;
+      if (entityType === ENTITY.worker) result = action === "in" ? await signInWorkers(selectedIds) : await signOutWorkers(selectedIds);
+      else result = action === "in" ? await signInStudents(selectedIds) : await signOutStudents(selectedIds);
+      
+      const summary = `${result.done} saved, ${result.skipped} skipped, ${result.errors} errors`;
+      showToast(summary, result.errors ? "error" : "success");
+      resetSelection();
+    } finally { setLoading(false); }
+  };
 
-      const { data: prof } = await api
-        .from("profiles")
-        .select("id, worker_id, school_id, roles:role_id(name), first_name, last_name")
-        .eq("auth_uid", user.id)
-        .maybeSingle();
-
-      if (!prof?.id) throw new Error("Profile not found for this account");
-      setProfile(prof);
-      setPendingPassword(password);
-      cacheUserImages(prof.id).catch(() => {});
-      loadPreview(prof.id).catch(() => {});
-
-      if (prof.worker_id) {
-        try {
-          const { data: workerRow } = await api
-            .from("workers")
-            .select("id, name, last_name")
-            .eq("id", prof.worker_id)
-            .maybeSingle();
-          if (workerRow) setWorker(workerRow);
-        } catch (e) {
-          /* ignore */
-        }
+  /* ------------------ Auto-cutoff ------------------ */
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = new Date();
+      const dayKey = now.toISOString().split("T")[0];
+      if (autoCloseRef.current === dayKey) return;
+      const pastCutoff = now.getHours() > CUTOFF_HOUR || (now.getHours() === CUTOFF_HOUR && now.getMinutes() >= CUTOFF_MINUTE);
+      if (pastCutoff) {
+        const forcedIso = new Date(now.setHours(CUTOFF_HOUR, CUTOFF_MINUTE, 0, 0)).toISOString();
+        (async () => {
+          await signOutWorkers([...openWorkerIds], forcedIso);
+          await signOutStudents([...openStudentIds], forcedIso);
+        })();
+        autoCloseRef.current = dayKey;
       }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [openWorkerIds, openStudentIds]);
 
-      setStage(stageEnum.biometric);
-      setLoading(false);
-    } catch (err) {
-      setError(err?.message || "Login failed");
-      setLoading(false);
-    }
-  };
-
-  const markSignIn = async () => {
-    if (!workerId) {
-      showToast("No worker profile linked.", "error");
-      return;
-    }
-    const nowIso = new Date().toISOString();
-    const payload = {
-      worker_id: workerId,
-      school_id: profile?.school_id || null,
-      date: nowIso.split("T")[0],
-      sign_in_time: nowIso,
-      description: "kiosk biometric sign-in",
-      recorded_by: authUser?.id || null,
-    };
-    const res = await addRow(payload);
-    if (res?.__error) {
-      showToast("Sign-in queued offline.", "warning");
-    } else {
-      showToast(isOnline ? "Signed in." : "Sign-in cached offline.", isOnline ? "success" : "info");
-    }
-  };
-
-  const markSignOut = async () => {
-    if (!workerId) {
-      showToast("No worker profile linked.", "error");
-      return;
-    }
-    const nowIso = new Date().toISOString();
-    if (open?.id) {
-      let hours = null;
-      try {
-        if (open.sign_in_time) {
-          const dur = new Date(nowIso) - new Date(open.sign_in_time);
-          hours = Number((dur / (1000 * 60 * 60)).toFixed(2));
-        }
-      } catch (e) { /* ignore */ }
-      const res = await updateRow(open.id, { sign_out_time: nowIso, hours, description: "kiosk biometric sign-out" });
-      if (res?.__error) {
-        showToast("Sign-out queued offline.", "warning");
-      } else {
-        showToast(isOnline ? "Signed out." : "Sign-out queued offline.", isOnline ? "success" : "info");
-      }
-    } else {
-      const res = await addRow({
-        worker_id: workerId,
-        school_id: profile?.school_id || null,
-        date: nowIso.split("T")[0],
-        sign_out_time: nowIso,
-        description: "kiosk biometric sign-out",
-        recorded_by: authUser?.id || null,
-      });
-      if (res?.__error) {
-        showToast("Sign-out queued offline.", "warning");
-      } else {
-        showToast(isOnline ? "Sign-out recorded." : "Sign-out queued offline.", isOnline ? "success" : "info");
-      }
-    }
-  };
-
-  const handleBiometricSuccess = () => {
-    setStage(stageEnum.choice);
-  };
-
-  const proceedToKiosk = () => setStage(stageEnum.kiosk);
-
-  const proceedToDashboard = () => setShowPasswordGate(true);
-
-  const renderChoice = () => (
-    <div className="biometric-modal-overlay">
-      <div className="biometric-modal" style={{ maxWidth: 460 }}>
-        <h3 style={{ marginTop: 0 }}>Choose an action</h3>
-        <p style={{ color: "#475569", marginBottom: 12 }}>Face verified. What would you like to do?</p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <button className="btn btn-primary" onClick={proceedToKiosk}>Proceed to sign in/out</button>
-          <button className="btn btn-secondary" onClick={proceedToDashboard}>Proceed to dashboard</button>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderPasswordGate = () => (
-    <div className="biometric-modal-overlay">
-      <div className="biometric-modal" style={{ maxWidth: 420 }}>
-        <h3 style={{ marginTop: 0 }}>Confirm to open dashboard</h3>
-        <p style={{ color: "#475569", marginBottom: 12 }}>Re-enter your password to continue.</p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <label style={{ fontSize: "0.9rem" }}>Password</label>
-          <input
-            type="password"
-            value={pendingPassword}
-            onChange={(e) => setPendingPassword(e.target.value)}
-            style={{ padding: 10, border: "1px solid #e2e8f0", borderRadius: 8 }}
-            autoFocus
-          />
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button className="btn btn-secondary" onClick={() => setShowPasswordGate(false)}>Cancel</button>
-            <button
-              className="btn btn-primary"
-              onClick={async () => {
-                try {
-                  const email = form.email.trim();
-                  const password = pendingPassword || form.password;
-                  const { error: signErr } = await api.auth.signInWithPassword({ email, password });
-                  if (signErr) throw signErr;
-                  navigate("/dashboard", { replace: true });
-                } catch (err) {
-                  showToast(err?.message || "Password required to continue.", "error", 4000);
-                }
-              }}
-            >
-              Continue
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderKioskCard = () => {
-    const fullName = `${worker?.name || profile?.first_name || ""} ${worker?.last_name || profile?.last_name || ""}`.trim();
+  /* ------------------ UI LIST RENDER ------------------ */
+  const renderList = (items, type) => {
+    const openSet = type === ENTITY.worker ? optimisticWorkerOpen : optimisticStudentOpen;
+    const flashSet = type === ENTITY.worker ? flash.workers : flash.students;
     return (
-      <div style={{ maxWidth: 520, margin: "0 auto", padding: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, padding: 16, border: "1px solid #e5e7eb", borderRadius: 12, background: "#fff" }}>
-          <div style={{ width: 96, height: 96, borderRadius: 12, overflow: "hidden", background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {cachedImg ? (
-              <img src={cachedImg} alt="profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            ) : (
-              <span style={{ color: "#cbd5e1", fontWeight: 600 }}>{fullName ? fullName[0] : "?"}</span>
-            )}
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: "1.1rem", fontWeight: 600 }}>{fullName || "Worker"}</div>
-            <div style={{ color: "#475569" }}>Worker ID: {workerId || "n/a"}</div>
-            <div style={{ color: open ? "#059669" : "#dc2626", marginTop: 4 }}>
-              Status: {open ? "Signed in" : "Signed out"}
+      <div style={{ maxHeight: 520, overflowY: "auto" }}>
+        {items.length ? items.map((item) => {
+          const selected = selectedIds.includes(item.id) && entityType === type;
+          const open = openSet.has(item.id);
+          const flashItem = flashSet.has(item.id);
+          return (
+            <div key={`${type}-${item.id}`} style={{ padding: 12, border: "1px solid #e5e7eb", borderRadius: 8, display: "flex", alignItems: "center", gap: 12, background: flashItem ? "#ecfdf3" : selected ? "#eef2ff" : "#fff" }}>
+              <input type="checkbox" checked={selected} onChange={() => {
+                setSelectedIds(prev => prev.includes(item.id) ? prev.filter(i => i !== item.id) : [...prev, item.id]);
+                setEntityType(type);
+              }} />
+              <div style={{ width: 48, height: 48, borderRadius: 6, overflow: "hidden", position: "relative" }}>
+                <Photos bucketName={type === ENTITY.worker ? "worker-uploads" : "student-uploads"} folderName={type === ENTITY.worker ? "workers" : "students"} id={item.id} photoCount={1} restrictToProfileFolder={true} />
+                <span title={open ? "Signed in" : "Signed out"} style={{ position: "absolute", right: -2, bottom: -2, width: 10, height: 10, borderRadius: "50%", background: open ? "#10b981" : "#ef4444", border: "2px solid #fff" }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600 }}>{type === ENTITY.worker ? `${item.name} ${item.last_name || ""}` : item.full_name}<span style={{ marginLeft: 8, fontSize: 12, color: open ? "#10b981" : "#ef4444" }}>{open ? "• In" : "• Out"}</span></div>
+                <div style={{ fontSize: 12, color: "#6b7280" }}>{type === ENTITY.worker ? `School: ${item.school_name || "n/a"}` : `Grade: ${item.grade || "n/a"}`}</div>
+              </div>
+              <button onClick={() => handleBiometricStart(item, type)}>Face verify</button>
             </div>
-            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-              {!open && <button className="btn btn-primary" onClick={markSignIn}>Sign in</button>}
-              {open && <button className="btn btn-secondary" onClick={markSignOut}>Sign out</button>}
-              <button className="btn" onClick={proceedToDashboard}>Proceed to dashboard</button>
-            </div>
-          </div>
-        </div>
+          );
+        }) : <div style={{ padding: 20, textAlign: "center", color: "#6b7280" }}>No {type === ENTITY.worker ? "workers" : "students"} available</div>}
       </div>
     );
   };
 
-  return (
-    <div className="login-container" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <ToastContainer toasts={toasts} removeToast={removeToast} />
-
-      {stage === stageEnum.credentials && (
-        <form className="login-box login-form" onSubmit={handleSubmit} style={{ maxWidth: 420, width: "100%" }}>
-          <h2>Kiosk sign in/out</h2>
-          <p style={{ color: "#475569", marginTop: -6 }}>Verify by password then face to continue.</p>
-          <div>
-            <label>Email:</label>
-            <input
-              name="email"
-              type="email"
-              value={form.email}
-              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-              required
-            />
-          </div>
-          <div>
-            <label>Password:</label>
-            <input
-              name="password"
-              type="password"
-              value={form.password}
-              onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-              required
-            />
-          </div>
-          {error && <div style={{ color: "red" }}>{error}</div>}
-          <button type="submit" disabled={loading}>{loading ? "Checking..." : "Continue"}</button>
-        </form>
-      )}
-
-      {stage === stageEnum.biometric && profile && (
-        <WorkerBiometrics
-          profile={profile}
-          requireMatch={true}
-          onSuccess={handleBiometricSuccess}
-          onCancel={() => { setStage(stageEnum.credentials); api.auth.signOut(); }}
-        />
-      )}
-
-      {stage === stageEnum.choice && renderChoice()}
-
-      {stage === stageEnum.kiosk && renderKioskCard()}
-
-      {showPasswordGate && renderPasswordGate()}
+  /* ------------------ ACTION BAR ------------------ */
+  const actionBar = (
+    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
+      {[ENTITY.worker, ENTITY.student].map((type) => (
+        <button key={type} onClick={() => { setEntityType(type); resetSelection(true); }} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #e5e7eb", background: entityType === type ? "#111827" : "#fff", color: entityType === type ? "#fff" : "#111827", cursor: "pointer" }}>{type === ENTITY.worker ? "Workers" : "Students"}</button>
+      ))}
+      <button disabled={!selectedIds.length || loading} onClick={() => handleBulk("in")}>Sign in selected ({selectedIds.length})</button>
+      <button disabled={!selectedIds.length || loading} onClick={() => handleBulk("out")}>Sign out selected ({selectedIds.length})</button>
+      <button disabled={!selectedIds.length || loading} onClick={() => resetSelection(true)}>Clear</button>
+      {biometricVerifiedId && <span style={{ color: "#16a34a" }}>Biometric verified for ID {biometricVerifiedId}</span>}
     </div>
   );
-}
+
+  /* ------------------ MAIN RENDER ------------------ */
+  return (
+    <div style={{ minHeight: "100vh", background: "#f8fafc", padding: 24 }}>
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
+      <div style={{ maxWidth: 1300, margin: "0 auto" }}>
+        <h2>Clock In / Clock Out</h2>
+        <p>Select one mode at a time. Bulk sign in/out all selected entries.</p>
+        {actionBar}
+        <FiltersPanel user={user} schools={schools || []} filters={filters} setFilters={setFilters} resource={entityType === ENTITY.student ? "students" : "workers"} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
+          <div>
+            <h3>Workers</h3>
+            {renderList(filteredWorkers, ENTITY.worker)}
+          </div>
+          <div>
+            <h3>Students</h3>
+            {renderList(filteredStudents, ENTITY.student)}
+          </div>
+        </div>
+        {biometricTarget && (
+          <Biometrics
+            profile={biometricTarget}
+            entityType={biometricEntityType}
+            onSuccess={handleBiometricSuccess}
+      tBiometricTarg

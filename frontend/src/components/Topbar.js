@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthProvider";
 import Logout from "../pages/Logout";
 import EditProfile from "./profiles/EditUserProfile";
@@ -10,6 +11,7 @@ import imageCache from "../utils/imageCache";
 import { getSignedUrl } from "../utils/signedUrlCache";
 
 export default function Topbar() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [showProfile, setShowProfile] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -129,6 +131,15 @@ export default function Topbar() {
                 }}
               >
                 Profile
+              </button>
+              <button
+                className="dropdown-item"
+                onClick={() => {
+                  navigate("/kiosk");
+                  setDropdownOpen(false);
+                }}
+              >
+                Kiosk Sign In/Out
               </button>
               <Logout />
             </div>

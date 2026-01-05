@@ -23,7 +23,11 @@ export async function getDescriptor(id) {
       const tx = db.transaction(STORE_NAME, "readonly");
       const store = tx.objectStore(STORE_NAME);
       const r = store.get(id.toString());
-      r.onsuccess = () => resolve(r.result ? r.result.descriptors : null);
+      r.onsuccess = () => {
+        const result = r.result ? r.result.descriptors : null;
+        console.log(`[descriptorDB] getDescriptor(${id}): ${result ? "Found cached descriptors" : "No cached descriptors"}`);
+        resolve(result);
+      };
       r.onerror = () => reject(r.error);
     });
   } catch (err) {
@@ -44,7 +48,10 @@ export async function setDescriptor(id, descriptors) {
         updatedAt: Date.now(),
       };
       const r = store.put(payload);
-      r.onsuccess = () => resolve(true);
+      r.onsuccess = () => {
+        console.log(`[descriptorDB] setDescriptor(${id}): Stored ${descriptors.length} descriptors`);
+        resolve(true);
+      };
       r.onerror = () => reject(r.error);
     });
   } catch (err) {
@@ -69,4 +76,24 @@ export async function clearDescriptors() {
   }
 }
 
-export default { getDescriptor, setDescriptor, clearDescriptors };
+export async function getAllDescriptors() {
+  try {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const store = tx.objectStore(STORE_NAME);
+      const r = store.getAll();
+      r.onsuccess = () => {
+        const results = r.result || [];
+        console.log(`[descriptorDB] getAllDescriptors: Found ${results.length} cached profiles`, results.map(r => ({ id: r.id, count: r.descriptors?.length || 0 })));
+        resolve(results);
+      };
+      r.onerror = () => reject(r.error);
+    });
+  } catch (err) {
+    console.warn("descriptorDB.getAllDescriptors failed", err);
+    return [];
+  }
+}
+
+export default { getDescriptor, setDescriptor, clearDescriptors, getAllDescriptors };
